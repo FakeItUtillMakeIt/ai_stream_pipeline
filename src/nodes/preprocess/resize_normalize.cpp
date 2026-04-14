@@ -8,11 +8,25 @@
 namespace ai_stream {
 namespace nodes {
 
-ResizeNormalizeNode::ResizeNormalizeNode() : core::Node("ResizeNormalize") {}
+ResizeNormalizeNode::ResizeNormalizeNode() : IPreprocessNode("ResizeNormalize"),
+    target_width_(640), target_height_(640),
+    mean_{0.0f, 0.0f, 0.0f}, std_{1.0f, 1.0f, 1.0f},
+    interpolation_method_("bilinear"), keep_aspect_ratio_(false),
+    output_dtype_("float32") {
+        LOG_INFO_FMT("[ResizeNormalize] initialized");
+    }
+
+ResizeNormalizeNode::~ResizeNormalizeNode() {
+    LOG_INFO_FMT("[ResizeNormalize] deinitialized");
+}
 
 void ResizeNormalizeNode::setTargetSize(int width, int height) {
     target_width_ = width;
     target_height_ = height;
+}
+
+std::pair<int, int> ResizeNormalizeNode::getTargetSize() const {
+    return {target_width_, target_height_};
 }
 
 void ResizeNormalizeNode::setMean(const std::vector<float>& mean) {
@@ -21,6 +35,18 @@ void ResizeNormalizeNode::setMean(const std::vector<float>& mean) {
 
 void ResizeNormalizeNode::setStd(const std::vector<float>& std) {
     std_ = std;
+}
+
+void ResizeNormalizeNode::setInterpolationMethod(const std::string& method) {
+    interpolation_method_ = method;
+}
+
+void ResizeNormalizeNode::setKeepAspectRatio(bool keep_aspect_ratio) {
+    keep_aspect_ratio_ = keep_aspect_ratio;
+}
+
+void ResizeNormalizeNode::setOutputDataType(const std::string& dtype) {
+    output_dtype_ = dtype;
 }
 
 void ResizeNormalizeNode::pushData(std::shared_ptr<core::BasePacket> packet) {
