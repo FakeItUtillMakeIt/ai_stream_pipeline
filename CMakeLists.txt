@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.16)
 project(ai_stream_pipeline
     VERSION 1.0.0
     DESCRIPTION "Modular AI-driven video stream processing pipeline"
-    LANGUAGES CXX
+    LANGUAGES CXX CUDA
 )
 
 # ------------------------------------------------------------------------------
@@ -21,12 +21,18 @@ option(INSTALL_HEADERS   "Install public headers" ON)
 option(WITH_TENSORRT     "Enable TensorRT inference support" ON)
 option(WITH_ONNX         "Enable ONNX Runtime inference support" OFF)
 
+# GPU 加速选项
+option(WITH_CUDA "Enable CUDA support for GPU acceleration" ON)
+option(WITH_NPP "Enable NPP library for GPU image processing" ON)
+
 # ------------------------------------------------------------------------------
 # 2. 全局编译设置
 # ------------------------------------------------------------------------------
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
 
 # 导出 compile_commands.json（用于 IDE 和 clang-tidy）
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
