@@ -22,8 +22,11 @@
         }
       },
       {
+        
+      },
+      {
         "id": "infer1",
-        "type": "tensorrt_infer",
+        "type": "detection_infer",
         "params": {
           "model_path": "/models/yolov8.engine"
         }

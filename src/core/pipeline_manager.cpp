@@ -98,6 +98,55 @@ namespace ai_stream
                         }
                     }
 
+                    if (type.find("infer") != std::string::npos)
+                    {
+                        auto infer_node = std::dynamic_pointer_cast<nodes::IInferNode>(node);
+                        if (infer_node)
+                        {
+                            // 根据具体类型设置检测器类型
+                            if (type == "detection_infer")
+                            {
+                                infer_node->setDetectorType(nodes::DetectorType::DETECTION);
+                            }
+                            else if (type == "segmentation_infer")
+                            {
+                                infer_node->setDetectorType(nodes::DetectorType::SEGMENTATION);
+                            }
+                            else if (type == "classification_infer")
+                            {
+                                infer_node->setDetectorType(nodes::DetectorType::CLASSIFICATION);
+                            }
+                            else
+                            {
+                                // 默认设置为检测器类型
+                                infer_node->setDetectorType(nodes::DetectorType::DETECTION);
+                            }
+
+                            // 加载模型
+                            if (params.contains("model_path"))
+                            {
+                                std::string model_path = params["model_path"].get<std::string>();
+                                if (!infer_node->loadModel(model_path))
+                                {
+                                    LOG_ERROR_FMT("[Pipeline {}] Failed to load model: {}", id_, model_path);
+                                    return false;
+                                }
+                            }
+
+                            // 设置推理精度
+                            if (params.contains("precision"))
+                            {
+                                infer_node->setPrecision(params["precision"].get<std::string>());
+                            }
+
+                            // 设置批处理大小
+                            if (params.contains("batch_size"))
+                            {
+                                infer_node->setBatchSize(params["batch_size"].get<int>());
+                            }
+                        }
+                    }
+
                     if (type.find("sink") != std::string::npos || type.find("save") != std::string::npos)
                     {
                         auto sink_node = std::dynamic_pointer_cast<nodes::ISinkNode>(node);

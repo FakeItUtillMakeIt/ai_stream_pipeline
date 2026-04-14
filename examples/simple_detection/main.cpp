@@ -70,6 +70,7 @@ int main(int argc, char *argv[])
     if (!pipeline->buildFromJson(config["graph"]))
     {
         LOG_ERROR_FMT("Failed to build pipeline from config");
+        LogManager::get_instance().shutdown();
         return 1;
     }
 

@@ -9,8 +9,19 @@ namespace ai_stream {
 namespace nodes {
 
 /**
+ * @brief 检测器类型枚举
+ *
+ * 定义支持的检测器类型，用于区分不同的推理任务
+ */
+enum class DetectorType {
+    DETECTION = 0,      /// 目标检测（框+类别）
+    SEGMENTATION = 1,   /// 实例分割
+    CLASSIFICATION = 2  /// 图像分类
+};
+
+/**
  * @brief 推理节点接口
- * 
+ *
  * 接收解码后的图像帧，执行深度学习模型推理，输出元数据（如检测框、分类结果）。
  */
 class IInferNode : public core::Node {
@@ -45,6 +56,18 @@ public:
      * @brief 获取模型类别名称列表
      */
     virtual std::vector<std::string> getClassNames() const = 0;
+
+    /**
+     * @brief 设置检测器类型
+     * @param type 检测器类型枚举值
+     */
+    virtual void setDetectorType(DetectorType type) = 0;
+
+    /**
+     * @brief 获取当前检测器类型
+     * @return 检测器类型枚举值
+     */
+    virtual DetectorType getDetectorType() const = 0;
 };
 
 } // namespace nodes

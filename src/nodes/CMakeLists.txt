@@ -4,7 +4,7 @@ add_library(ai_stream_nodes
     source/rtsp_source.cpp
     decode/ffmpeg_decode.cpp
     preprocess/resize_normalize.cpp
-    infer/tensorrt_infer.cpp
+    infer/detection_infer.cpp
     postprocess/detection_post.cpp
     draw/osd_draw.cpp
     sink/rtmp_sink.cpp
@@ -13,7 +13,7 @@ add_library(ai_stream_nodes
 
 # 条件排除未启用的推理后端
 if(NOT WITH_TENSORRT)
-    list(REMOVE_ITEM ai_stream_nodes_SRCS infer/tensorrt_infer.cpp)
+    list(REMOVE_ITEM ai_stream_nodes_SRCS infer/detection_infer.cpp)
 endif()
 
 target_include_directories(ai_stream_nodes
