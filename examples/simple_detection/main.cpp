@@ -77,6 +77,11 @@ int main(int argc, char *argv[])
     if (!pipeline->start())
     {
         LOG_ERROR_FMT("Failed to start pipeline");
+        LOG_INFO("Stopping pipeline...");
+        pipeline->stop();
+        LOG_INFO("Pipeline stopped. Exiting.");
+        LogManager::get_instance().shutdown();
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
         return 1;
     }
 

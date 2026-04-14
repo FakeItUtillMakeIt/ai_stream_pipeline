@@ -23,9 +23,15 @@
       },
       {
         "id": "infer1",
-        "type": "tensorrt_infer",
+        "type": "detector_infer",
         "params": {
-          "model_path": "/models/yolov8.engine"
+          "detector_type": "yolov8",
+          "detector_config": {
+            "model_path": "/models/yolov8n.engine",
+            "conf_threshold": 0.5,
+            "nms_threshold": 0.4,
+            "input_size": { "width": 640, "height": 640 }
+          }
         }
       },
       {
