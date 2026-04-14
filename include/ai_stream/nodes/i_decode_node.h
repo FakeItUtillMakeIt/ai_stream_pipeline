@@ -34,6 +34,23 @@ public:
      * @return 当前活跃的解码器实例数量
      */
     virtual size_t getActiveDecoderCount() const = 0;
+
+    /**
+     * @brief 是否启用快照
+     * @param packet 包含原始视频数据的数据包
+     */
+    virtual void setSnapshotEnabled(bool enabled) = 0;
+
+    /**
+     * @brief 设置快照间隔
+     */
+    virtual void setSnapshotInterval(int interval) = 0;
+
+    /**
+     * @brief 设置快照保存目录
+     *  @param packet 待处理的数据包
+     */
+    virtual void setSnapshotDir(const std::string& dir) = 0;
 };
 
 } // namespace nodes

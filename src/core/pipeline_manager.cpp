@@ -4,11 +4,12 @@
 #include "nodes/registry/node_factory.h" // 内部工厂头文件
 #include <nlohmann/json.hpp>
 
-#include "nodes/source/rtsp_source.h"
-#include "nodes/decode/ffmpeg_decode.h"
-#include "nodes/draw/osd_draw.h"
-#include "nodes/infer/tensorrt_infer.h"
-#include "nodes/sink/rtmp_sink.h"
+#include "ai_stream/nodes/i_decode_node.h"
+#include "ai_stream/nodes/i_sink_node.h"
+#include "ai_stream/nodes/i_source_node.h"
+#include "ai_stream/nodes/i_infer_node.h"
+#include "ai_stream/nodes/i_draw_node.h"
+
 
 namespace ai_stream
 {
@@ -62,7 +63,7 @@ namespace ai_stream
 
                     if (type.find("decode") != std::string::npos)
                     {
-                        auto decode_node = std::dynamic_pointer_cast<nodes::FFmpegDecodeNode>(node);
+                        auto decode_node = std::dynamic_pointer_cast<nodes::IDecodeNode>(node);
                         if (decode_node)
                         {
                             // 原有配置

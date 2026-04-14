@@ -25,27 +25,27 @@ public:
     void pushData(std::shared_ptr<core::BasePacket> packet) override;
 
     // 快照配置
-    void setSnapshotEnabled(bool enabled);
-    void setSnapshotInterval(int interval);
-    void setSnapshotDir(const std::string& dir);
+    void setSnapshotEnabled(bool enabled) override;
+    void setSnapshotInterval(int interval) override;
+    void setSnapshotDir(const std::string& dir) override;
 
 private:
     std::shared_ptr<core::VideoFramePacket> decodePacket(
         std::shared_ptr<core::RawVideoPacket> raw_pkt,
         std::shared_ptr<DecoderContext> ctx);
-    
+
     void saveSnapshot(std::shared_ptr<core::VideoFramePacket> frame, int frame_num);
 
     DecoderPool pool_;
     std::string decoder_type_ = "h264";
     bool output_bgr_ = true;
     std::atomic<bool> running_{false};
-    
+
     // 快照配置
     std::atomic<bool> snapshot_enabled_{false};
     std::atomic<int> snapshot_interval_{100};
     std::string snapshot_dir_ = "./snapshots";
-    
+
     int snapshot_count_ = 0;
     int frame_count_ = 0;
 };

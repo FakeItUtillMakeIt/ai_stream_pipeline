@@ -11,9 +11,9 @@ project(ai_stream_pipeline
 # ------------------------------------------------------------------------------
 # 1. 选项配置
 # ------------------------------------------------------------------------------
-option(BUILD_HTTP_SERVER "Build HTTP API server executable" ON)
+option(BUILD_HTTP_SERVER "Build HTTP API server executable" OFF)
 option(BUILD_TESTS       "Build unit and integration tests" OFF)
-option(BUILD_EXAMPLES    "Build example applications" OFF)
+option(BUILD_EXAMPLES    "Build example applications" ON)
 option(ENABLE_COVERAGE   "Enable code coverage instrumentation" OFF)
 option(INSTALL_HEADERS   "Install public headers" ON)
 
