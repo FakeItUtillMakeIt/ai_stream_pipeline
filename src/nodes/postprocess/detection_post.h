@@ -28,7 +28,6 @@ namespace ai_stream
             void setClassWhitelist(const std::vector<std::string> &class_names) override { class_whitelist_ = class_names; }
             void setTrackIdEnabled(bool enable) override { track_id_enabled_ = enable; }
             void setPostProcessType(const std::string &type) override { postprocess_type_ = type; }
-
             std::string getPostProcessType() const override { return postprocess_type_; }
 
         private:

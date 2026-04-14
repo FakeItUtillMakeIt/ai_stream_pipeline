@@ -84,6 +84,7 @@ void ResizeNormalizeNode::pushData(std::shared_ptr<core::BasePacket> packet) {
     broadcast(new_packet);
 }
 
+
 REGISTER_NODE("resize_normalize", ResizeNormalizeNode)
 
 } // namespace nodes
