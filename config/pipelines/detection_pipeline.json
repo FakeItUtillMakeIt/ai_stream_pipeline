@@ -1,0 +1,78 @@
+{
+  "id": "detection_demo",
+  "graph": {
+    "nodes": [
+      {
+        "id": "src1",
+        "type": "rtsp_source",
+        "params": {
+          "url": "rtsp://localhost:8554/stream"
+        }
+      },
+      {
+        "id": "decode1",
+        "type": "ffmpeg_decode",
+        "params": {
+          "output_bgr": true,
+          "snapshot": {
+            "enabled": false,
+            "interval": 50,
+            "dir": "./snapshots"
+          }
+        }
+      },
+      {
+        "id": "infer1",
+        "type": "tensorrt_infer",
+        "params": {
+          "model_path": "/models/yolov8.engine"
+        }
+      },
+      {
+        "id": "draw1",
+        "type": "osd_draw",
+        "params": {}
+      },
+      {
+        "id": "sink1",
+        "type": "rtmp_sink",
+        "params": {
+          "output_url": "rtmp://localhost/live/out1"
+        }
+      },
+      {
+        "id": "save1",
+        "type": "mp4_save",
+        "params": {
+          "output_url": "file:///home/sevnce/project/ai_stream_pipeline/build/out1.mp4"
+        },
+        "output_size": {
+          "width": 1920,
+          "height": "1080"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": "src1",
+        "to": "decode1"
+      },
+      {
+        "from": "decode1",
+        "to": "infer1"
+      },
+      {
+        "from": "infer1",
+        "to": "draw1"
+      },
+      {
+        "from": "draw1",
+        "to": "sink1"
+      },
+      {
+        "from": "draw1",
+        "to": "save1"
+      }
+    ]
+  }
+}

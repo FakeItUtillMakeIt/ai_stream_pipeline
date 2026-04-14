@@ -1,0 +1,3 @@
+add_subdirectory(simple_detection)
+add_subdirectory(custom_node)
+add_subdirectory(multi_stream)

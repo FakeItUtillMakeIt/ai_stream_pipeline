@@ -1,0 +1,93 @@
+// include/ai_stream/core/packet.h
+#pragma once
+
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+#include <opencv2/core/mat.hpp>
+
+namespace ai_stream {
+namespace core {
+
+/**
+ * @brief 数据包类型枚举
+ */
+enum class PacketType : uint8_t {
+    UNKNOWN = 0,
+    RAW_VIDEO,      // 原始编码视频数据 (H264/H265 字节流)
+    DECODED_FRAME,  // 解码后的图像帧 (YUV/RGB)
+    META_DATA,      // 推理结果等元数据
+    TENSOR          // 推理输入/输出 Tensor
+};
+
+/**
+ * @brief 基础数据包结构
+ * 
+ * 所有在管道中流动的数据都继承自此结构。
+ * 使用 std::dynamic_pointer_cast 进行安全的类型转换。
+ */
+struct BasePacket {
+    PacketType type = PacketType::UNKNOWN;
+    int64_t timestamp_ms = 0;          // 毫秒时间戳
+    uint32_t stream_id = 0;            // 多流并行的关键：用于区分不同的源流
+    std::string source_id;             // 可选的源标识符
+
+    virtual ~BasePacket() = default;
+};
+
+/**
+ * @brief 原始视频包（编码数据）
+ * 
+ * 例如从 RTSP 读出的 H264/H265 NALU 单元
+ */
+struct RawVideoPacket : public BasePacket {
+    RawVideoPacket() { type = PacketType::RAW_VIDEO; }
+    
+    std::vector<uint8_t> data;          // 编码数据缓冲区
+    bool is_key_frame = false;          // 是否为关键帧
+    int codec_id = 0;                   // 编码格式 ID（如 AV_CODEC_ID_H264）
+};
+
+/**
+ * @brief 解码后的视频帧包
+ * 
+ * 使用 shared_ptr 管理 cv::Mat，避免深拷贝
+ */
+struct VideoFramePacket : public BasePacket {
+    VideoFramePacket() { type = PacketType::DECODED_FRAME; }
+    
+    std::shared_ptr<cv::Mat> mat;       // 图像数据（通常为 BGR 格式）
+    int width = 0;
+    int height = 0;
+    int channels = 3;
+};
+
+/**
+ * @brief 推理结果元数据包
+ * 
+ * 包含检测框、分类结果等信息
+ */
+struct InferenceResultPacket : public BasePacket {
+    InferenceResultPacket() { type = PacketType::META_DATA; }
+    
+    /**
+     * @brief 边界框结构
+     */
+    struct BBox {
+        float x, y, w, h;               // 边界框坐标和尺寸
+        float confidence;               // 置信度 [0.0, 1.0]
+        int class_id;                   // 类别 ID
+        std::string class_name;         // 类别名称
+        
+        BBox() = default;
+        BBox(float x_, float y_, float w_, float h_, float conf, int cls_id, const std::string& cls_name = "")
+            : x(x_), y(y_), w(w_), h(h_), confidence(conf), class_id(cls_id), class_name(cls_name) {}
+    };
+    
+    std::vector<BBox> detections;                       // 检测结果列表
+    std::shared_ptr<VideoFramePacket> source_frame;     // 关联的原始帧，用于后续画框等操作
+};
+
+} // namespace core
+} // namespace ai_stream
