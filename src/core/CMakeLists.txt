@@ -1,5 +1,5 @@
 
-add_library(ai_stream_core
+add_library(ai_stream_core SHARED
     node.cpp
     pipeline_manager.cpp
     thread_pool.cpp

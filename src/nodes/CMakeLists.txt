@@ -44,7 +44,7 @@ if(WITH_TENSORRT)
 endif()
 
 # 创建节点库
-add_library(ai_stream_nodes ${NODES_SOURCES})
+add_library(ai_stream_nodes SHARED ${NODES_SOURCES})
 
 target_include_directories(ai_stream_nodes
     PRIVATE

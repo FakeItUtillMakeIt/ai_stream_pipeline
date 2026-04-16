@@ -107,6 +107,10 @@ if(WITH_ONNX)
     endif()
 endif()
 
+if(WITH_CUDA)
+    set(CMAKE_CUDA_ARCHITECTURES "90" CACHE STRING "CUDA architectures")
+endif()
+
 # 测试依赖
 if(BUILD_TESTS)
     find_package(GTest REQUIRED)
