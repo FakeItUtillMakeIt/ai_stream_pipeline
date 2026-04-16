@@ -32,7 +32,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
+set(CMAKE_CUDA_SEPARABLE_COMPILATION OFF)
+set(CMAKE_CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 
 # 导出 compile_commands.json（用于 IDE 和 clang-tidy）
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -146,6 +147,7 @@ set_target_properties(ai_stream_core PROPERTIES
 # 5. 节点库构建（插件）
 # ------------------------------------------------------------------------------
 add_subdirectory(src/nodes)
+
 
 target_link_libraries(ai_stream_nodes
     PUBLIC

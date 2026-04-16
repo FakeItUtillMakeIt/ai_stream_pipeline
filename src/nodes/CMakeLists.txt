@@ -12,6 +12,7 @@ set(NODES_SOURCES
 # 预处理节点：根据 CUDA 支持选择 CPU 或 GPU 版本
 if(WITH_CUDA)
     find_package(CUDA REQUIRED)
+    find_package(CUDAToolkit REQUIRED)
 
     # 使用 GPU 加速的预处理节点
     list(APPEND NODES_SOURCES
@@ -51,6 +52,17 @@ target_include_directories(ai_stream_nodes
         ${CMAKE_CURRENT_SOURCE_DIR}/registry  # 包含 src/nodes/registry/
 )
 
+# Ensure CUDA device code is properly linked
+if(WITH_CUDA)
+    # Disable separable compilation to avoid device registration issues
+    set_source_files_properties(
+        preprocess/gpu_resize_normalize.cu
+        postprocess/gpu_detection_post.cu
+        PROPERTIES
+            CUDA_SEPARABLE_COMPILATION OFF
+    )
+endif()
+
 message("FFMPEG:${FFMPEG_LIBRARIES}")
 
 target_link_libraries(ai_stream_nodes
@@ -62,5 +74,6 @@ target_link_libraries(ai_stream_nodes
         ${CUDA_nppig_LIBRARY}
         ${CUDA_nppicc_LIBRARY}
         ${CUDA_nppisu_LIBRARY}
+        cudadevrt
         cudart
 )
