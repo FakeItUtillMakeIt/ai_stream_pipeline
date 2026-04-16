@@ -22,9 +22,6 @@
         }
       },
       {
-        
-      },
-      {
         "id": "infer1",
         "type": "detection_infer",
         "params": {

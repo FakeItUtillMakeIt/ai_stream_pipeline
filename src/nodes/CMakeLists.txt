@@ -61,32 +61,34 @@ if(WITH_CUDA)
         preprocess/gpu_resize_normalize.cu
         postprocess/gpu_detection_post.cu
         PROPERTIES
-            CUDA_SEPARABLE_COMPILATION OFF
+            CUDA_SEPARABLE_COMPILATION ON
     )
     target_include_directories(ai_stream_nodes
         PRIVATE
             ${CUDA_TOOLKIT_TARGET_DIR}/targets/x86_64-linux/include
     )
+    target_link_libraries(ai_stream_nodes
+        PRIVATE 
+            ${FFMPEG_LIBRARIES}
+            ${FFMPEG_LINK_FLAGS}
+            ${CUDA_LIBRARIES}
+            ${CUDA_CUDART_LIBRARY}
+            ${CUDA_nppc_LIBRARY}
+            ${CUDA_nppig_LIBRARY}
+            ${CUDA_nppicc_LIBRARY}
+            ${CUDA_nppisu_LIBRARY}
+            CUDA::cudart
+            ${CUDA_TOOLKIT_TARGET_DIR}/targets/x86_64-linux/lib/libcudadevrt.a
+            libnvinfer.so
+            libnvonnxparser.so
+            libnvinfer_plugin.so
+            
+    )
+else()
+    target_link_libraries(ai_stream_nodes
+        PRIVATE 
+            ${FFMPEG_LIBRARIES}
+            ${FFMPEG_LINK_FLAGS}
+            
+    )
 endif()
-
-target_link_directories(ai_stream_nodes
-    PRIVATE
-        ${CUDA_TOOLKIT_TARGET_DIR}
-)
-target_link_libraries(ai_stream_nodes
-    PRIVATE 
-        ${FFMPEG_LIBRARIES}
-        ${FFMPEG_LINK_FLAGS}
-        ${CUDA_LIBRARIES}
-        ${CUDA_CUDART_LIBRARY}
-        ${CUDA_nppc_LIBRARY}
-        ${CUDA_nppig_LIBRARY}
-        ${CUDA_nppicc_LIBRARY}
-        ${CUDA_nppisu_LIBRARY}
-        CUDA::cudart
-        ${CUDA_TOOLKIT_TARGET_DIR}/targets/x86_64-linux/lib/libcudadevrt.a
-        libnvinfer.so
-        libnvonnxparser.so
-        libnvinfer_plugin.so
-        
-)

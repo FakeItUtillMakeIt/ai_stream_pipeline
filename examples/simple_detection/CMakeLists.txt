@@ -15,19 +15,30 @@ add_executable(simple_detection
 # 判断是作为子项目构建还是独立构建
 if(TARGET ai_stream_core)
     message("target ai_stream_core exist")
-    
-    target_link_libraries(simple_detection
-        PRIVATE
-            # -Wl,--no-as-needed
-            nlohmann_json::nlohmann_json
-            spdlog::spdlog
-            ai_stream_nodes
-            ai_stream_core
-            CUDA::cudart
-            ${CUDA_TOOLKIT_TARGET_DIR}/targets/x86_64-linux/lib/libcudadevrt.a
-            # -Wl,--as-needed
-    )
-    
+    if(WITH_CUDA)
+        target_link_libraries(simple_detection
+            PRIVATE
+                # -Wl,--no-as-needed
+                nlohmann_json::nlohmann_json
+                spdlog::spdlog
+                ai_stream_nodes
+                ai_stream_core
+                CUDA::cudart
+                ${CUDA_TOOLKIT_TARGET_DIR}/targets/x86_64-linux/lib/libcudadevrt.a
+                # -Wl,--as-needed
+        )
+    else()
+        target_link_libraries(simple_detection
+            PRIVATE
+                
+                nlohmann_json::nlohmann_json
+                spdlog::spdlog
+                -Wl,--no-as-needed
+                ai_stream_nodes
+                ai_stream_core
+                -Wl,--as-needed
+        )
+    endif()    
     target_include_directories(simple_detection
         PRIVATE
             ${CMAKE_SOURCE_DIR}/include
