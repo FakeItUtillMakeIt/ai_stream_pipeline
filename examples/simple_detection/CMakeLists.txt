@@ -18,14 +18,16 @@ if(TARGET ai_stream_core)
     if(WITH_CUDA)
         target_link_libraries(simple_detection
             PRIVATE
-                # -Wl,--no-as-needed
+                
                 nlohmann_json::nlohmann_json
                 spdlog::spdlog
+                -Wl,--no-as-needed
                 ai_stream_nodes
                 ai_stream_core
+                -Wl,--as-needed
                 CUDA::cudart
                 ${CUDA_TOOLKIT_TARGET_DIR}/targets/x86_64-linux/lib/libcudadevrt.a
-                # -Wl,--as-needed
+                
         )
     else()
         target_link_libraries(simple_detection
