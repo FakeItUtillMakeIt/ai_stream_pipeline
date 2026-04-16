@@ -14,6 +14,8 @@ if(WITH_CUDA)
     find_package(CUDA REQUIRED)
     find_package(CUDAToolkit REQUIRED)
 
+    message("CUDA_TOOLKIT_TARGET_DIR: ${CUDA_TOOLKIT_TARGET_DIR}")
+
     # 使用 GPU 加速的预处理节点
     list(APPEND NODES_SOURCES
         preprocess/gpu_resize_normalize.cu
@@ -61,19 +63,30 @@ if(WITH_CUDA)
         PROPERTIES
             CUDA_SEPARABLE_COMPILATION OFF
     )
+    target_include_directories(ai_stream_nodes
+        PRIVATE
+            ${CUDA_TOOLKIT_TARGET_DIR}/targets/x86_64-linux/include
+    )
 endif()
 
-message("FFMPEG:${FFMPEG_LIBRARIES}")
-
+target_link_directories(ai_stream_nodes
+    PRIVATE
+        ${CUDA_TOOLKIT_TARGET_DIR}
+)
 target_link_libraries(ai_stream_nodes
     PRIVATE 
         ${FFMPEG_LIBRARIES}
         ${FFMPEG_LINK_FLAGS}
         ${CUDA_LIBRARIES}
+        ${CUDA_CUDART_LIBRARY}
         ${CUDA_nppc_LIBRARY}
         ${CUDA_nppig_LIBRARY}
         ${CUDA_nppicc_LIBRARY}
         ${CUDA_nppisu_LIBRARY}
-        cudadevrt
-        cudart
+        CUDA::cudart
+        ${CUDA_TOOLKIT_TARGET_DIR}/targets/x86_64-linux/lib/libcudadevrt.a
+        libnvinfer.so
+        libnvonnxparser.so
+        libnvinfer_plugin.so
+        
 )
