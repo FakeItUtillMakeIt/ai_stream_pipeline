@@ -176,12 +176,6 @@ if(WITH_ONNX)
     target_link_libraries(ai_stream_nodes PRIVATE ${ONNXRuntime_LIBRARIES})
 endif()
 
-# 确保静态注册符号不被丢弃（如果节点库是静态库）
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_link_options(ai_stream_nodes PRIVATE -Wl,--whole-archive)
-    # 注意：需要配对 --no-whole-archive，但无法跨目标设置，可在可执行文件处处理
-endif()
-
 # ------------------------------------------------------------------------------
 # 6. HTTP 服务器可执行文件
 # ------------------------------------------------------------------------------
