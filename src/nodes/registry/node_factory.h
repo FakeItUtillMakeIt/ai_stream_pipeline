@@ -7,6 +7,7 @@
 #include <string>
 #include <unordered_map>
 #include <nlohmann/json.hpp>
+#include "3rd_party/log_mgr/log_mgr.h"
 
 namespace ai_stream {
 namespace core {
@@ -19,15 +20,33 @@ public:
         static NodeFactory factory;
         return factory;
     }
-    
+
     void registerCreator(const std::string& type, NodeCreator creator) {
         creators_[type] = std::move(creator);
+        if (auto logger = spdlog::get("ai_stream")) {
+            LOG_INFO_FMT("[NodeFactory] Registered node type: {}", type);
+        }
     }
-    
+
     std::shared_ptr<Node> create(const std::string& type, const nlohmann::json& params) {
+        if (auto logger = spdlog::get("ai_stream")) {
+            LOG_INFO_FMT("[NodeFactory] Creating node type: {}", type);
+            LOG_INFO_FMT("[NodeFactory] Registered node types count: {}", creators_.size());
+            for (const auto& [key, value] : creators_) {
+                LOG_INFO_FMT("[NodeFactory]   Registered: {}", key);
+            }
+        }
+
         auto it = creators_.find(type);
         if (it != creators_.end()) {
+            if (auto logger = spdlog::get("ai_stream")) {
+                LOG_INFO_FMT("[NodeFactory] Found creator for type: {}", type);
+            }
             return it->second(params);
+        }
+
+        if (auto logger = spdlog::get("ai_stream")) {
+            LOG_ERROR_FMT("[NodeFactory] Node type not found: {}", type);
         }
         return nullptr;
     }
