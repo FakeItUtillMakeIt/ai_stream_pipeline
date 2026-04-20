@@ -1,11 +1,11 @@
 // src/nodes/track/tracker_node.cpp
 #include "tracker_node.h"
 #include "tracker_factory.h"
-#include "ocsort_adapter.h"
-#include "bytetrack_adapter.h"
 #include "ai_stream/core/packet.h"
 #include "registry/node_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
+
+// 注意：不包含 ocsort_adapter.h 和 bytetrack_adapter.h
 
 namespace ai_stream {
 namespace nodes {
@@ -31,18 +31,10 @@ TrackerType TrackerNode::getTrackerType() const {
 
 void TrackerNode::setOCSortConfig(const OCSortConfig& config) {
     ocsort_config_ = config;
-    if (tracker_ && tracker_->getType() == TrackerType::OCSORT) {
-        auto* ocsort = dynamic_cast<OCSortAdapter*>(tracker_.get());
-        if (ocsort) ocsort->updateConfig(config);
-    }
 }
 
 void TrackerNode::setByteTrackConfig(const ByteTrackConfig& config) {
     bytetrack_config_ = config;
-    if (tracker_ && tracker_->getType() == TrackerType::BYTETRACK) {
-        auto* bytetrack = dynamic_cast<ByteTrackAdapter*>(tracker_.get());
-        if (bytetrack) bytetrack->updateConfig(config);
-    }
 }
 
 int TrackerNode::getActiveTrackCount() const {
@@ -50,6 +42,7 @@ int TrackerNode::getActiveTrackCount() const {
 }
 
 bool TrackerNode::start() {
+    // 通过工厂创建跟踪器
     tracker_ = TrackerFactory::instance().create(tracker_type_);
     if (!tracker_) {
         LOG_ERROR_FMT("[TrackerNode] Failed to create tracker");
@@ -98,14 +91,11 @@ void TrackerNode::matchAndUpdateDetections(
     const std::vector<UnifiedTrackResult>& tracks) {
     
     for (auto& det : detections) {
-        // 默认值
         det.track_id = -1;
         det.track_age = 0;
         det.track_active = false;
         
-        // 查找匹配的跟踪结果
         for (const auto& track : tracks) {
-            // 计算 IoU
             float ix1 = std::max(det.x, track.x);
             float iy1 = std::max(det.y, track.y);
             float ix2 = std::min(det.x + det.w, track.x + track.w);
@@ -118,7 +108,6 @@ void TrackerNode::matchAndUpdateDetections(
             float area_track = track.w * track.h;
             float iou = intersection / (area_det + area_track - intersection);
             
-            // IoU 匹配成功
             if (iou > 0.5f && track.class_id == det.class_id) {
                 det.track_id = track.track_id;
                 det.track_age = track.age;

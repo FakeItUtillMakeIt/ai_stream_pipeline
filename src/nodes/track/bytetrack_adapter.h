@@ -2,7 +2,7 @@
 #pragma once
 
 #include "base_tracker.h"
-#include "ByteTrack/byte_tracker.hpp"
+#include "ai_stream/nodes/i_tracker_node.h"
 #include <memory>
 
 namespace ai_stream {
@@ -24,12 +24,9 @@ public:
     void updateConfig(const ByteTrackConfig& config);
 
 private:
-    std::unique_ptr<ai::ByteTrack::BYTETracker> impl_;
-    ByteTrackConfig config_;
-    
-    ai::cvUtil::PoseBoxArray convertDetections(
-        const std::vector<core::InferenceResultPacket::BBox>& detections);
-    UnifiedTrackResult convertTrack(const ai::ByteTrack::STrack& track);
+    int active_count_ = 0;
+    class Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 } // namespace nodes

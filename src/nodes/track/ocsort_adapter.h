@@ -2,7 +2,7 @@
 #pragma once
 
 #include "base_tracker.h"
-#include "OCSort/OCsort.h"
+#include "ai_stream/nodes/i_tracker_node.h"
 #include <memory>
 
 namespace ai_stream {
@@ -21,17 +21,11 @@ public:
     int getActiveCount() const override;
     void reset() override;
     
-    // 更新配置
     void updateConfig(const OCSortConfig& config);
 
 private:
-    std::unique_ptr<ocsort::OCSort> impl_;
-    OCSortConfig config_;
-    
-    Eigen::MatrixXf convertDetections(
-        const std::vector<core::InferenceResultPacket::BBox>& detections);
-    UnifiedTrackResult convertTrack(const Eigen::RowVectorXf& track);
-    int findTrackAge(int track_id) const;  // 从 trackers 中查找 age
+    class Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 } // namespace nodes

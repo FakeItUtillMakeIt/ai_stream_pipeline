@@ -9,6 +9,10 @@
 namespace ai_stream {
 namespace nodes {
 
+// 前向声明配置结构
+struct OCSortConfig;
+struct ByteTrackConfig;
+
 class TrackerNode : public ITrackerNode {
 public:
     TrackerNode();
