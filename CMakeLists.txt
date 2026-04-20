@@ -111,6 +111,17 @@ if(WITH_CUDA)
     set(CMAKE_CUDA_ARCHITECTURES "90" CACHE STRING "CUDA architectures")
 endif()
 
+if(WITH_TRACK)
+    find_package(Eigen3 REQUIRED)
+    if(EIGEN3_FOUND)
+        message(STATUS "Found Eigen3: ${EIGEN3_INCLUDE_DIR}")
+    else(EIGEN3_FOUND)
+        message(WARNING "Eigen3 not found. Tracking node will be disabled.")
+        set(WITH_TRACK OFF)
+    endif()
+    add_subdirectory(${PROJECT_SOURCE_DIR}/3rd_party/tracker)
+endif()
+
 # 测试依赖
 if(BUILD_TESTS)
     find_package(GTest REQUIRED)

@@ -1,3 +1,8 @@
+
+if(WITH_TRACK)
+    add_subdirectory(track)
+endif()
+
 # 基本节点源文件
 set(NODES_SOURCES
     registry/node_registry.cpp

@@ -8,6 +8,7 @@
 #include "ai_stream/nodes/i_sink_node.h"
 #include "ai_stream/nodes/i_source_node.h"
 #include "ai_stream/nodes/i_infer_node.h"
+#include "ai_stream/nodes/i_tracker_node.h"
 #include "ai_stream/nodes/i_draw_node.h"
 
 
@@ -143,6 +144,49 @@ namespace ai_stream
                             if (params.contains("batch_size"))
                             {
                                 infer_node->setBatchSize(params["batch_size"].get<int>());
+                            }
+                        }
+                    }
+
+                    // src/core/pipeline_manager.cpp
+
+                    if (type.find("tracker") != std::string::npos) {
+                        auto tracker_node = std::dynamic_pointer_cast<nodes::ITrackerNode>(node);
+                        if (tracker_node) {
+                            // 设置跟踪器类型
+                            if (params.contains("tracker_type")) {
+                                std::string t = params["tracker_type"].get<std::string>();
+                                if (t == "ocsort") {
+                                    tracker_node->setTrackerType(nodes::TrackerType::OCSORT);
+                                    
+                                    nodes::OCSortConfig ocsort_config;
+                                    if (params.contains("ocsort_config")) {
+                                        auto& cfg = params["ocsort_config"];
+                                        ocsort_config.det_thresh = cfg.value("det_thresh", 0.3f);
+                                        ocsort_config.max_age = cfg.value("max_age", 30);
+                                        ocsort_config.min_hits = cfg.value("min_hits", 3);
+                                        ocsort_config.iou_threshold = cfg.value("iou_threshold", 0.3f);
+                                        ocsort_config.delta_t = cfg.value("delta_t", 3);
+                                        ocsort_config.asso_func = cfg.value("asso_func", "iou");
+                                        ocsort_config.inertia = cfg.value("inertia", 0.2f);
+                                        ocsort_config.use_byte = cfg.value("use_byte", false);
+                                    }
+                                    tracker_node->setOCSortConfig(ocsort_config);
+                                    
+                                } else if (t == "bytetrack") {
+                                    tracker_node->setTrackerType(nodes::TrackerType::BYTETRACK);
+                                    
+                                    nodes::ByteTrackConfig bytetrack_config;
+                                    if (params.contains("bytetrack_config")) {
+                                        auto& cfg = params["bytetrack_config"];
+                                        bytetrack_config.frame_rate = cfg.value("frame_rate", 30);
+                                        bytetrack_config.track_buffer = cfg.value("track_buffer", 30);
+                                        bytetrack_config.track_thresh = cfg.value("track_thresh", 0.5f);
+                                        bytetrack_config.high_thresh = cfg.value("high_thresh", 0.6f);
+                                        bytetrack_config.match_thresh = cfg.value("match_thresh", 0.8f);
+                                    }
+                                    tracker_node->setByteTrackConfig(bytetrack_config);
+                                }
                             }
                         }
                     }

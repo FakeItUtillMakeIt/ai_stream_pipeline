@@ -79,10 +79,19 @@ struct InferenceResultPacket : public BasePacket {
         float confidence;               // 置信度 [0.0, 1.0]
         int class_id;                   // 类别 ID
         std::string class_name;         // 类别名称
+
+        int track_id;
+        int track_age;
+        bool track_active;
+        float smooth_x;
+        float smooth_y;
+        float smooth_w;
+        float smooth_h;
         
         BBox() = default;
         BBox(float x_, float y_, float w_, float h_, float conf, int cls_id, const std::string& cls_name = "")
-            : x(x_), y(y_), w(w_), h(h_), confidence(conf), class_id(cls_id), class_name(cls_name) {}
+            : x(x_), y(y_), w(w_), h(h_), confidence(conf), class_id(cls_id), class_name(cls_name),
+              track_id(-1), track_age(0), track_active(false), smooth_x(0.0f), smooth_y(0.0f), smooth_w(0.0f), smooth_h(0.0f) {}
     };
     
     std::vector<BBox> detections;                       // 检测结果列表
