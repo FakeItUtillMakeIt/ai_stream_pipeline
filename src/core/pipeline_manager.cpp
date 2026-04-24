@@ -124,27 +124,20 @@ namespace ai_stream
                             }
 
                             // 加载模型
-                            if (params.contains("model_path"))
+                            if(params.contains("detector_config"))
                             {
-                                std::string model_path = params["model_path"].get<std::string>();
-                                if (!infer_node->loadModel(model_path))
+                                nlohmann::json detector_config = params["detector_config"];
+                                if (detector_config.contains("model_path"))
                                 {
-                                    LOG_ERROR_FMT("[Pipeline {}] Failed to load model: {}", id_, model_path);
-                                    return false;
+                                    std::string model_path = detector_config["model_path"].get<std::string>();
+                                    if (!infer_node->loadModel(model_path))
+                                    {
+                                        LOG_ERROR_FMT("[Pipeline {}] Failed to load model: {}", id_, model_path);
+                                        return false;
+                                    }
                                 }
                             }
 
-                            // 设置推理精度
-                            if (params.contains("precision"))
-                            {
-                                infer_node->setPrecision(params["precision"].get<std::string>());
-                            }
-
-                            // 设置批处理大小
-                            if (params.contains("batch_size"))
-                            {
-                                infer_node->setBatchSize(params["batch_size"].get<int>());
-                            }
                         }
                     }
 

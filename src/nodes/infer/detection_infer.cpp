@@ -143,15 +143,14 @@ std::shared_ptr<core::InferenceResultPacket> DetectionInferNode::processFrame(
     result->source_frame = frame;
 
     if (engine_ && context_) {
-        // TODO: 实现真实的TensorRT推理
         LOG_DEBUG_FMT("[DetectionInfer] Performing real detection inference");
 
         // 这里可以添加实际的推理代码
-        // 1. 预处理帧数据（resize, normalize等）
         // 2. 将数据拷贝到GPU
         // 3. 执行推理
         // 4. 解析结果
         // 5. 后处理（NMS等）
+        
     } else {
         // 模拟推理（用于测试）
         static int frame_count = 0;

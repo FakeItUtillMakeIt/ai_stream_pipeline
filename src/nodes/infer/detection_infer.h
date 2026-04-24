@@ -3,6 +3,10 @@
 
 #include "ai_stream/nodes/i_infer_node.h"
 #include "src/core/frame_queue.h"
+
+#include <NvInfer.h>
+#include <cuda_runtime_api.h>
+
 #include <thread>
 #include <atomic>
 #include <vector>
@@ -68,8 +72,10 @@ private:
         std::shared_ptr<core::VideoFramePacket> frame);
 
     // TensorRT 相关成员
+    std::unique_ptr<nvinfer1::IRuntime> runtime_;
     std::unique_ptr<nvinfer1::ICudaEngine> engine_;
     std::unique_ptr<nvinfer1::IExecutionContext> context_;
+    cudaStream_t stream_ = nullptr;
 
     // 推理配置
     int input_width_ = 640;
@@ -80,18 +86,8 @@ private:
 
     // 类别名称
     std::vector<std::string> class_names_ = {
-        "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck",
-        "boat", "traffic light", "fire hydrant", "stop sign", "parking meter", "bench",
-        "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra",
-        "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee",
-        "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove",
-        "skateboard", "surfboard", "tennis racket", "bottle", "wine glass", "cup",
-        "fork", "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange",
-        "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch",
-        "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse",
-        "remote", "keyboard", "cell phone", "microwave", "oven", "toaster", "sink",
-        "refrigerator", "book", "clock", "vase", "scissors", "teddy bear", "hair drier",
-        "toothbrush"
+        "person", "head", "helmet", "clothes_red", "clothes_gray", "clothes_yellow", "clothes_blue", "clothes_similar",
+        "clothes_reflective", "phone", "smoking", "fall", "safety_belt", "sleeping"
     };
 
     // 线程和数据队列
