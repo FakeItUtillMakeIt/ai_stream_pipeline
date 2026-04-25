@@ -12,6 +12,7 @@ set(NODES_SOURCES
     draw/osd_draw.cpp
     sink/rtmp_sink.cpp
     sink/mp4_save.cpp
+    preprocess/resize_normalize.cpp
 )
 
 # 预处理节点：根据 CUDA 支持选择 CPU 或 GPU 版本

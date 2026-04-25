@@ -10,6 +10,7 @@
 #include "ai_stream/nodes/i_infer_node.h"
 #include "ai_stream/nodes/i_tracker_node.h"
 #include "ai_stream/nodes/i_draw_node.h"
+#include "ai_stream/nodes/i_preprocess_node.h"
 
 
 namespace ai_stream
@@ -97,6 +98,11 @@ namespace ai_stream
                                 }
                             }
                         }
+                    }
+                    
+                    if (type.find("preprocess") != std::string::npos)
+                    { 
+                        auto preprocess_node = std::dynamic_pointer_cast<nodes::IPreprocessNode>(node);
                     }
 
                     if (type.find("infer") != std::string::npos)
