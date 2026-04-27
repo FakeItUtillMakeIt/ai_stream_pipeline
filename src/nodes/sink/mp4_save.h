@@ -7,13 +7,14 @@
 #include <queue>
 #include <mutex>
 #include <condition_variable>
-
-// FFmpeg 前向声明...
-struct AVFormatContext;
-struct AVCodecContext;
+#include <memory>
+#include <filesystem>
+#include <sstream>
 
 namespace ai_stream {
 namespace nodes {
+
+class EncoderBase;
 
 class MP4SaveNode : public ISinkNode {
 public:
@@ -23,7 +24,7 @@ public:
     void setTarget(const std::string& target) override;
     void setEncodingParams(int bitrate, const std::string& encoder) override;
     void setOutputSize(int width, int height) override;
-    bool isConnected() const override { return true; } // 文件总是“连接”的
+    bool isConnected() const override { return true; }
 
     bool start() override;
     void stop() override;
@@ -48,9 +49,8 @@ private:
     std::condition_variable queue_cv_;
     static constexpr size_t MAX_QUEUE_SIZE = 100;
 
-    AVFormatContext* fmt_ctx_ = nullptr;
-    AVCodecContext* codec_ctx_ = nullptr;
-    int64_t frame_pts_ = 0;
+    std::unique_ptr<EncoderBase> encoder_;
+    int64_t next_pts_ = 0;
 };
 
 } // namespace nodes

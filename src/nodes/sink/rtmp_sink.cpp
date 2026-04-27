@@ -3,40 +3,51 @@
 #include "ai_stream/core/packet.h"
 #include "registry/node_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
+#include "encoder_base.h"
 #include <opencv2/opencv.hpp>
-
-extern "C" {
-#include <libavformat/avformat.h>
-#include <libavcodec/avcodec.h>
-#include <libswscale/swscale.h>
-#include <libavutil/imgutils.h>
-}
 
 namespace ai_stream {
 namespace nodes {
 
-RTMPSinkNode::RTMPSinkNode() : ISinkNode("RTMPSink"),output_url_("rtmp://localhost/live/out1") {}
-RTMPSinkNode::~RTMPSinkNode() { stop(); }
+RTMPSinkNode::RTMPSinkNode() : ISinkNode("RTMPSink") {
+    LOG_DEBUG("[RTMPSink] Constructor");
+}
 
-void RTMPSinkNode::setTarget(const std::string& target) { output_url_ = target; }
+RTMPSinkNode::~RTMPSinkNode() { 
+    stop(); 
+    LOG_DEBUG("[RTMPSink] Destructor");
+}
+
+void RTMPSinkNode::setTarget(const std::string& target) { 
+    output_url_ = target; 
+    LOG_INFO_FMT("[RTMPSink] Target: {}", output_url_);
+}
+
 void RTMPSinkNode::setEncodingParams(int bitrate, const std::string& encoder) {
     bitrate_ = bitrate;
     encoder_name_ = encoder;
 }
+
 void RTMPSinkNode::setOutputSize(int width, int height) {
     output_width_ = width;
     output_height_ = height;
 }
-bool RTMPSinkNode::isConnected() const { return connected_; }
+
+bool RTMPSinkNode::isConnected() const { 
+    return connected_; 
+}
 
 bool RTMPSinkNode::start() {
     if (output_url_.empty()) {
-        LOG_ERROR_FMT("[RTMPSink] Output URL not set");
-        return false;
+        output_url_ = "rtmp://localhost/live/out1";
+        LOG_WARN_FMT("[RTMPSink] Output URL not set, using default: {}", output_url_);
     }
+    
     if (!initEncoder()) {
+        LOG_ERROR("[RTMPSink] Failed to initialize encoder");
         return false;
     }
+    
     running_ = true;
     worker_ = std::thread(&RTMPSinkNode::encoderLoop, this);
     LOG_INFO_FMT("[RTMPSink] Started pushing to {}", output_url_);
@@ -44,10 +55,17 @@ bool RTMPSinkNode::start() {
 }
 
 void RTMPSinkNode::stop() {
+    if (!running_) return;
+    
     running_ = false;
     queue_cv_.notify_all();
-    if (worker_.joinable()) worker_.join();
+    
+    if (worker_.joinable()) {
+        worker_.join();
+    }
+    
     closeEncoder();
+    LOG_INFO("[RTMPSink] Stopped");
 }
 
 void RTMPSinkNode::pushData(std::shared_ptr<core::BasePacket> packet) {
@@ -55,10 +73,11 @@ void RTMPSinkNode::pushData(std::shared_ptr<core::BasePacket> packet) {
     if (packet->type != core::PacketType::DECODED_FRAME) return;
 
     auto frame = std::static_pointer_cast<core::VideoFramePacket>(packet);
+    if (!frame || !frame->mat || frame->mat->empty()) return;
+    
     {
         std::unique_lock<std::mutex> lock(queue_mutex_);
         if (frame_queue_.size() >= MAX_QUEUE_SIZE) {
-            // 队列满，丢弃最老的一帧
             frame_queue_.pop();
             LOG_WARN_FMT("[RTMPSink] Queue full, dropping oldest frame");
         }
@@ -78,38 +97,38 @@ void RTMPSinkNode::encoderLoop() {
             frame_queue_.pop();
         }
         
-        if (!encodeAndSend(frame)) {
-            LOG_ERROR_FMT("[RTMPSink] Failed to encode/send frame");
-            // 可尝试重连
+        if (!frame || !frame->mat || frame->mat->empty()) continue;
+        
+        int width = output_width_ > 0 ? output_width_ : frame->width;
+        int height = output_height_ > 0 ? output_height_ : frame->height;
+        
+        if (!encoder_->encodeFrame(frame->mat->data, width, height, 
+                                    frame->mat->step, next_pts_++)) {
+            LOG_ERROR_FMT("[RTMPSink] Failed to encode frame");
+            connected_ = false;
+            break;
         }
+        connected_ = true;
     }
     
     // 冲刷编码器
-    // avcodec_send_frame(codec_ctx_, nullptr);
+    encoder_->flush();
 }
 
 bool RTMPSinkNode::initEncoder() {
-    // 实际实现：分配 AVFormatContext, AVCodecContext, 打开输出 URL, 写入头信息
-    // 此处简化为成功
-    connected_ = true;
-    return true;
+    encoder_ = std::make_unique<RTMPEncoder>();
+    return encoder_->init(output_url_, "flv",
+                          output_width_ > 0 ? output_width_ : 1920,
+                          output_height_ > 0 ? output_height_ : 1080,
+                          bitrate_, encoder_name_);
 }
 
 void RTMPSinkNode::closeEncoder() {
-    // 释放 FFmpeg 资源
     connected_ = false;
-}
-
-bool RTMPSinkNode::encodeAndSend(std::shared_ptr<core::VideoFramePacket> frame) {
-    if (!frame->mat || frame->mat->empty()) return false;
-
-    // 1. 将 cv::Mat 转换为 AVFrame
-    // 2. 如果需要缩放，使用 sws_scale
-    // 3. avcodec_send_frame / avcodec_receive_packet
-    // 4. av_interleaved_write_frame
-    
-    // 模拟成功
-    return true;
+    if (encoder_) {
+        encoder_->close();
+        encoder_.reset();
+    }
 }
 
 REGISTER_NODE("rtmp_sink", RTMPSinkNode)

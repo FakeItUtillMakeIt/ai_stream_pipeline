@@ -12,6 +12,7 @@ set(NODES_SOURCES
     draw/osd_draw.cpp
     sink/rtmp_sink.cpp
     sink/mp4_save.cpp
+    sink/encoder_base.cpp
     preprocess/resize_normalize.cpp
 )
 
