@@ -4,6 +4,7 @@
 #include "registry/node_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 #include <opencv2/imgproc.hpp>
+#include <opencv2/opencv.hpp>
 
 namespace ai_stream {
 namespace nodes {
@@ -79,6 +80,7 @@ void ResizeNormalizeNode::pushData(std::shared_ptr<core::BasePacket> packet) {
     new_packet->stream_id = frame->stream_id;
     new_packet->timestamp_ms = frame->timestamp_ms;
     new_packet->mat = processed_mat;
+    new_packet->source_mat = frame->mat;
     new_packet->width = target_width_;
     new_packet->height = target_height_;
     new_packet->channels = 3;

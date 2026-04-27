@@ -138,11 +138,11 @@ void DetectionInferNode::preprocess(const cv::Mat& image, float* gpu_buffer) {
 
     CV_Assert(image.type() == CV_32FC3);
     CV_Assert(image.rows == INPUT_H && image.cols == INPUT_W);
-
-    cv::imwrite("resized.jpg", image);
     
     std::vector<cv::Mat> chs(3);
     cv::split(image, chs);
+
+    cv::imwrite("resized_1.jpg", image);
 
     int hw = INPUT_H * INPUT_W;
     alignas(64) static thread_local std::vector<float> host_input;
@@ -334,8 +334,9 @@ std::shared_ptr<core::InferenceResultPacket> DetectionInferNode::processFrame(
 
         // 10. 缩放比例（使用原始帧尺寸，不是 640x640）
         // 注意：如果 resize_normalize 做了 letterbox，这里需要调整
-        float scale_x = static_cast<float>(frame->width) / INPUT_W;
-        float scale_y = static_cast<float>(frame->height) / INPUT_H;
+        float scale_x = static_cast<float>(frame->source_mat->cols) / INPUT_W;
+        float scale_y = static_cast<float>(frame->source_mat->rows) / INPUT_H;
+        LOG_DEBUG_FMT("[DetectionInfer] Scale: {}x{}", scale_x, scale_y);
         
         // 11. 后处理
         result->detections = postprocess(num_dets, scale_x, scale_y, 0.25f);

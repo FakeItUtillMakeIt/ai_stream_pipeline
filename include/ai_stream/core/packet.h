@@ -57,6 +57,7 @@ struct RawVideoPacket : public BasePacket {
 struct VideoFramePacket : public BasePacket {
     VideoFramePacket() { type = PacketType::DECODED_FRAME; }
     
+    std::shared_ptr<cv::Mat> source_mat;
     std::shared_ptr<cv::Mat> mat;       // 图像数据（通常为 BGR 格式）
     int width = 0;
     int height = 0;

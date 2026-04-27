@@ -4,6 +4,7 @@
 #include "registry/node_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 #include <opencv2/imgproc.hpp>
+#include <opencv2/opencv.hpp>
 
 namespace ai_stream {
 namespace nodes {
@@ -39,7 +40,7 @@ void OSDDrawNode::pushData(std::shared_ptr<core::BasePacket> packet) {
     }
 
     // 克隆一份图像避免影响其他分支（如果该帧还要被其他节点使用）
-    auto draw_mat = std::make_shared<cv::Mat>(infer_result->source_frame->mat->clone());
+    auto draw_mat = std::make_shared<cv::Mat>(infer_result->source_frame->source_mat->clone());
     
     for (const auto& det : infer_result->detections) {
         // 类别过滤
@@ -50,6 +51,7 @@ void OSDDrawNode::pushData(std::shared_ptr<core::BasePacket> packet) {
 
         cv::Rect rect(static_cast<int>(det.x), static_cast<int>(det.y),
                       static_cast<int>(det.w), static_cast<int>(det.h));
+        LOG_INFO_FMT("[OSDDraw] Drawing detection: {} {} ({}, {}, {}, {})",std::to_string(det.class_id).c_str(), det.confidence, rect.x, rect.y, rect.width, rect.height);
         cv::rectangle(*draw_mat, rect, box_color_, font_thickness_);
 
         std::string label = det.class_name;
@@ -61,6 +63,8 @@ void OSDDrawNode::pushData(std::shared_ptr<core::BasePacket> packet) {
                     cv::FONT_HERSHEY_SIMPLEX, 0.5, box_color_, font_thickness_);
     }
 
+    LOG_DEBUG_FMT("[OSDDraw] Drawing {} detections", infer_result->detections.size());
+    cv::imwrite("drawn.jpg", *draw_mat);
     // 构造新的视频帧包（包含绘制后的图像）
     auto drawn_frame = std::make_shared<core::VideoFramePacket>();
     drawn_frame->stream_id = infer_result->stream_id;
