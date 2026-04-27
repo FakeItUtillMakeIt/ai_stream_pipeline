@@ -72,8 +72,9 @@ void MP4SaveNode::writerLoop() {
             frame_queue_.pop();
         }
         
-        // 编码并写入文件 (与 RTMP 编码逻辑类似)
-        // ...
+        // 编码并写入文件 
+        
+
     }
 }
 

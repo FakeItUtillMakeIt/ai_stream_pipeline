@@ -142,8 +142,6 @@ void DetectionInferNode::preprocess(const cv::Mat& image, float* gpu_buffer) {
     std::vector<cv::Mat> chs(3);
     cv::split(image, chs);
 
-    cv::imwrite("resized_1.jpg", image);
-
     int hw = INPUT_H * INPUT_W;
     alignas(64) static thread_local std::vector<float> host_input;
     host_input.resize(3 * hw);

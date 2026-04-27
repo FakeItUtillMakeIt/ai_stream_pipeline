@@ -64,7 +64,7 @@ void OSDDrawNode::pushData(std::shared_ptr<core::BasePacket> packet) {
     }
 
     LOG_DEBUG_FMT("[OSDDraw] Drawing {} detections", infer_result->detections.size());
-    cv::imwrite("drawn.jpg", *draw_mat);
+
     // 构造新的视频帧包（包含绘制后的图像）
     auto drawn_frame = std::make_shared<core::VideoFramePacket>();
     drawn_frame->stream_id = infer_result->stream_id;
