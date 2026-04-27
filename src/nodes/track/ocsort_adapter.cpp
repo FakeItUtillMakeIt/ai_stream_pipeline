@@ -8,9 +8,9 @@
 #define FP_1 ocsort_FP_1
 #define FP_2 ocsort_FP_2
 #define FP_DYNAMIC ocsort_FP_DYNAMIC
-#include "OCSort/OCsort.h"
-#include "OCSort/KalmanBoxTracker.h"
-#include "OCSort/association.h"
+#include "OCSort/OCSort.hpp"
+#include "OCSort/KalmanBoxTracker.hpp"
+#include "OCSort/Association.hpp"
 #undef fp_t
 #undef FP_1
 #undef FP_2

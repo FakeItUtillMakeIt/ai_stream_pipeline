@@ -7,13 +7,19 @@ find_package(Eigen3 REQUIRED)
 # OCSort 库（纯头文件，使用 INTERFACE）
 # ============================================================
 # 收集头文件（可选，用于 IDE 显示）
-file(GLOB OCSORT_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/OCSort/*.h")
+file(GLOB OCSORT_SOURCES 
+    "${CMAKE_CURRENT_SOURCE_DIR}/OCSort/*.cpp")
 
-add_library(ocsort INTERFACE)
+file(GLOB OCSORT_HEADERS 
+    "${CMAKE_CURRENT_SOURCE_DIR}/OCSort/*.h" 
+    "${CMAKE_CURRENT_SOURCE_DIR}/OCSort/*.hpp")
+
+add_library(ocsort SHARED ${OCSORT_SOURCES} ${OCSORT_HEADERS})
 
 target_include_directories(ocsort
-    INTERFACE
+    PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/OCSort
+        ${EIGEN3_INCLUDE_DIR}
 )
 
 target_link_libraries(ocsort
@@ -43,6 +49,7 @@ target_include_directories(bytetrack
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/ByteTrack
         ${CMAKE_CURRENT_SOURCE_DIR}/ByteTrack/common
+        ${EIGEN3_INCLUDE_DIR}
 )
 
 target_link_libraries(bytetrack

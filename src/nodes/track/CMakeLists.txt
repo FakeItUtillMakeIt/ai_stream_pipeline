@@ -21,8 +21,9 @@ set(TRACK_HEADERS
 # ============================================================
 # 创建跟踪节点库
 # ============================================================
-add_library(ai_stream_track SHARED ${TRACK_SOURCES} ${TRACK_HEADERS})
+add_library(ai_stream_track OBJECT ${TRACK_SOURCES} ${TRACK_HEADERS})
 
+target_compile_options(ai_stream_track PRIVATE -fPIC)
 # ============================================================
 # 包含目录
 # ============================================================
@@ -54,7 +55,7 @@ target_link_libraries(ai_stream_track
     PUBLIC
         ai_stream_core
     PRIVATE
-        ocsort
+        # ocsort
         bytetrack
         Eigen3::Eigen
         opencv_core

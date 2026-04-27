@@ -42,7 +42,7 @@ target_include_directories(ai_stream_nodes
         ${CMAKE_CURRENT_SOURCE_DIR}/registry
 )
 
-# ==================== CUDA 终极正确配置 ====================
+# ==================== CUDA 配置 ====================
 if(WITH_CUDA)
     # 必须开启，解决设备链接问题
     set_target_properties(ai_stream_nodes PROPERTIES
@@ -68,5 +68,26 @@ else()
     target_link_libraries(ai_stream_nodes
         PRIVATE
             ${FFMPEG_LIBRARIES}
+    )
+endif()
+
+if (WITH_TRACK)
+    target_include_directories(ai_stream_nodes
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/track
+            ${PROJECT_SOURCE_DIR}/3rd_party/tracker
+            )
+            
+    target_sources(ai_stream_nodes
+        PRIVATE 
+            $<TARGET_OBJECTS:ai_stream_track>
+    )
+    target_link_libraries(ai_stream_nodes
+        PUBLIC 
+            ai_stream_core
+        PRIVATE 
+            ocsort
+            bytetrack
+            Eigen3::Eigen
     )
 endif()

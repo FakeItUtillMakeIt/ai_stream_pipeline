@@ -1,0 +1,106 @@
+{
+  "id": "detection_demo",
+  "graph": {
+    "nodes": [
+      {
+        "id": "src1",
+        "type": "rtsp_source",
+        "params": {
+          "url": "rtsp://localhost:8554/stream"
+        }
+      },
+      {
+        "id": "decode1",
+        "type": "ffmpeg_decode",
+        "params": {
+          "output_bgr": true,
+          "snapshot": {
+            "enabled": true,
+            "interval": 100,
+            "dir": "./snapshots"
+          }
+        }
+      },
+      {
+        "id": "preprocess1",
+        "type": "resize_normalize",
+        "params": {
+          
+        }
+      },
+      {
+        "id": "infer1",
+        "type": "detection_infer",
+        "params": {
+          "detector_type": "yolov8",
+          "detector_config": {
+            "model_path": "/home/sevnce/project/ai_stream_pipeline/models/sevncevision/20260422_sevnce_14cls_nms.engine",
+            "conf_threshold": 0.5,
+            "nms_threshold": 0.4,
+            "input_size": { "width": 640, "height": 640 }
+          }
+        }
+      },
+      {
+        "id": "tracker1",
+        "type": "tracker",
+        "params":{
+          "tracker_type":"ocsort"
+        }
+      },
+      {
+        "id": "draw1",
+        "type": "osd_draw",
+        "params": {}
+      },
+      {
+        "id": "sink1",
+        "type": "rtmp_sink",
+        "params": {
+          "output_url": "rtmp://localhost/live/out1"
+        }
+      },
+      {
+        "id": "save1",
+        "type": "mp4_save",
+        "params": {
+          "output_url": "file:///home/sevnce/project/ai_stream_pipeline/build/out1.mp4"
+        },
+        "output_size": {
+          "width": 1920,
+          "height": "1080"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": "src1",
+        "to": "decode1"
+      },
+      {
+        "from": "decode1",
+        "to": "preprocess1"
+      },
+      {
+        "from": "preprocess1",
+        "to": "infer1"
+      },
+      {
+        "from": "infer1",
+        "to": "draw1"
+      },
+      {
+        "from":"infer1",
+        "to": "tracker1"
+      },
+      {
+        "from": "draw1",
+        "to": "sink1"
+      },
+      {
+        "from": "draw1",
+        "to": "save1"
+      }
+    ]
+  }
+}

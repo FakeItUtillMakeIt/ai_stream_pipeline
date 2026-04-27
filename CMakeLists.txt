@@ -236,6 +236,8 @@ endif()
 
 # 安装核心库和节点库
 install(TARGETS ai_stream_core ai_stream_nodes
+    # ocsort 
+    bytetrack
     EXPORT ai_stream_pipeline-targets
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -250,38 +252,38 @@ if(BUILD_HTTP_SERVER)
     )
 endif()
 
-# 安装 CMake 导出文件
-install(EXPORT ai_stream_pipeline-targets
-    FILE ai_stream_pipelineTargets.cmake
-    NAMESPACE ai_stream_pipeline::
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ai_stream_pipeline
-)
+# # 安装 CMake 导出文件
+# install(EXPORT ai_stream_pipeline-targets
+#     FILE ai_stream_pipelineTargets.cmake
+#     NAMESPACE ai_stream_pipeline::
+#     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ai_stream_pipeline
+# )
 
-# 生成并安装版本文件
-include(CMakePackageConfigHelpers)
-write_basic_package_version_file(
-    "${CMAKE_CURRENT_BINARY_DIR}/ai_stream_pipelineConfigVersion.cmake"
-    VERSION ${PROJECT_VERSION}
-    COMPATIBILITY SameMajorVersion
-)
+# # 生成并安装版本文件
+# include(CMakePackageConfigHelpers)
+# write_basic_package_version_file(
+#     "${CMAKE_CURRENT_BINARY_DIR}/ai_stream_pipelineConfigVersion.cmake"
+#     VERSION ${PROJECT_VERSION}
+#     COMPATIBILITY SameMajorVersion
+# )
 
-configure_package_config_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ai_stream_pipelineConfig.cmake.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/ai_stream_pipelineConfig.cmake"
-    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ai_stream_pipeline
-)
+# configure_package_config_file(
+#     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ai_stream_pipelineConfig.cmake.in"
+#     "${CMAKE_CURRENT_BINARY_DIR}/ai_stream_pipelineConfig.cmake"
+#     INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ai_stream_pipeline
+# )
 
-install(FILES
-    "${CMAKE_CURRENT_BINARY_DIR}/ai_stream_pipelineConfig.cmake"
-    "${CMAKE_CURRENT_BINARY_DIR}/ai_stream_pipelineConfigVersion.cmake"
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ai_stream_pipeline
-)
+# install(FILES
+#     "${CMAKE_CURRENT_BINARY_DIR}/ai_stream_pipelineConfig.cmake"
+#     "${CMAKE_CURRENT_BINARY_DIR}/ai_stream_pipelineConfigVersion.cmake"
+#     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ai_stream_pipeline
+# )
 
-# 安装配置文件目录（可选）
-install(DIRECTORY config/
-    DESTINATION ${CMAKE_INSTALL_DATADIR}/ai_stream_pipeline/config
-    COMPONENT runtime
-)
+# # 安装配置文件目录（可选）
+# install(DIRECTORY config/
+#     DESTINATION ${CMAKE_INSTALL_DATADIR}/ai_stream_pipeline/config
+#     COMPONENT runtime
+# )
 
 # ------------------------------------------------------------------------------
 # 10. 输出构建摘要

@@ -79,7 +79,7 @@ void TrackerNode::pushData(std::shared_ptr<core::BasePacket> packet) {
     
     // 执行跟踪
     auto tracks = tracker_->update(infer_result->detections);
-    
+    LOG_INFO_FMT("[TrackerNode] Tracks: {}", tracks.size());
     // 更新检测框的跟踪信息
     matchAndUpdateDetections(infer_result->detections, tracks);
     
