@@ -86,12 +86,12 @@
         "to": "infer1"
       },
       {
-        "from": "infer1",
-        "to": "draw1"
-      },
-      {
         "from":"infer1",
         "to": "tracker1"
+      },
+      {
+        "from": "tracker1",
+        "to": "draw1"
       },
       {
         "from": "draw1",

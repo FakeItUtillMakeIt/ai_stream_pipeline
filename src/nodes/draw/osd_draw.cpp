@@ -55,12 +55,17 @@ void OSDDrawNode::pushData(std::shared_ptr<core::BasePacket> packet) {
         cv::rectangle(*draw_mat, rect, box_color_, font_thickness_);
 
         std::string label = det.class_name;
+        std::string track_info = "ID:" + std::to_string(det.track_id);
         if (show_confidence_) {
             label += " " + std::to_string(det.confidence).substr(0, 4);
+        }
+        if (det.track_id >= 0) {
+            label += " " + track_info;
         }
         cv::putText(*draw_mat, label, 
                     cv::Point(rect.x, rect.y - 5),
                     cv::FONT_HERSHEY_SIMPLEX, 0.5, box_color_, font_thickness_);
+        LOG_INFO_FMT("[OSDDraw] Label: {}, track_id: {}", label.c_str(), det.track_id);
     }
 
     LOG_DEBUG_FMT("[OSDDraw] Drawing {} detections", infer_result->detections.size());
