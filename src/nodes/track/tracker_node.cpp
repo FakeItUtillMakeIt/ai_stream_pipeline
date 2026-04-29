@@ -79,17 +79,17 @@ void TrackerNode::pushData(std::shared_ptr<core::BasePacket> packet) {
     
     // 执行跟踪
     auto tracks = tracker_->update(infer_result->detections);
-    LOG_INFO_FMT("[TrackerNode] Tracks: {}", tracks.size());
+    LOG_DEBUG_FMT("[TrackerNode] Tracks: {}", tracks.size());
     // 更新检测框的跟踪信息
     matchAndUpdateDetections(infer_result->detections, tracks);
     // 打印跟踪结果
     for (const auto& track : tracks) {
-        LOG_INFO_FMT("[TrackerNode] Track ID: {}, Class ID: {}, Age: {}, Active: {}",
+        LOG_DEBUG_FMT("[TrackerNode] Track ID: {}, Class ID: {}, Age: {}, Active: {}",
                      track.track_id, track.class_id, track.age, track.active);
     }
     //打印检测匹配后的结果
     for (const auto& det : infer_result->detections) {
-        LOG_INFO_FMT("[TrackerNode] Detection: Class ID: {}, Confidence: {}, Track ID: {}, Age: {}, Active: {}",
+        LOG_DEBUG_FMT("[TrackerNode] Detection: Class ID: {}, Confidence: {}, Track ID: {}, Age: {}, Active: {}",
                      det.class_id, det.confidence, det.track_id, det.track_age, det.track_active);
     }   
     //更新数据包

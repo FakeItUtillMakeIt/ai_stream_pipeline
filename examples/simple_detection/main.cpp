@@ -28,7 +28,7 @@ int main(int argc, char *argv[])
     LogManager::Config log_config;
     log_config.log_dir = "./logs";
     log_config.log_name = "simple_detection";
-    log_config.level = LogManager::Level::S_DEBUG;
+    log_config.level = LogManager::Level::S_INFO;
     log_config.max_file_size = 5 * 1024 * 1024; // 5MB
     log_config.max_files = 5;
     log_config.console_output = true;

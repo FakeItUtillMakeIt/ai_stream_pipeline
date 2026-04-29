@@ -73,7 +73,7 @@ void ResizeNormalizeNode::pushData(std::shared_ptr<core::BasePacket> packet) {
         // 实际应用中应逐通道操作，此处简化
     }
 
-    LOG_INFO_FMT("[ResizeNormalize] Resized frame to {}x{}", target_width_, target_height_);
+    LOG_DEBUG_FMT("[ResizeNormalize] Resized frame to {}x{}", target_width_, target_height_);
 
     // 构造新包，保留原 stream_id 和时间戳
     auto new_packet = std::make_shared<core::VideoFramePacket>();

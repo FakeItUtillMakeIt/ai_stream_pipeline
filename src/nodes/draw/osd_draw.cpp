@@ -51,7 +51,7 @@ void OSDDrawNode::pushData(std::shared_ptr<core::BasePacket> packet) {
 
         cv::Rect rect(static_cast<int>(det.x), static_cast<int>(det.y),
                       static_cast<int>(det.w), static_cast<int>(det.h));
-        LOG_INFO_FMT("[OSDDraw] Drawing detection: {} {} ({}, {}, {}, {})",std::to_string(det.class_id).c_str(), det.confidence, rect.x, rect.y, rect.width, rect.height);
+        LOG_DEBUG_FMT("[OSDDraw] Drawing detection: {} {} ({}, {}, {}, {})",std::to_string(det.class_id).c_str(), det.confidence, rect.x, rect.y, rect.width, rect.height);
         cv::rectangle(*draw_mat, rect, box_color_, font_thickness_);
 
         std::string label = det.class_name;
@@ -65,7 +65,7 @@ void OSDDrawNode::pushData(std::shared_ptr<core::BasePacket> packet) {
         cv::putText(*draw_mat, label, 
                     cv::Point(rect.x, rect.y - 5),
                     cv::FONT_HERSHEY_SIMPLEX, 0.5, box_color_, font_thickness_);
-        LOG_INFO_FMT("[OSDDraw] Label: {}, track_id: {}", label.c_str(), det.track_id);
+        LOG_DEBUG_FMT("[OSDDraw] Label: {}, track_id: {}", label.c_str(), det.track_id);
     }
 
     LOG_DEBUG_FMT("[OSDDraw] Drawing {} detections", infer_result->detections.size());

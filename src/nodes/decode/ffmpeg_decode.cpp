@@ -98,9 +98,12 @@ void FFmpegDecodeNode::pushData(std::shared_ptr<core::BasePacket> packet) {
         LOG_ERROR_FMT("[FFmpegDecode] Failed to get decoder for stream {}", stream_id);
         return;
     }
-
+    auto t0 = std::chrono::high_resolution_clock::now();
     // 执行解码
     auto frame_pkt = decodePacket(raw_pkt, decoder_ctx);
+    auto t1 = std::chrono::high_resolution_clock::now();
+    LOG_INFO_FMT("[FFmpegDecode] Decoded frame {} ({} ms)", frame_count_, 
+                 std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
     if (frame_pkt) {
         // 广播解码后的帧
         broadcast(frame_pkt);

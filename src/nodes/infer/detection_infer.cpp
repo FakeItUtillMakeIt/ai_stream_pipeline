@@ -123,7 +123,11 @@ void DetectionInferNode::inferLoop() {
         if (!queue_.pop(frame, std::chrono::milliseconds(100))) {
             continue;
         }
+        auto t0 = std::chrono::high_resolution_clock::now();
         auto result = processFrame(frame);
+        auto t1 = std::chrono::high_resolution_clock::now();
+        LOG_INFO_FMT("[DetectionInfer] Inference time: {} ms",
+                      std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
         if (result) {
             broadcast(result);
         }
@@ -201,8 +205,7 @@ std::shared_ptr<core::InferenceResultPacket> DetectionInferNode::processFrame(
                       frame->mat->type(), frame->mat->rows, frame->mat->cols, frame->mat->channels());
         // OpenCV type 编码: CV_8UC3=16, CV_32FC3=21
         // 打印 type 的数值帮助诊断
-        std::cout << "[DEBUG] mat type value: " << frame->mat->type() 
-                  << " (expected CV_32FC3=" << CV_32FC3 << ")" << std::endl;
+        LOG_DEBUG_FMT("[DetectionInfer] mat type value: {} (expected CV_32FC3= {}" , frame->mat->type(),CV_32FC3);
     } else {
         LOG_ERROR_FMT("[DetectionInfer] Frame mat is null");
     }
@@ -264,27 +267,6 @@ std::shared_ptr<core::InferenceResultPacket> DetectionInferNode::processFrame(
         }
         cudaStreamSynchronize(stream_);
 
-        // 在 cudaStreamSynchronize 之后，postprocess 之前添加：
-
-        // 打印前 10 个原始值
-        std::cout << "[DEBUG] Raw h_scores[0:10]: ";
-        for (int i = 0; i < std::min(10, MAX_DETS); ++i) {
-            std::cout << h_scores_[i] << " ";
-        }
-        std::cout << std::endl;
-
-        std::cout << "[DEBUG] Raw h_classes[0:10]: ";
-        for (int i = 0; i < std::min(10, MAX_DETS); ++i) {
-            std::cout << h_classes_[i] << " ";
-        }
-        std::cout << std::endl;
-
-        std::cout << "[DEBUG] Raw h_boxes[0:4]: ";
-        for (int i = 0; i < std::min(4, MAX_DETS * 4); ++i) {
-            std::cout << h_boxes_[i] << " ";
-        }
-        std::cout << std::endl;
-        
         auto t1 = std::chrono::high_resolution_clock::now();
         float infer_ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
 
@@ -313,11 +295,6 @@ std::shared_ptr<core::InferenceResultPacket> DetectionInferNode::processFrame(
 
         LOG_DEBUG_FMT("[DetectionInfer] Valid detections: {}", num_dets);
 
-        // 调试打印
-        std::cout << "[DEBUG] Raw h_scores[0:20]: ";
-        for (int i = 0; i < std::min(20, MAX_DETS); ++i) {
-            std::cout << h_scores_[i] << " ";
-        }
         std::cout << std::endl;
 
         if (num_dets <= 0) {
