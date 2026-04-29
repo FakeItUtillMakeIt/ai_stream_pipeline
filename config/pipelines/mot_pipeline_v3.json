@@ -37,7 +37,8 @@
             "model_path": "/home/sevnce/project/ai_stream_pipeline/models/sevncevision/20260422_sevnce_14cls_nms.engine",
             "conf_threshold": 0.5,
             "nms_threshold": 0.4,
-            "input_size": { "width": 640, "height": 640 }
+            "input_size": { "width": 640, "height": 640 },
+            "batch_size": 1
           }
         }
       },

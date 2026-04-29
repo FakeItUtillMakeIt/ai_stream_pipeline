@@ -101,7 +101,7 @@ private:
         "safety_belt", "sleeping"
     };
 
-    core::BoundedQueue<std::shared_ptr<core::VideoFramePacket>> queue_{5};
+    core::BoundedQueue<std::shared_ptr<core::VideoFramePacket>> queue_{4};
     std::thread worker_;
     std::atomic<bool> running_{false};
 };

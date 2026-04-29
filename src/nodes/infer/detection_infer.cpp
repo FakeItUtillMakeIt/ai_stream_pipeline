@@ -77,7 +77,8 @@ void DetectionInferNode::setPrecision(const std::string& precision) {
 
 void DetectionInferNode::setBatchSize(int batch_size) {
     batch_size_ = batch_size;
-    LOG_INFO_FMT("[DetectionInfer] Set batch size: {}", batch_size);
+    queue_.setMaxSize(batch_size_ * 2);
+    LOG_INFO_FMT("[DetectionInfer] Set batch size: {},change queue size: {}", batch_size,queue_.getMaxSize());
 }
 
 std::pair<int, int> DetectionInferNode::getInputSize() const {

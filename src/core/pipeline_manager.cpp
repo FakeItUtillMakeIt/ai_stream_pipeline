@@ -142,6 +142,10 @@ namespace ai_stream
                                         return false;
                                     }
                                 }
+                                if(detector_config.contains("batch_size"))
+                                {
+                                    infer_node->setBatchSize(detector_config["batch_size"].get<int>());
+                                }
                             }
 
                         }

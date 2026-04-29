@@ -102,6 +102,14 @@ public:
         return queue_.empty();
     }
 
+    void setMaxSize(size_t max_size) {
+        max_size_ = max_size;
+    }
+
+    size_t getMaxSize() const {
+        return max_size_;
+    }
+
 private:
     mutable std::mutex mutex_;
     std::condition_variable not_empty_;
