@@ -12,6 +12,7 @@
 #include <vector>
 #include <string>
 #include <memory>
+#include <deque>
 
 namespace nvinfer1 {
     class IRuntime;
@@ -44,13 +45,19 @@ private:
     void inferLoop();
     bool initEngine(const std::string& engine_path);
     
-    std::shared_ptr<core::InferenceResultPacket> processFrame(
-        std::shared_ptr<core::VideoFramePacket> frame);
-
-    void preprocess(const cv::Mat& image, float* gpu_buffer);
+    // 处理单帧（收集到 batch 中）
+    void collectFrame(std::shared_ptr<core::VideoFramePacket> frame);
     
-    std::vector<core::InferenceResultPacket::BBox> postprocess(
-        int num_dets, float scale_x, float scale_y, float conf_thresh);
+    // 执行多 batch 推理
+    std::vector<std::shared_ptr<core::InferenceResultPacket>> processBatch(
+        const std::vector<std::shared_ptr<core::VideoFramePacket>>& frames);
+
+    // 预处理：多帧 -> 一个 batch 的 GPU buffer
+    void preprocessBatch(const std::vector<cv::Mat*>& images, float* gpu_buffer, int batch_size);
+    
+    // 后处理：解析一个 batch 的输出
+    std::vector<std::vector<core::InferenceResultPacket::BBox>> postprocessBatch(
+        int batch_size, int num_dets_per_batch[], float scale_x[], float scale_y[], float conf_thresh);
 
     // TensorRT 资源（TensorRT 10 API）
     std::unique_ptr<nvinfer1::IRuntime, void(*)(nvinfer1::IRuntime*)> runtime_{
@@ -67,16 +74,16 @@ private:
     std::string scores_name_ = "det_scores";
     std::string classes_name_ = "det_classes";
 
-    // GPU 缓冲区
+    // GPU 缓冲区（按最大 batch size 分配）
     void* d_input_ = nullptr;
     void* d_boxes_ = nullptr;
     void* d_scores_ = nullptr;
     void* d_classes_ = nullptr;
 
-    // CPU 缓冲区
-    std::vector<float> h_boxes_;
-    std::vector<float> h_scores_;
-    std::vector<int64_t> h_classes_;
+    // CPU 缓冲区（按最大 batch size 分配）
+    std::vector<float> h_boxes_;      // [batch_size, MAX_DETS, 4]
+    std::vector<float> h_scores_;     // [batch_size, MAX_DETS]
+    std::vector<int64_t> h_classes_;  // [batch_size, MAX_DETS]
 
     // 常量
     static constexpr int INPUT_H = 640;
@@ -101,9 +108,17 @@ private:
         "safety_belt", "sleeping"
     };
 
-    core::BoundedQueue<std::shared_ptr<core::VideoFramePacket>> queue_{4};
+    // 数据队列和线程
+    core::BoundedQueue<std::shared_ptr<core::VideoFramePacket>> queue_{64};
     std::thread worker_;
     std::atomic<bool> running_{false};
+
+    // 多 batch 收集相关
+    std::mutex batch_mutex_;
+    std::condition_variable batch_cv_;
+    std::deque<std::shared_ptr<core::VideoFramePacket>> batch_buffer_;
+    std::chrono::milliseconds batch_timeout_ms_{50};  // 等待凑齐 batch 的超时时间
+    std::atomic<int> max_batch_size_{1};
 };
 
 } // namespace nodes

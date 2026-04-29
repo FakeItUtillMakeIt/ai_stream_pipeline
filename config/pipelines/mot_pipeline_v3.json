@@ -10,12 +10,31 @@
         }
       },
       {
+        "id": "src2",
+        "type": "rtsp_source",
+        "params": {
+          "url": "rtsp://localhost:8554/stream"
+        }
+      },
+      {
         "id": "decode1",
         "type": "ffmpeg_decode",
         "params": {
           "output_bgr": true,
           "snapshot": {
-            "enabled": true,
+            "enabled": false,
+            "interval": 100,
+            "dir": "./snapshots"
+          }
+        }
+      },
+      {
+        "id": "decode2",
+        "type": "ffmpeg_decode",
+        "params": {
+          "output_bgr": true,
+          "snapshot": {
+            "enabled": false,
             "interval": 100,
             "dir": "./snapshots"
           }
@@ -23,6 +42,13 @@
       },
       {
         "id": "preprocess1",
+        "type": "resize_normalize",
+        "params": {
+          
+        }
+      },
+      {
+        "id": "preprocess2",
         "type": "resize_normalize",
         "params": {
           
@@ -38,7 +64,7 @@
             "conf_threshold": 0.5,
             "nms_threshold": 0.4,
             "input_size": { "width": 640, "height": 640 },
-            "batch_size": 1
+            "batch_size": 2
           }
         }
       },
@@ -79,11 +105,23 @@
         "to": "decode1"
       },
       {
+        "from": "src2",
+        "to": "decode2"
+      },
+      {
         "from": "decode1",
         "to": "preprocess1"
       },
       {
+        "from": "decode2",
+        "to": "preprocess2"
+      },
+      {
         "from": "preprocess1",
+        "to": "infer1"
+      },
+      {
+        "from": "preprocess2",
         "to": "infer1"
       },
       {

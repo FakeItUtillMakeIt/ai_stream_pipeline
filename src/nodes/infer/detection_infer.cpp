@@ -77,8 +77,9 @@ void DetectionInferNode::setPrecision(const std::string& precision) {
 
 void DetectionInferNode::setBatchSize(int batch_size) {
     batch_size_ = batch_size;
-    queue_.setMaxSize(batch_size_ * 2);
-    LOG_INFO_FMT("[DetectionInfer] Set batch size: {},change queue size: {}", batch_size,queue_.getMaxSize());
+    max_batch_size_ = batch_size;
+    queue_.setMaxSize(batch_size_ * 4);  // 增大队列以容纳更多帧
+    LOG_INFO_FMT("[DetectionInfer] Set batch size: {}, queue size: {}", batch_size, queue_.getMaxSize());
 }
 
 std::pair<int, int> DetectionInferNode::getInputSize() const {
@@ -95,13 +96,17 @@ bool DetectionInferNode::start() {
     }
     running_ = true;
     worker_ = std::thread(&DetectionInferNode::inferLoop, this);
-    LOG_INFO_FMT("[DetectionInfer] Started");
+    LOG_INFO_FMT("[DetectionInfer] Started with max_batch={}", max_batch_size_.load());
     return true;
 }
 
 void DetectionInferNode::stop() {
     running_ = false;
     queue_.stop();
+    {
+        std::lock_guard<std::mutex> lock(batch_mutex_);
+        batch_cv_.notify_all();
+    }
     if (worker_.joinable()) {
         worker_.join();
     }
@@ -118,212 +123,299 @@ void DetectionInferNode::pushData(std::shared_ptr<core::BasePacket> packet) {
     }
 }
 
+// ============================================================
+// 推理主循环：收集 batch 并执行推理
+// ============================================================
 void DetectionInferNode::inferLoop() {
     while (running_) {
-        std::shared_ptr<core::VideoFramePacket> frame;
-        if (!queue_.pop(frame, std::chrono::milliseconds(100))) {
+        std::vector<std::shared_ptr<core::VideoFramePacket>> batch_frames;
+        batch_frames.reserve(max_batch_size_);
+
+        // 1. 等待第一帧（阻塞等待）
+        std::shared_ptr<core::VideoFramePacket> first_frame;
+        if (!queue_.pop(first_frame, std::chrono::milliseconds(100))) {
             continue;
         }
+        batch_frames.push_back(first_frame);
+
+        auto batch_start_time = std::chrono::high_resolution_clock::now();
+
+        // 2. 尝试收集更多帧凑齐 batch（带超时）
+        while (static_cast<int>(batch_frames.size()) < max_batch_size_) {
+            std::shared_ptr<core::VideoFramePacket> frame;
+            auto elapsed = std::chrono::high_resolution_clock::now() - batch_start_time;
+            auto remaining = batch_timeout_ms_ - std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+            
+            if (remaining.count() <= 0) break;  // 超时，不再等待
+
+            if (queue_.pop(frame, remaining)) {
+                batch_frames.push_back(frame);
+            } else {
+                break;  // 队列为空或超时
+            }
+        }
+
+        int actual_batch = static_cast<int>(batch_frames.size());
+        LOG_DEBUG_FMT("[DetectionInfer] Batch collected: {}/{}", actual_batch, max_batch_size_.load());
+
+        // 3. 执行推理
         auto t0 = std::chrono::high_resolution_clock::now();
-        auto result = processFrame(frame);
+        auto results = processBatch(batch_frames);
         auto t1 = std::chrono::high_resolution_clock::now();
-        LOG_INFO_FMT("[DetectionInfer] Inference time: {} ms",
-                      std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
-        if (result) {
-            broadcast(result);
-        }
-    }
-}
-
-// ============================================================
-// 预处理
-// ============================================================
-void DetectionInferNode::preprocess(const cv::Mat& image, float* gpu_buffer) {
-    
-
-    CV_Assert(image.type() == CV_32FC3);
-    CV_Assert(image.rows == INPUT_H && image.cols == INPUT_W);
-    
-    std::vector<cv::Mat> chs(3);
-    cv::split(image, chs);
-
-    int hw = INPUT_H * INPUT_W;
-    alignas(64) static thread_local std::vector<float> host_input;
-    host_input.resize(3 * hw);
-    memcpy(host_input.data() + 0 * hw, chs[0].data, hw * sizeof(float));
-    memcpy(host_input.data() + 1 * hw, chs[1].data, hw * sizeof(float));
-    memcpy(host_input.data() + 2 * hw, chs[2].data, hw * sizeof(float));
-
-    cudaMemcpyAsync(gpu_buffer, host_input.data(), 3 * hw * sizeof(float),
-                    cudaMemcpyHostToDevice, stream_);
-}
-
-// ============================================================
-// 后处理
-// ============================================================
-std::vector<core::InferenceResultPacket::BBox> DetectionInferNode::postprocess(
-    int num_dets, float scale_x, float scale_y, float conf_thresh) {
-    
-    std::vector<core::InferenceResultPacket::BBox> detections;
-    detections.reserve(num_dets);
-
-    for (int i = 0; i < num_dets; ++i) {
-        float score = h_scores_[i];
-        if (score < conf_thresh) continue;
-
-        float cx = h_boxes_[i * 4 + 0];
-        float cy = h_boxes_[i * 4 + 1];
-        float w  = h_boxes_[i * 4 + 2];
-        float h  = h_boxes_[i * 4 + 3];
-
-        core::InferenceResultPacket::BBox box;
-        box.x = static_cast<int>((cx - w / 2.0f) * scale_x);
-        box.y = static_cast<int>((cy - h / 2.0f) * scale_y);
-        box.w = static_cast<int>(w * scale_x);
-        box.h = static_cast<int>(h * scale_y);
-        box.confidence = score;
-        box.class_id = static_cast<int>(h_classes_[i]);
         
-        if (box.class_id >= 0 && box.class_id < static_cast<int>(class_names_.size())) {
-            box.class_name = class_names_[box.class_id];
-        } else {
-            box.class_name = "unknown";
-        }
+        float batch_infer_ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
+        LOG_INFO_FMT("[DetectionInfer] Batch inference: {} frames, total={:.2f}ms, avg={:.2f}ms/frame",
+                     actual_batch, batch_infer_ms, batch_infer_ms / actual_batch);
 
-        detections.push_back(box);
+        // 4. 广播结果
+        for (auto& result : results) {
+            if (result) {
+                broadcast(result);
+            }
+        }
     }
-    return detections;
 }
 
 // ============================================================
-// 单帧推理
+// 多 batch 推理核心
 // ============================================================
-std::shared_ptr<core::InferenceResultPacket> DetectionInferNode::processFrame(
-    std::shared_ptr<core::VideoFramePacket> frame) {
+std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::processBatch(
+    const std::vector<std::shared_ptr<core::VideoFramePacket>>& frames) {
 
-    if (frame->mat) {
-        LOG_DEBUG_FMT("[DetectionInfer] Frame mat info: type={}, rows={}, cols={}, channels={}",
-                      frame->mat->type(), frame->mat->rows, frame->mat->cols, frame->mat->channels());
-        // OpenCV type 编码: CV_8UC3=16, CV_32FC3=21
-        // 打印 type 的数值帮助诊断
-        LOG_DEBUG_FMT("[DetectionInfer] mat type value: {} (expected CV_32FC3= {}" , frame->mat->type(),CV_32FC3);
-    } else {
-        LOG_ERROR_FMT("[DetectionInfer] Frame mat is null");
+    int actual_batch = static_cast<int>(frames.size());
+    std::vector<std::shared_ptr<core::InferenceResultPacket>> results;
+    results.reserve(actual_batch);
+
+    // 预先创建结果包
+    for (int b = 0; b < actual_batch; ++b) {
+        auto result = std::make_shared<core::InferenceResultPacket>();
+        result->stream_id = frames[b]->stream_id;
+        result->timestamp_ms = frames[b]->timestamp_ms;
+        result->source_frame = frames[b];
+        results.push_back(result);
     }
-
-    auto result = std::make_shared<core::InferenceResultPacket>();
-    result->stream_id = frame->stream_id;
-    result->timestamp_ms = frame->timestamp_ms;
-    result->source_frame = frame;
 
     if (!engine_ || !context_) {
-        // Mock 模式
+        // Mock 模式：为每帧生成模拟结果
         static int frame_count = 0;
-        frame_count++;
-        for (int i = 0; i < 3; ++i) {
-            core::InferenceResultPacket::BBox box;
-            box.x = 100 + (frame_count % 200) + i * 50;
-            box.y = 100 + ((frame_count / 2) % 200) + i * 30;
-            box.w = 150 + (frame_count % 100);
-            box.h = 200 + ((frame_count / 3) % 100);
-            box.confidence = 0.7f + (frame_count % 30) / 100.0f;
-            box.class_id = (frame_count + i) % class_names_.size();
-            box.class_name = class_names_[box.class_id];
-            result->detections.push_back(box);
+        for (int b = 0; b < actual_batch; ++b) {
+            frame_count++;
+            for (int i = 0; i < 3; ++i) {
+                core::InferenceResultPacket::BBox box;
+                box.x = 100 + (frame_count % 200) + i * 50 + b * 10;
+                box.y = 100 + ((frame_count / 2) % 200) + i * 30;
+                box.w = 150 + (frame_count % 100);
+                box.h = 200 + ((frame_count / 3) % 100);
+                box.confidence = 0.7f + (frame_count % 30) / 100.0f;
+                box.class_id = (frame_count + i) % class_names_.size();
+                box.class_name = class_names_[box.class_id];
+                results[b]->detections.push_back(box);
+            }
         }
-        LOG_DEBUG_FMT("[DetectionInfer] Mock inference: {} detections", result->detections.size());
-        return result;
+        LOG_DEBUG_FMT("[DetectionInfer] Mock inference: {} frames", actual_batch);
+        return results;
     }
 
-    // ========== TensorRT 10 推理 ==========
+    // ========== TensorRT 10 多 Batch 推理 ==========
     try {
-        if (!frame->mat || frame->mat->empty()) {
-            LOG_ERROR_FMT("[DetectionInfer] Frame mat is null or empty");
-            return result;
-        }
-        // 1. 设置输入形状（TensorRT 10 API）
-        nvinfer1::Dims4 input_dims(1, 3, INPUT_H, INPUT_W);
-        if (!context_->setInputShape(input_name_.c_str(), input_dims)) {
-            LOG_ERROR_FMT("[DetectionInfer] setInputShape failed");
-            return result;
+        // 1. 收集有效的 Mat 指针
+        std::vector<cv::Mat*> valid_mats;
+        std::vector<int> valid_indices;
+        valid_mats.reserve(actual_batch);
+        valid_indices.reserve(actual_batch);
+
+        float scale_x[actual_batch];
+        float scale_y[actual_batch];
+
+        for (int b = 0; b < actual_batch; ++b) {
+            if (!frames[b]->mat || frames[b]->mat->empty()) {
+                LOG_ERROR_FMT("[DetectionInfer] Frame[{}] mat is null or empty", b);
+                continue;
+            }
+            if (frames[b]->mat->type() != CV_32FC3) {
+                LOG_ERROR_FMT("[DetectionInfer] Frame[{}] mat type {} != CV_32FC3({})", 
+                             b, frames[b]->mat->type(), CV_32FC3);
+                continue;
+            }
+            valid_mats.push_back(frames[b]->mat.get());
+            valid_indices.push_back(b);
+
+            // 计算每帧的缩放比例（基于 source_mat 原始尺寸）
+            if (frames[b]->source_mat) {
+                scale_x[b] = static_cast<float>(frames[b]->source_mat->cols) / INPUT_W;
+                scale_y[b] = static_cast<float>(frames[b]->source_mat->rows) / INPUT_H;
+            } else {
+                scale_x[b] = 1.0f;
+                scale_y[b] = 1.0f;
+            }
         }
 
-        // 2. 预处理
-        preprocess(*frame->mat, static_cast<float*>(d_input_));
-        
+        int valid_batch = static_cast<int>(valid_mats.size());
+        if (valid_batch == 0) {
+            LOG_WARN_FMT("[DetectionInfer] No valid frames in batch");
+            return results;
+        }
+
+        // 2. 设置动态输入形状（TensorRT 10 API）
+        nvinfer1::Dims4 input_dims(valid_batch, 3, INPUT_H, INPUT_W);
+        if (!context_->setInputShape(input_name_.c_str(), input_dims)) {
+            LOG_ERROR_FMT("[DetectionInfer] setInputShape failed for batch={}", valid_batch);
+            return results;
+        }
+
+        // 3. 多帧预处理 -> 一个连续的 GPU buffer
+        preprocessBatch(valid_mats, static_cast<float*>(d_input_), valid_batch);
         cudaStreamSynchronize(stream_);
 
-        // 3. 设置输入输出地址（TensorRT 10: enqueueV3）
+        // 4. 设置输入输出地址（TensorRT 10: enqueueV3）
+        // 注意：输出缓冲区大小需要根据实际 batch 调整
+        size_t actual_out_boxes_size = static_cast<size_t>(valid_batch) * MAX_DETS * 4 * sizeof(float);
+        size_t actual_out_scores_size = static_cast<size_t>(valid_batch) * MAX_DETS * sizeof(float);
+        size_t actual_out_classes_size = static_cast<size_t>(valid_batch) * MAX_DETS * sizeof(int64_t);
+
         context_->setTensorAddress(input_name_.c_str(), d_input_);
         context_->setTensorAddress(boxes_name_.c_str(), d_boxes_);
         context_->setTensorAddress(scores_name_.c_str(), d_scores_);
         context_->setTensorAddress(classes_name_.c_str(), d_classes_);
 
-        // 4. 执行推理
+        // 5. 执行推理
         auto t0 = std::chrono::high_resolution_clock::now();
         
         if (!context_->enqueueV3(stream_)) {
-            LOG_ERROR_FMT("[DetectionInfer] enqueueV3 failed");
-            return result;
+            LOG_ERROR_FMT("[DetectionInfer] enqueueV3 failed for batch={}", valid_batch);
+            return results;
         }
         cudaStreamSynchronize(stream_);
 
         auto t1 = std::chrono::high_resolution_clock::now();
         float infer_ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
 
-        // 5. 获取输出形状（TensorRT 10 API）
+        // 6. 获取输出形状
         nvinfer1::Dims out_boxes_dims = context_->getTensorShape(boxes_name_.c_str());
         nvinfer1::Dims out_scores_dims = context_->getTensorShape(scores_name_.c_str());
         nvinfer1::Dims out_classes_dims = context_->getTensorShape(classes_name_.c_str());
         LOG_DEBUG_FMT("[DetectionInfer] Output shapes: boxes=[{}] scores=[{}] classes=[{}]", 
                       out_boxes_dims.d[0], out_scores_dims.d[0], out_classes_dims.d[0]);
 
-        // 7. 拷贝输出回 Host（先拷贝全部 MAX_DETS，再推断实际数量）
-        cudaMemcpyAsync(h_boxes_.data(), d_boxes_, out_boxes_size_,
+        // 7. 拷贝输出回 Host（只拷贝实际 batch 的数据）
+        cudaMemcpyAsync(h_boxes_.data(), d_boxes_, actual_out_boxes_size,
                         cudaMemcpyDeviceToHost, stream_);
-        cudaMemcpyAsync(h_scores_.data(), d_scores_, out_scores_size_,
+        cudaMemcpyAsync(h_scores_.data(), d_scores_, actual_out_scores_size,
                         cudaMemcpyDeviceToHost, stream_);
-        cudaMemcpyAsync(h_classes_.data(), d_classes_, out_classes_size_,
+        cudaMemcpyAsync(h_classes_.data(), d_classes_, actual_out_classes_size,
                         cudaMemcpyDeviceToHost, stream_);
         cudaStreamSynchronize(stream_);
 
-        // 8. 推断实际检测数（找到第一个 score < 0.001 的位置）
-        int num_dets = 0;
-        for (int i = 0; i < MAX_DETS; ++i) {
-            if (h_scores_[i] < 0.001f || std::isnan(h_scores_[i])) break;
-            num_dets++;
+        // 8. 解析每帧的检测数量
+        int num_dets_per_batch[valid_batch];
+        for (int b = 0; b < valid_batch; ++b) {
+            num_dets_per_batch[b] = 0;
+            for (int i = 0; i < MAX_DETS; ++i) {
+                float score = h_scores_[b * MAX_DETS + i];
+                if (score < 0.001f || std::isnan(score)) break;
+                num_dets_per_batch[b]++;
+            }
         }
 
-        LOG_DEBUG_FMT("[DetectionInfer] Valid detections: {}", num_dets);
+        // 9. 后处理：解析每个 batch 的结果
+        auto all_detections = postprocessBatch(valid_batch, num_dets_per_batch, 
+                                                scale_x, scale_y, 0.25f);
 
-        std::cout << std::endl;
-
-        if (num_dets <= 0) {
-            LOG_DEBUG_FMT("[DetectionInfer] No detections");
-            return result;
+        // 10. 将结果回填到对应帧
+        for (int i = 0; i < valid_batch; ++i) {
+            int orig_idx = valid_indices[i];
+            results[orig_idx]->detections = std::move(all_detections[i]);
+            LOG_INFO_FMT("[DetectionInfer] Frame[{}]: {} dets, ts={}ms",
+                         orig_idx, results[orig_idx]->detections.size(), 
+                         frames[orig_idx]->timestamp_ms);
         }
 
-        // 9. 调试打印第一个检测
-        LOG_DEBUG_FMT("[DetectionInfer] First: cls={} conf={:.3f} box=[{:.1f},{:.1f},{:.1f},{:.1f}]",
-                      h_classes_[0], h_scores_[0],
-                      h_boxes_[0], h_boxes_[1], h_boxes_[2], h_boxes_[3]);
+        LOG_INFO_FMT("[DetectionInfer] Batch done: {}/{} valid, infer={:.2f}ms",
+                     valid_batch, actual_batch, infer_ms);
 
-        // 10. 缩放比例（使用原始帧尺寸，不是 640x640）
-        // 注意：如果 resize_normalize 做了 letterbox，这里需要调整
-        float scale_x = static_cast<float>(frame->source_mat->cols) / INPUT_W;
-        float scale_y = static_cast<float>(frame->source_mat->rows) / INPUT_H;
-        LOG_DEBUG_FMT("[DetectionInfer] Scale: {}x{}", scale_x, scale_y);
-        
-        // 11. 后处理
-        result->detections = postprocess(num_dets, scale_x, scale_y, 0.25f);
-        
-        LOG_INFO_FMT("[DetectionInfer] ts={}ms: {} dets, infer={:.2f}ms",
-                     frame->timestamp_ms, result->detections.size(), infer_ms);
     } catch (const std::exception& e) {
-        LOG_ERROR_FMT("[DetectionInfer] Inference exception: {}", e.what());
+        LOG_ERROR_FMT("[DetectionInfer] Batch inference exception: {}", e.what());
     }
 
-    return result;
+    return results;
+}
+
+// ============================================================
+// 多帧预处理
+// ============================================================
+void DetectionInferNode::preprocessBatch(const std::vector<cv::Mat*>& images, 
+                                          float* gpu_buffer, int batch_size) {
+    int hw = INPUT_H * INPUT_W;
+    int batch_stride = 3 * hw;
+    
+    // 使用 pinned memory 或异步拷贝优化
+    alignas(64) static thread_local std::vector<float> host_input;
+    host_input.resize(batch_size * batch_stride);
+
+    for (int b = 0; b < batch_size; ++b) {
+        const cv::Mat& image = *images[b];
+        CV_Assert(image.type() == CV_32FC3);
+        CV_Assert(image.rows == INPUT_H && image.cols == INPUT_W);
+
+        std::vector<cv::Mat> chs(3);
+        cv::split(image, chs);
+
+        float* batch_ptr = host_input.data() + b * batch_stride;
+        memcpy(batch_ptr + 0 * hw, chs[0].data, hw * sizeof(float));
+        memcpy(batch_ptr + 1 * hw, chs[1].data, hw * sizeof(float));
+        memcpy(batch_ptr + 2 * hw, chs[2].data, hw * sizeof(float));
+    }
+
+    // 一次性拷贝整个 batch 到 GPU
+    cudaMemcpyAsync(gpu_buffer, host_input.data(), 
+                    batch_size * batch_stride * sizeof(float),
+                    cudaMemcpyHostToDevice, stream_);
+}
+
+// ============================================================
+// 多 batch 后处理
+// ============================================================
+std::vector<std::vector<core::InferenceResultPacket::BBox>> DetectionInferNode::postprocessBatch(
+    int batch_size, int num_dets_per_batch[], float scale_x[], float scale_y[], float conf_thresh) {
+    
+    std::vector<std::vector<core::InferenceResultPacket::BBox>> all_detections;
+    all_detections.reserve(batch_size);
+
+    for (int b = 0; b < batch_size; ++b) {
+        std::vector<core::InferenceResultPacket::BBox> detections;
+        int num_dets = num_dets_per_batch[b];
+        detections.reserve(num_dets);
+
+        int batch_offset = b * MAX_DETS;
+
+        for (int i = 0; i < num_dets; ++i) {
+            float score = h_scores_[batch_offset + i];
+            if (score < conf_thresh) continue;
+
+            float cx = h_boxes_[(batch_offset + i) * 4 + 0];
+            float cy = h_boxes_[(batch_offset + i) * 4 + 1];
+            float w  = h_boxes_[(batch_offset + i) * 4 + 2];
+            float h  = h_boxes_[(batch_offset + i) * 4 + 3];
+
+            core::InferenceResultPacket::BBox box;
+            box.x = static_cast<int>((cx - w / 2.0f) * scale_x[b]);
+            box.y = static_cast<int>((cy - h / 2.0f) * scale_y[b]);
+            box.w = static_cast<int>(w * scale_x[b]);
+            box.h = static_cast<int>(h * scale_y[b]);
+            box.confidence = score;
+            box.class_id = static_cast<int>(h_classes_[batch_offset + i]);
+            
+            if (box.class_id >= 0 && box.class_id < static_cast<int>(class_names_.size())) {
+                box.class_name = class_names_[box.class_id];
+            } else {
+                box.class_name = "unknown";
+            }
+
+            detections.push_back(box);
+        }
+        all_detections.push_back(std::move(detections));
+    }
+    return all_detections;
 }
 
 // ============================================================
@@ -370,6 +462,45 @@ bool DetectionInferNode::initEngine(const std::string& engine_path) {
             return false;
         }
 
+        // 1. 显存检查
+        size_t free_mem = 0, total_mem = 0;
+        cudaMemGetInfo(&free_mem, &total_mem);
+
+        // 2. 用最大 batch 预热（触发内部分配）
+        cudaStream_t warmup_stream;
+        cudaStreamCreate(&warmup_stream);
+
+        // 分配临时缓冲区
+        void *d_tmp_input, *d_tmp_boxes, *d_tmp_scores, *d_tmp_classes;
+        cudaMalloc(&d_tmp_input, max_batch_size_ * 3 * INPUT_H * INPUT_W * sizeof(float));
+        cudaMalloc(&d_tmp_boxes, max_batch_size_ * MAX_DETS * 4 * sizeof(float));
+        cudaMalloc(&d_tmp_scores, max_batch_size_ * MAX_DETS * sizeof(float));
+        cudaMalloc(&d_tmp_classes, max_batch_size_ * MAX_DETS * sizeof(int64_t));
+
+        // 绑定并预热
+        nvinfer1::Dims4 warmup_dims(max_batch_size_, 3, INPUT_H, INPUT_W);
+        context->setInputShape(input_name_.c_str(), warmup_dims);
+        context->setTensorAddress(input_name_.c_str(), d_tmp_input);
+        context->setTensorAddress(boxes_name_.c_str(), d_tmp_boxes);
+        context->setTensorAddress(scores_name_.c_str(), d_tmp_scores);
+        context->setTensorAddress(classes_name_.c_str(), d_tmp_classes);
+
+        bool warmup_ok = context->enqueueV3(warmup_stream);
+        cudaStreamSynchronize(warmup_stream);
+
+        if (!warmup_ok) {
+            LOG_ERROR_FMT("[DetectionInfer] Warmup failed - insufficient GPU memory for batch={}", 
+                        max_batch_size_.load());
+            // 降级到 batch=1
+            max_batch_size_ = 1;
+            batch_size_ = 1;
+        }
+
+        // 清理临时资源
+        cudaFree(d_tmp_input); cudaFree(d_tmp_boxes); 
+        cudaFree(d_tmp_scores); cudaFree(d_tmp_classes);
+        cudaStreamDestroy(warmup_stream);
+
         // 5. 保存资源
         runtime_.reset(runtime);
         engine_.reset(engine);
@@ -378,7 +509,20 @@ bool DetectionInferNode::initEngine(const std::string& engine_path) {
         // 6. 创建 CUDA Stream
         cudaStreamCreate(&stream_);
 
-        // 7. 打印 Tensor 信息（TensorRT 10 API）
+        // 7. 检查引擎是否支持动态 batch
+        nvinfer1::Dims profile_dims = engine_->getProfileShape(input_name_.c_str(), 0, nvinfer1::OptProfileSelector::kMAX);
+        int max_engine_batch = profile_dims.d[0];
+        LOG_INFO_FMT("[DetectionInfer] Engine max batch size: {}", max_engine_batch);
+
+        // 限制 batch_size_ 不超过引擎支持的最大值
+        if (batch_size_ > max_engine_batch) {
+            LOG_WARN_FMT("[DetectionInfer] Requested batch_size({}) > engine max({}), limiting to {}", 
+                        batch_size_, max_engine_batch, max_engine_batch);
+            batch_size_ = max_engine_batch;
+            max_batch_size_ = max_engine_batch;
+        }
+
+        // 8. 打印 Tensor 信息（TensorRT 10 API）
         int nb_io = engine_->getNbIOTensors();
         LOG_INFO_FMT("[DetectionInfer] Engine has {} I/O tensors", nb_io);
         
@@ -401,25 +545,26 @@ bool DetectionInferNode::initEngine(const std::string& engine_path) {
             }
         }
 
-        // 8. 计算缓冲区大小
-        input_size_ = static_cast<size_t>(batch_size_) * 3 * INPUT_H * INPUT_W * sizeof(float);
-        out_boxes_size_ = static_cast<size_t>(MAX_DETS) * 4 * sizeof(float);
-        out_scores_size_ = static_cast<size_t>(MAX_DETS) * sizeof(float);
-        out_classes_size_ = static_cast<size_t>(MAX_DETS) * sizeof(int64_t);
+        // 9. 计算缓冲区大小（按最大 batch size 分配）
+        int max_batch = max_batch_size_.load();
+        input_size_ = static_cast<size_t>(max_batch) * 3 * INPUT_H * INPUT_W * sizeof(float);
+        out_boxes_size_ = static_cast<size_t>(max_batch) * MAX_DETS * 4 * sizeof(float);
+        out_scores_size_ = static_cast<size_t>(max_batch) * MAX_DETS * sizeof(float);
+        out_classes_size_ = static_cast<size_t>(max_batch) * MAX_DETS * sizeof(int64_t);
 
-        // 9. 分配 GPU 内存
+        // 10. 分配 GPU 内存
         cudaMalloc(&d_input_, input_size_);
         cudaMalloc(&d_boxes_, out_boxes_size_);
         cudaMalloc(&d_scores_, out_scores_size_);
         cudaMalloc(&d_classes_, out_classes_size_);
 
-        // 10. 预分配 CPU 缓冲区
-        h_boxes_.resize(MAX_DETS * 4);
-        h_scores_.resize(MAX_DETS);
-        h_classes_.resize(MAX_DETS);
+        // 11. 预分配 CPU 缓冲区
+        h_boxes_.resize(max_batch * MAX_DETS * 4);
+        h_scores_.resize(max_batch * MAX_DETS);
+        h_classes_.resize(max_batch * MAX_DETS);
 
-        LOG_INFO_FMT("[DetectionInfer] Engine loaded: {} (batch={}, max_dets={})",
-                     engine_path, batch_size_, MAX_DETS);
+        LOG_INFO_FMT("[DetectionInfer] Engine loaded: {} (max_batch={}, max_dets={})",
+                     engine_path, max_batch, MAX_DETS);
         return true;
 
     } catch (const std::exception& e) {
