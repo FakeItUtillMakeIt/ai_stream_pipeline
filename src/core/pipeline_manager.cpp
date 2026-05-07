@@ -133,6 +133,10 @@ namespace ai_stream
                             if(params.contains("detector_config"))
                             {
                                 nlohmann::json detector_config = params["detector_config"];
+                                if(detector_config.contains("batch_size"))
+                                {
+                                    infer_node->setBatchSize(detector_config["batch_size"].get<int>());
+                                }
                                 if (detector_config.contains("model_path"))
                                 {
                                     std::string model_path = detector_config["model_path"].get<std::string>();
@@ -141,10 +145,6 @@ namespace ai_stream
                                         LOG_ERROR_FMT("[Pipeline {}] Failed to load model: {}", id_, model_path);
                                         return false;
                                     }
-                                }
-                                if(detector_config.contains("batch_size"))
-                                {
-                                    infer_node->setBatchSize(detector_config["batch_size"].get<int>());
                                 }
                             }
 

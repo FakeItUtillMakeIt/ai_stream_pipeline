@@ -22,9 +22,9 @@
         "params": {
           "output_bgr": true,
           "snapshot": {
-            "enabled": false,
+            "enabled": true,
             "interval": 100,
-            "dir": "./snapshots"
+            "dir": "./snapshots1"
           }
         }
       },
@@ -34,9 +34,9 @@
         "params": {
           "output_bgr": true,
           "snapshot": {
-            "enabled": false,
+            "enabled": true,
             "interval": 100,
-            "dir": "./snapshots"
+            "dir": "./snapshots2"
           }
         }
       },
@@ -123,22 +123,6 @@
       {
         "from": "preprocess2",
         "to": "infer1"
-      },
-      {
-        "from":"infer1",
-        "to": "tracker1"
-      },
-      {
-        "from": "tracker1",
-        "to": "draw1"
-      },
-      {
-        "from": "draw1",
-        "to": "sink1"
-      },
-      {
-        "from": "draw1",
-        "to": "save1"
       }
     ]
   }
