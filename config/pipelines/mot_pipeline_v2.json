@@ -6,14 +6,14 @@
         "id": "src1",
         "type": "rtsp_source",
         "params": {
-          "url": "rtsp://localhost:8554/stream"
+          "url": "rtsp://localhost:8554/stream1"
         }
       },
       {
         "id": "src2",
         "type": "rtsp_source",
         "params": {
-          "url": "rtsp://localhost:8554/stream"
+          "url": "rtsp://localhost:8554/stream2"
         }
       },
       {
@@ -60,7 +60,7 @@
         "params": {
           "detector_type": "yolov8",
           "detector_config": {
-            "model_path": "/home/sevnce/project/ai_stream_pipeline/models/sevncevision/20260422_sevnce_14cls_nms.engine",
+            "model_path": "/home/sevnce/project/ai_stream_pipeline/models/sevncevision/20260509_sevnce_14_cls_nms.engine",
             "conf_threshold": 0.5,
             "nms_threshold": 0.4,
             "input_size": { "width": 640, "height": 640 },
@@ -76,7 +76,19 @@
         }
       },
       {
+        "id": "tracker2",
+        "type": "tracker",
+        "params":{
+          "tracker_type":"ocsort"
+        }
+      },
+      {
         "id": "draw1",
+        "type": "osd_draw",
+        "params": {}
+      },
+      {
+        "id": "draw2",
         "type": "osd_draw",
         "params": {}
       },
@@ -85,6 +97,13 @@
         "type": "rtmp_sink",
         "params": {
           "output_url": "rtmp://localhost/live/out1"
+        }
+      },
+      {
+        "id": "sink2",
+        "type": "rtmp_sink",
+        "params": {
+          "output_url": "rtmp://localhost/live/out2"
         }
       },
       {
@@ -123,6 +142,30 @@
       {
         "from": "preprocess2",
         "to": "infer1"
+      },
+      {
+        "from": "infer1",
+        "to": "tracker1"
+      },
+      {
+        "from": "infer1",
+        "to": "tracker2"
+      },
+      {
+        "from": "tracker1",
+        "to": "draw1"
+      },
+      {
+        "from": "tracker2",
+        "to": "draw2"
+      },
+      {
+        "from": "draw1",
+        "to": "sink1"
+      },
+      {
+        "from": "draw2",
+        "to": "sink2"
       }
     ]
   }
