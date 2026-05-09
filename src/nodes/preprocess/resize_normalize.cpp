@@ -78,6 +78,7 @@ void ResizeNormalizeNode::pushData(std::shared_ptr<core::BasePacket> packet) {
     // 构造新包，保留原 stream_id 和时间戳
     auto new_packet = std::make_shared<core::VideoFramePacket>();
     new_packet->stream_id = frame->stream_id;
+    new_packet->source_id = frame->source_id;
     new_packet->timestamp_ms = frame->timestamp_ms;
     new_packet->mat = processed_mat;
     new_packet->source_mat = frame->mat;

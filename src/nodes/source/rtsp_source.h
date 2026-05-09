@@ -18,6 +18,7 @@ public:
     ~RTSPSourceNode() override;
 
     void setUrl(const std::string& url) override;
+    void setSourceId(const std::string& id) override;
     std::string getUrl() const override;
 
     bool start() override;
@@ -30,6 +31,7 @@ private:
     void closeInput();
 
     std::string url_;
+    std::string source_id_;
     std::atomic<bool> running_{false};
     std::thread worker_;
 

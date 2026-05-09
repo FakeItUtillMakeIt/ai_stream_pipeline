@@ -61,6 +61,7 @@ namespace ai_stream
                     {
                         auto source_node = std::dynamic_pointer_cast<nodes::ISourceNode>(node);
                         source_node->setUrl(params["url"].get<std::string>());
+                        source_node->setSourceId(id);
                     }
 
                     if (type.find("decode") != std::string::npos)
@@ -151,10 +152,9 @@ namespace ai_stream
                         }
                     }
 
-                    // src/core/pipeline_manager.cpp
-
                     if (type.find("tracker") != std::string::npos) {
                         auto tracker_node = std::dynamic_pointer_cast<nodes::ITrackerNode>(node);
+                        tracker_node->setTrackerId(id); // 设置跟踪器 ID，便于日志区分
                         if (tracker_node) {
                             // 设置跟踪器类型
                             if (params.contains("tracker_type")) {
@@ -191,6 +191,10 @@ namespace ai_stream
                                     tracker_node->setByteTrackConfig(bytetrack_config);
                                 }
                             }
+                            if (params.contains("sub_stream_id") && params["sub_stream_id"].is_string()) {
+                                tracker_node->setSubStreamId(params["sub_stream_id"].get<std::string>());
+                            }
+
                         }
                     }
 

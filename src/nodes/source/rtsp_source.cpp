@@ -40,6 +40,10 @@ void RTSPSourceNode::setUrl(const std::string& url) {
     url_ = url;
 }
 
+void RTSPSourceNode::setSourceId(const std::string& id) {
+    source_id_ = id;
+}
+
 std::string RTSPSourceNode::getUrl() const {
     return url_;
 }
@@ -296,6 +300,7 @@ void RTSPSourceNode::workerFunc() {
             // 创建数据包
             auto raw_pkt = std::make_shared<core::RawVideoPacket>();
             raw_pkt->stream_id = my_stream_id_;
+            raw_pkt->source_id = source_id_;
             
             // 计算时间戳
             AVRational& time_base = fmt_ctx_->streams[video_stream_index_]->time_base;

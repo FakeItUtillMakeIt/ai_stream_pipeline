@@ -22,7 +22,7 @@
         "params": {
           "output_bgr": true,
           "snapshot": {
-            "enabled": true,
+            "enabled": false,
             "interval": 100,
             "dir": "./snapshots1"
           }
@@ -34,7 +34,7 @@
         "params": {
           "output_bgr": true,
           "snapshot": {
-            "enabled": true,
+            "enabled": false,
             "interval": 100,
             "dir": "./snapshots2"
           }
@@ -72,14 +72,16 @@
         "id": "tracker1",
         "type": "tracker",
         "params":{
-          "tracker_type":"ocsort"
+          "tracker_type":"ocsort",
+          "sub_stream_id":"src1"
         }
       },
       {
         "id": "tracker2",
         "type": "tracker",
         "params":{
-          "tracker_type":"ocsort"
+          "tracker_type":"ocsort",
+          "sub_stream_id":"src2"
         }
       },
       {
@@ -114,7 +116,7 @@
         },
         "output_size": {
           "width": 1920,
-          "height": "1080"
+          "height": 1080
         }
       }
     ],

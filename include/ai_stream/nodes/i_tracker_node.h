@@ -60,6 +60,15 @@ public:
     virtual TrackerType getTrackerType() const = 0;
 
     /**
+     * @brief 设置订阅的流 ID（用于多流跟踪器区分输入数据来源）
+     */
+    virtual void setSubStreamId(const std::string& stream_id) = 0;
+
+    /**
+     * @brief 设置跟踪器 ID
+     */
+    virtual void setTrackerId(const std::string& id) = 0;
+    /**
      * @brief 设置 OCSort 配置
      */
     virtual void setOCSortConfig(const OCSortConfig& config) = 0;

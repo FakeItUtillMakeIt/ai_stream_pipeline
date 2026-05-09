@@ -221,6 +221,7 @@ std::shared_ptr<core::VideoFramePacket> FFmpegDecodeNode::decodePacket(
     // 5. 构造 VideoFramePacket
     auto frame_pkt = std::make_shared<core::VideoFramePacket>();
     frame_pkt->stream_id = raw_pkt->stream_id;
+    frame_pkt->source_id = raw_pkt->source_id;
     frame_pkt->timestamp_ms = raw_pkt->timestamp_ms;
     frame_pkt->mat = std::make_shared<cv::Mat>(std::move(mat));
     frame_pkt->width = width;

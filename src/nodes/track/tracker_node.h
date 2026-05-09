@@ -21,6 +21,8 @@ public:
     // ITrackerNode 接口
     void setTrackerType(TrackerType type) override;
     TrackerType getTrackerType() const override;
+    void setSubStreamId(const std::string& stream_id) override;
+    void setTrackerId(const std::string& id) override;
     void setOCSortConfig(const OCSortConfig& config) override;
     void setByteTrackConfig(const ByteTrackConfig& config) override;
     int getActiveTrackCount() const override;
@@ -36,6 +38,8 @@ private:
     
     TrackerType tracker_type_ = TrackerType::OCSORT;
     OCSortConfig ocsort_config_;
+    std::string sub_stream_id_;
+    std::string tracker_id_;
     ByteTrackConfig bytetrack_config_;
     TrackerPtr tracker_;
     std::atomic<bool> running_{false};

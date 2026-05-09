@@ -192,6 +192,7 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
     for (int b = 0; b < actual_batch; ++b) {
         auto result = std::make_shared<core::InferenceResultPacket>();
         result->stream_id = frames[b]->stream_id;
+        result->source_id = frames[b]->source_id;
         result->timestamp_ms = frames[b]->timestamp_ms;
         result->source_frame = frames[b];
         results.push_back(result);
@@ -340,9 +341,9 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
         for (int i = 0; i < valid_batch; ++i) {
             int orig_idx = valid_indices[i];
             results[orig_idx]->detections = std::move(all_detections[i]);
-            LOG_INFO_FMT("[DetectionInfer] Frame[{}]: {} dets, ts={}ms",
-                         orig_idx, results[orig_idx]->detections.size(), 
-                         frames[orig_idx]->timestamp_ms);
+            LOG_INFO_FMT("[DetectionInfer] Frame[{}]: source id:{} stream:{}  {} dets, ts={}ms",
+                         orig_idx, results[orig_idx]->source_id, results[orig_idx]->stream_id,
+                         results[orig_idx]->detections.size(), frames[orig_idx]->timestamp_ms);
         }
 
         LOG_INFO_FMT("[DetectionInfer] Batch done: {}/{} valid, infer={:.2f}ms",

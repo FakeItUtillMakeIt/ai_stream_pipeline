@@ -29,6 +29,14 @@ TrackerType TrackerNode::getTrackerType() const {
     return tracker_type_;
 }
 
+void TrackerNode::setSubStreamId(const std::string& stream_id) {
+    sub_stream_id_ = stream_id;
+}
+
+void TrackerNode::setTrackerId(const std::string& id) {
+    tracker_id_ = id;
+}
+
 void TrackerNode::setOCSortConfig(const OCSortConfig& config) {
     ocsort_config_ = config;
 }
@@ -76,7 +84,14 @@ void TrackerNode::pushData(std::shared_ptr<core::BasePacket> packet) {
         broadcast(packet);
         return;
     }
-    
+    // 过滤不是当前追踪器绑定流的包
+    if (!sub_stream_id_.empty() && infer_result->source_id != sub_stream_id_) {
+        //LOG_INFO_FMT("[TrackerNode] {} Ignored packet from stream {},expected: {}", tracker_id_, infer_result->source_id, sub_stream_id_);
+        //broadcast(packet);
+        return;
+    }
+    LOG_INFO_FMT("[TrackerNode] {} Processing packet from stream {},expected: {}", tracker_id_, infer_result->source_id, sub_stream_id_);
+        
     // 执行跟踪
     auto tracks = tracker_->update(infer_result->detections);
     LOG_DEBUG_FMT("[TrackerNode] Tracks: {}", tracks.size());

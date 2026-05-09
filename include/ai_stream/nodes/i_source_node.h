@@ -12,6 +12,8 @@ public:
     
     // 设置拉流地址
     virtual void setUrl(const std::string& url) = 0;
+
+    virtual void setSourceId(const std::string& id) = 0;
     
     // 获取当前 URL
     virtual std::string getUrl() const = 0;
