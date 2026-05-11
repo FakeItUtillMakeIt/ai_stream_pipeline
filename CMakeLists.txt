@@ -122,6 +122,11 @@ if(WITH_TRACK)
     add_subdirectory(${PROJECT_SOURCE_DIR}/3rd_party/tracker)
 endif()
 
+if(WITH_ALERT)
+    add_subdirectory(src/rules/alert)
+    add_subdirectory(src/nodes/alert)
+endif()
+
 # 测试依赖
 if(BUILD_TESTS)
     find_package(GTest REQUIRED)
