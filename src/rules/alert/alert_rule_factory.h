@@ -73,11 +73,13 @@ private:
 
 #define REGISTER_ALERT_RULE(type, class_name) \
     namespace { \
-        __attribute__((constructor)) \
-        void register_alert_rule_##class_name() { \
-            ai_stream::rules::AlertRuleFactory::instance().registerCreator( \
-                type, []() -> ai_stream::rules::AlertRulePtr { \
-                    return std::make_shared<class_name>(); \
-                }); \
-        } \
+        struct AlertRuleRegistrar_##class_name { \
+            AlertRuleRegistrar_##class_name() { \
+                ai_stream::rules::AlertRuleFactory::instance().registerCreator( \
+                    type, []() -> ai_stream::rules::AlertRulePtr { \
+                        return std::make_shared<class_name>(); \
+                    }); \
+            } \
+        }; \
+        static AlertRuleRegistrar_##class_name _alert_rule_registrar_##class_name; \
     }
