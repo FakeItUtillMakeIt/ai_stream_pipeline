@@ -4,13 +4,14 @@
 #include "registry/node_factory.h"
 #include "rules/alert/alert_rule_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
+#include "rules/alert/person_intrusion_rules.h"
 #include <opencv2/opencv.hpp>
 
 namespace ai_stream {
 namespace nodes {
 
 AlertNode::AlertNode() : core::Node("AlertNode") {
-    LOG_DEBUG("[AlertNode] Constructor");
+    LOG_INFO("[AlertNode] Constructor");
 }
 
 AlertNode::~AlertNode() {

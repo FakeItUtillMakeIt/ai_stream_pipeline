@@ -16,6 +16,7 @@ if(TARGET ai_stream_core)
                 -Wl,--no-as-needed
                 ai_stream_nodes
                 ai_stream_core
+                $<TARGET_OBJECTS:alert_rules>
                 -Wl,--as-needed
         )
     else()
@@ -26,6 +27,7 @@ if(TARGET ai_stream_core)
                 -Wl,--no-as-needed
                 ai_stream_nodes
                 ai_stream_core
+                $<TARGET_OBJECTS:alert_rules>
                 -Wl,--as-needed
         )
     endif()

@@ -2,7 +2,10 @@
 file(GLOB ALERT_NODE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 file(GLOB ALERT_NODE_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/*.h")
 
-add_library(alert_node OBJECT ${ALERT_NODE_SOURCES} ${ALERT_NODE_HEADERS})
+add_library(alert_node OBJECT 
+    ${ALERT_NODE_SOURCES} 
+    ${ALERT_NODE_HEADERS}
+)
 
 target_compile_options(alert_node PRIVATE -fPIC)
 target_include_directories(alert_node 
@@ -20,5 +23,17 @@ target_link_libraries(alert_node
     PUBLIC
         nlohmann_json::nlohmann_json
 )   
+
+if(WITH_ALERT)
+    target_include_directories(alert_node
+        PRIVATE 
+            ${PROJECT_SOURCE_DIR}/src/rules
+    )
+    target_sources(alert_node PRIVATE $<TARGET_OBJECTS:alert_rules>)
+    target_link_options(alert_node
+        PRIVATE 
+            -Wl,--whole-archive $<TARGET_OBJECTS:alert_rules> -Wl,--no-whole-archive
+    )
+endif()
 
 target_compile_features(alert_node PRIVATE cxx_std_17)

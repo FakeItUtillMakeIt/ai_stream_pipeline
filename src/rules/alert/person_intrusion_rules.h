@@ -10,10 +10,10 @@ namespace ai_stream
     namespace rules
     {
 
-        class PersonInstrusionRule : public IAlertRule
+        class PersonIntrusionRule : public IAlertRule
         {
         public:
-            PersonInstrusionRule();
+            PersonIntrusionRule();
        
             bool initialize(const nlohmann::json &config) override;
             std::vector<AlertEvent> process(

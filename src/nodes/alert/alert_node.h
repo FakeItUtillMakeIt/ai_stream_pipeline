@@ -17,7 +17,7 @@ using AlertCallback = std::function<void(const rules::AlertEvent&)>;
 class AlertNode : public core::Node {
 public:
     AlertNode();
-    ~AlertNode() override;
+    virtual ~AlertNode();
 
     bool start() override;
     void stop() override;

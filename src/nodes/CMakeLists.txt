@@ -91,3 +91,21 @@ if (WITH_TRACK)
             Eigen3::Eigen
     )
 endif()
+
+if(WITH_ALERT)
+    target_include_directories(ai_stream_nodes
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/alert
+    )
+
+    target_sources(ai_stream_nodes
+        PRIVATE 
+            $<TARGET_OBJECTS:alert_node>
+    )
+
+    target_link_libraries(ai_stream_nodes
+        
+        PRIVATE 
+            nlohmann_json::nlohmann_json
+    )
+endif()

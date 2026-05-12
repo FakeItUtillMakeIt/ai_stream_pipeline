@@ -5,6 +5,7 @@ message(STATUS "=== Alert Rule Sources ===")
 foreach(src ${ALERT_RULE_SOURCES})
     message(STATUS "Source: ${src}")
 endforeach()
+message(STATUS "Alert rule sources: ${ALERT_RULE_SOURCES}")
 
 add_library(alert_rules OBJECT ${ALERT_RULE_SOURCES} ${ALERT_RULE_HEADERS})
 
@@ -13,6 +14,7 @@ target_include_directories(alert_rules
     PUBLIC 
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/src
         ${OpenCV_INCLUDE_DIRS}
         
     PRIVATE 

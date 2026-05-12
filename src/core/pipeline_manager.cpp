@@ -11,7 +11,8 @@
 #include "ai_stream/nodes/i_tracker_node.h"
 #include "ai_stream/nodes/i_draw_node.h"
 #include "ai_stream/nodes/i_preprocess_node.h"
-
+#include "src/nodes/alert/alert_node.h"
+#include "src/rules/alert/alert_rule_factory.h"
 
 namespace ai_stream
 {
@@ -195,6 +196,50 @@ namespace ai_stream
                                 tracker_node->setSubStreamId(params["sub_stream_id"].get<std::string>());
                             }
 
+                        }
+                    }
+
+                    if (type.find("alert") != std::string::npos)
+                    { 
+                        auto alert_node = std::dynamic_pointer_cast<nodes::AlertNode>(node);
+                        if (alert_node)
+                        {
+                            if (params.contains("rules") && params["rules"].is_array())
+                            {
+                                for (const auto& rule_cfg : params["rules"])
+                                {
+                                    std::string rule_type = rule_cfg.value("type", "");
+                                    if(rule_type.empty())
+                                    {
+                                        LOG_ERROR_FMT("[Pipeline {}] Alert rule missing 'type'", id_);
+                                        continue;
+                                    }
+                                    try
+                                    {
+                                        auto rule = rules::AlertRuleFactory::instance().create(rule_type);
+                                        if(rule == nullptr)
+                                        {
+                                            LOG_ERROR_FMT("[Pipeline {}] No factory found for alert rule type: {}", id_, rule_type);
+                                            continue;
+                                        }
+                                        
+                                        if (rule)
+                                        {
+                                            rule->initialize(rule_cfg.value("params", nlohmann::json::object()));
+                                            alert_node->addRule(rule);
+                                        }
+                                        else
+                                        {
+                                            LOG_ERROR_FMT("[Pipeline {}] Failed to create alert rule: {}", id_, rule_type);
+                                        }
+                                        
+                                    }
+                                    catch(const std::exception& e)
+                                    {
+                                        LOG_ERROR_FMT("[Pipeline {}] Exception while creating alert rule: {}", id_, e.what());
+                                    }
+                                }
+                            }
                         }
                     }
 
