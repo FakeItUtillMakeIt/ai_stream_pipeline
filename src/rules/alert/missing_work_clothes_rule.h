@@ -1,4 +1,4 @@
-// src/rules/alert/missing_helmet_rules.h
+// src/rules/alert/missing_work_clothes_rule.h
 #pragma once
 
 #include "ai_stream/rules/i_alert_rule.h"
@@ -7,9 +7,9 @@
 
 namespace ai_stream { 
 namespace rules {
-    class MissingHelmetRule : public IAlertRule {
+    class MissingWorkClothesRule : public IAlertRule {
     public:
-        MissingHelmetRule() = default;
+        MissingWorkClothesRule() ;
         
         bool initialize(const nlohmann::json& config) override;
         RuleStatus process(
@@ -19,7 +19,7 @@ namespace rules {
         void reset() override;
 
         std::string getName() const override{ return alertTypeMap[getType()]; };
-        AlertType getType() const override{ return AlertType::MISSING_HELMET; };
+        AlertType getType() const override{ return AlertType::MISSING_WORK_CLOTHES; };
         nlohmann::json getStatistics() const override;
 
     private:

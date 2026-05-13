@@ -1,5 +1,5 @@
-// src/rules/alert/person_instrusion_rules.cpp
-#include "person_intrusion_rules.h"
+// src/rules/alert/human_gathering_rule.cpp
+#include "human_gathering_rule.h"
 #include "alert_rule_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 
@@ -8,17 +8,17 @@ namespace ai_stream
     namespace rules
     {
 
-        PersonIntrusionRule::PersonIntrusionRule()
+        HumanGatheringRule::HumanGatheringRule()
         {
-            LOG_INFO("PersonIntrusionRule::PersonIntrusionRule()");
+            LOG_INFO("HumanGatheringRule::HumanGatheringRule()");
         }
 
-        bool PersonIntrusionRule::initialize(const nlohmann::json &config)
+        bool HumanGatheringRule::initialize(const nlohmann::json &config)
         {
-            LOG_INFO_FMT("PersonIntrusionRule::initialize()");
+            LOG_INFO_FMT("HumanGatheringRule::initialize()");
             try
             {
-                LOG_INFO_FMT("PersonIntrusionRule::initialize() config: {}", config.dump().c_str());
+                LOG_INFO_FMT("HumanGatheringRule::initialize() config: {}", config.dump().c_str());
 
                 if (config.contains("rule_zones") && config["rule_zones"].is_array())
                 {
@@ -29,51 +29,55 @@ namespace ai_stream
                             LOG_INFO_FMT("Rule zone {} add point {}: [{}, {}]", int(i + 1), int(k + 1), config["rule_zones"][i][k][0].get<float>(), config["rule_zones"][i][k][1].get<float>());
                             intrusion_zones_[uint8_t(i + 1)].push_back(PixelPoint(config["rule_zones"][i][k][0].get<float>(), config["rule_zones"][i][k][1].get<float>()));
                         }
+                        gathering_thresh_map_[uint8_t(i + 1)] = config.contains("gathering_thresh") && config["gathering_thresh"].is_array() && config["gathering_thresh"].size() > i ? config["gathering_thresh"][i].get<int>() : 2;
                     }
                 }
             }
             catch (const std::exception &e)
             {
-                LOG_WARN_FMT("PersonIntrusionRule::initialize() exception: {}", e.what());
+                LOG_WARN_FMT("HumanGatheringRule::initialize() exception: {}", e.what());
                 return false;
             }
-            LOG_INFO_FMT("PersonIntrusionRule::initialize() success");
+            LOG_INFO_FMT("HumanGatheringRule::initialize() success");
 
             // 判断区域是否有效/配置
             uint8_t invaild_zone_count = 0;
-
+            int min_gathering_thresh = std::numeric_limits<int>::max();
             for (const auto &det_zone : intrusion_zones_)
             {
                 bool zone_is_valid = ZoneValidator::zoneIsValid(det_zone.second);
                 if (!zone_is_valid)
                 {
-                    LOG_INFO_FMT("PersonIntrusionRule::process() zone {} is invalid", det_zone.first);
+                    LOG_INFO_FMT("HumanGatheringRule::process() zone {} is invalid", det_zone.first);
                     invaild_zone_count++;
                     continue;
                 }
                 valid_intrusion_zones_[det_zone.first] = det_zone.second;
+                min_gathering_thresh = std::min(min_gathering_thresh, gathering_thresh_map_[det_zone.first]);
             }
             // 如果所有区域都无效，则全域监测(不进行区域过滤)
             if (valid_intrusion_zones_.empty())
             {
-                LOG_INFO("PersonIntrusionRule::process() all zones are invalid, global monitoring");
+                LOG_INFO("HumanGatheringRule::process() all zones are invalid, global monitoring");
+                //聚集人数阈值配置为所有区域中最小的一个
+                gathering_thresh_map_[global_zone_no_] = min_gathering_thresh;
             }
 
             return true;
         }
 
-        RuleStatus PersonIntrusionRule::process(
+        RuleStatus HumanGatheringRule::process(
             std::shared_ptr<core::InferenceResultPacket> packet,
             AlertResult &alert_result,
             int64_t current_time_ms)
         {
-            LOG_INFO_FMT("PersonIntrusionRule::process()");
+            LOG_INFO_FMT("HumanGatheringRule::process()");
             std::lock_guard<std::mutex> lock(mutex_);
             if (!packet)
                 return RuleStatus::RULE_STATUS_FAIL;
             if (valid_intrusion_zones_.empty())
             {
-                rule_logic(packet, 0, {});
+                rule_logic(packet, global_zone_no_, {});
             }
             else
             {
@@ -83,7 +87,6 @@ namespace ai_stream
                 }
             }
             // 更新告警结果
-            uint8_t alert_count = alert_result.alert_events.size();
             for (auto it = zone_alert_map_.begin(); it != zone_alert_map_.end(); it++)
             {
                 if (it->second.status != AlertStatus::ALERT_STATUS_OCCUR && it->second.status != AlertStatus::ALERT_STATUS_LAST && it->second.status != AlertStatus::ALERT_STATUS_END)
@@ -92,7 +95,6 @@ namespace ai_stream
                 }
                 alert_result.alert_events.push_back(it->second);
                 alert_result.alert_count++;
-                alert_count++;
             }
 
             // 更新map
@@ -122,25 +124,25 @@ namespace ai_stream
             return RuleStatus::RULE_STATUS_OK;
         }
 
-        void PersonIntrusionRule::reset()
+        void HumanGatheringRule::reset()
         {
-            LOG_INFO_FMT("PersonIntrusionRule::reset()");
+            LOG_INFO_FMT("HumanGatheringRule::reset()");
             std::lock_guard<std::mutex> lock(mutex_);
             zone_alert_map_.clear();
         }
 
-        nlohmann::json PersonIntrusionRule::getStatistics() const
+        nlohmann::json HumanGatheringRule::getStatistics() const
         {
-            LOG_INFO_FMT("PersonIntrusionRule::getStatistics()");
+            LOG_INFO_FMT("HumanGatheringRule::getStatistics()");
             return nlohmann::json();
         }
 
-        RuleStatus PersonIntrusionRule::rule_logic(
+        RuleStatus HumanGatheringRule::rule_logic(
             const std::shared_ptr<core::InferenceResultPacket> packet,
             uint8_t zone_no, ZonePoints zone_points)
         {
-            LOG_INFO_FMT("PersonIntrusionRule::rule_logic()");
-            bool person_in_zone = false;
+            LOG_INFO_FMT("HumanGatheringRule::rule_logic()");
+            int person_count = 0;
             std::vector<int> person_track_ids;
             for (const auto &detection : packet->detections)
             {
@@ -151,12 +153,12 @@ namespace ai_stream
                 bool in_zone = zone_points.empty() ? true : ZoneValidator::pointInPolygon(PixelPoint(detection.x + detection.w / 2, detection.y + detection.h / 2), zone_points);
                 if (in_zone)
                 {
-                    person_in_zone = true;
+                    person_count++;
                     person_track_ids.push_back(detection.track_id);
                 }
             }
             // 更新zone_alert_map_
-            if (!person_in_zone)
+            if (person_count < gathering_thresh_map_[zone_no])
                 return RuleStatus::RULE_STATUS_OK;
             auto it = zone_alert_map_.find(zone_no);
             if (it == zone_alert_map_.end())
@@ -180,6 +182,6 @@ namespace ai_stream
             return RuleStatus::RULE_STATUS_OK;
         }
 
-        REGISTER_ALERT_RULE("person_intrusion", PersonIntrusionRule)
+        REGISTER_ALERT_RULE("human_gathering", HumanGatheringRule)
     }
 }

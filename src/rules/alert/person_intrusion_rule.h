@@ -1,4 +1,4 @@
-// src/rules/alert/person_instrusion.h
+// src/rules/alert/person_instrusion_rule.h
 #pragma once
 
 #include "ai_stream/rules/i_alert_rule.h"
