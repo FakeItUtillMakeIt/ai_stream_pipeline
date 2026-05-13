@@ -1,3 +1,5 @@
+#pragma once
+
 #include <vector>
 #include <utility>
 #include <cmath>
@@ -7,7 +9,7 @@ typedef struct PixelPoint
 {
     float x;
     float y;
-    PixelPoint() : x(0.0f), y(0.0f){}
+    PixelPoint() : x(0.0f), y(0.0f) {}
     PixelPoint(float x, float y) : x(x), y(y) {}
 } PixelPoint;
 
@@ -122,8 +124,8 @@ public:
     }
 
     static bool pointInPolygon(
-        const PixelPoint& point,
-        const std::vector<PixelPoint>& polygon,
+        const PixelPoint &point,
+        const std::vector<PixelPoint> &polygon,
         bool include_boundary = true)
     {
         const size_t n = polygon.size();
@@ -177,6 +179,45 @@ public:
 
         return inside;
     }
+
+    static bool boxIsIntersect(
+        const std::vector<PixelPoint> &box1,
+        const std::vector<PixelPoint> &box2)
+    {
+        // 1. 检查边是否相交
+        for (size_t i = 0; i < box1.size(); i++)
+        {
+            const auto &p1 = box1[i];
+            const auto &q1 = box1[(i + 1) % box1.size()];
+
+            for (size_t j = 0; j < box2.size(); j++)
+            {
+                const auto &p2 = box2[j];
+                const auto &q2 = box2[(j + 1) % box2.size()];
+
+                if (segmentsIntersect(p1, q1, p2, q2))
+                {
+                    return true;
+                }
+            }
+        }
+
+        // 2. 检查包含关系（只需检查一个点即可）
+        // 检查 box1 的任意顶点是否在 box2 内
+        if (!box1.empty() && pointInPolygon(box1[0], box2))
+        {
+            return true;
+        }
+
+        // 3. 检查 box2 的任意顶点是否在 box1 内（修复漏检）
+        if (!box2.empty() && pointInPolygon(box2[0], box1))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
 private:
     // =========================================================
     // 多边形面积
