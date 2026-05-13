@@ -12,14 +12,20 @@ namespace rules {
         MissingHelmetRule() = default;
         
         bool initialize(const nlohmann::json& config) override;
-        std::vector<AlertEvent> process(
+        RuleStatus process(
             std::shared_ptr<core::InferenceResultPacket> packet,
+            AlertResult& alert_result,
             int64_t current_time_ms) override;
         void reset() override;
 
         std::string getName() const override{ return alertTypeMap[getType()]; };
         AlertType getType() const override{ return AlertType::MISSING_HELMET; };
         nlohmann::json getStatistics() const override;
+
+    private:
+        RuleStatus rule_logic(
+            const std::shared_ptr<core::InferenceResultPacket> packet,
+            uint8_t zone_no, ZonePoints zone_points) override;
     };
 }
 }

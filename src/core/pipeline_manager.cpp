@@ -208,18 +208,18 @@ namespace ai_stream
                             {
                                 for (const auto& rule_cfg : params["rules"])
                                 {
-                                    std::string rule_type = rule_cfg.value("type", "");
-                                    if(rule_type.empty())
+                                    std::string alert_type = rule_cfg.value("type", "");
+                                    if(alert_type.empty())
                                     {
                                         LOG_ERROR_FMT("[Pipeline {}] Alert rule missing 'type'", id_);
                                         continue;
                                     }
                                     try
                                     {
-                                        auto rule = rules::AlertRuleFactory::instance().create(rule_type);
+                                        auto rule = rules::AlertRuleFactory::instance().create(alert_type);
                                         if(rule == nullptr)
                                         {
-                                            LOG_ERROR_FMT("[Pipeline {}] No factory found for alert rule type: {}", id_, rule_type);
+                                            LOG_ERROR_FMT("[Pipeline {}] No factory found for alert rule type: {}", id_, alert_type);
                                             continue;
                                         }
                                         
@@ -230,7 +230,7 @@ namespace ai_stream
                                         }
                                         else
                                         {
-                                            LOG_ERROR_FMT("[Pipeline {}] Failed to create alert rule: {}", id_, rule_type);
+                                            LOG_ERROR_FMT("[Pipeline {}] Failed to create alert rule: {}", id_, alert_type);
                                         }
                                         
                                     }

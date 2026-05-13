@@ -14,10 +14,11 @@ namespace ai_stream
         {
         public:
             PersonIntrusionRule();
-       
+
             bool initialize(const nlohmann::json &config) override;
-            std::vector<AlertEvent> process(
-                std::shared_ptr<core::InferenceResultPacket> packet, 
+            RuleStatus process(
+                std::shared_ptr<core::InferenceResultPacket> packet,
+                AlertResult &alert_result,
                 int64_t current_time_ms) override;
 
             std::string getName() const override { return alertTypeMap[getType()]; }
@@ -26,15 +27,9 @@ namespace ai_stream
             nlohmann::json getStatistics() const override;
 
         private:
-            struct IntrusionState
-            {
-                int64_t first_in_time_ms;
-                int intrusion_count;
-            };
-            std::map<std::string,std::vector<std::pair<float, float>>> intrusion_zones_;// 区域列表
-            std::unordered_map<std::string, IntrusionState> area_intrusion_states_; // 每个区域详情
-            mutable std::mutex mutex_;
-            
+            RuleStatus rule_logic(const std::shared_ptr<core::InferenceResultPacket> packet, uint8_t zone_no, ZonePoints zone_points) override;
+
+        private:
         };
     }
 }

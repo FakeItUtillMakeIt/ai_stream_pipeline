@@ -48,13 +48,14 @@ void AlertNode::pushData(std::shared_ptr<core::BasePacket> packet) {
         std::chrono::system_clock::now().time_since_epoch()).count();
 
     // 处理所有规则
-    // todo: 可以考虑并行处理多个规则，提升性能
+    // todo: 并行处理多个规则，提升性能
     for (auto& rule : rules_) {
-        auto events = rule->process(infer, now);
-        if (!events.empty()) {
-            handleEvents(events);
-            for (const auto& e : events) {
-                if (e.level >= rules::AlertLevel::WARNING) {
+        rules::AlertResult alert_result;
+        auto status = rule->process(infer, alert_result, now);
+        if (!alert_result.alert_events.empty()) {
+            handleEvents(alert_result.alert_events);
+            for (const auto& e : alert_result.alert_events) {
+                if (e.status == rules::AlertStatus::ALERT_STATUS_OCCUR) {
                     saveSnapshot(infer, e);
                 }
             }
@@ -88,7 +89,7 @@ void AlertNode::handleEvents(const std::vector<rules::AlertEvent>& events) {
             }
             return "UNKNOWN";
         };
-        LOG_INFO_FMT("[AlertNode] [{}] {}: {}", level_str(e.level), e.rule_name, e.description);
+        LOG_INFO_FMT("[AlertNode] [{}] {}: {}", level_str(e.level), e.alert_name, e.description);
 
         // 回调
         std::lock_guard<std::mutex> lock(mutex_);
@@ -108,8 +109,8 @@ void AlertNode::saveSnapshot(std::shared_ptr<core::InferenceResultPacket> packet
         char buf[64];
         strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", &tm);
 
-        std::string path = fmt::format("{}/{}_{}_{}.jpg",
-            snapshot_dir_, event.rule_type, buf, event.stream_id);
+        std::string path = fmt::format("{}/{}_{}.jpg",
+            snapshot_dir_, event.alert_type, buf);
         cv::imwrite(path, *packet->source_frame->mat);
     } catch (...) {
         LOG_ERROR("[AlertNode] Failed to save snapshot");
