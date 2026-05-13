@@ -2,88 +2,7 @@
   "id": "alert_demo",
   "graph": {
     "nodes": [
-      {
-        "id": "src1",
-        "type": "rtsp_source",
-        "params": {
-          "url": "rtsp://localhost:8554/stream1"
-        }
-      },
-      {
-        "id": "src2",
-        "type": "rtsp_source",
-        "params": {
-          "url": "rtsp://localhost:8554/stream2"
-        }
-      },
-      {
-        "id": "decode1",
-        "type": "ffmpeg_decode",
-        "params": {
-          "output_bgr": true,
-          "snapshot": {
-            "enabled": false,
-            "interval": 100,
-            "dir": "./snapshots1"
-          }
-        }
-      },
-      {
-        "id": "decode2",
-        "type": "ffmpeg_decode",
-        "params": {
-          "output_bgr": true,
-          "snapshot": {
-            "enabled": false,
-            "interval": 100,
-            "dir": "./snapshots2"
-          }
-        }
-      },
-      {
-        "id": "preprocess1",
-        "type": "resize_normalize",
-        "params": {
-          
-        }
-      },
-      {
-        "id": "preprocess2",
-        "type": "resize_normalize",
-        "params": {
-          
-        }
-      },
-      {
-        "id": "infer1",
-        "type": "detection_infer",
-        "params": {
-          "detector_type": "yolov8",
-          "detector_config": {
-            "model_path": "/home/sevnce/project/ai_stream_pipeline/models/sevncevision/20260509_sevnce_14_cls_nms.engine",
-            "conf_threshold": 0.5,
-            "nms_threshold": 0.4,
-            "input_size": { "width": 640, "height": 640 },
-            "batch_size": 2
-          }
-        }
-      },
-      {
-        "id": "tracker1",
-        "type": "tracker",
-        "params":{
-          "tracker_type":"ocsort",
-          "sub_stream_id":"src1"
-        }
-      },
-      {
-        "id": "tracker2",
-        "type": "tracker",
-        "params":{
-          "tracker_type":"ocsort",
-          "sub_stream_id":"src2"
-        }
-      },
+      
       {
         "id": "alert1",
         "type": "alert",
@@ -93,101 +12,17 @@
               "type": "person_intrusion",
               "params": {
                 "rule_zones":[
-                  [0,0],
-                  [1920,0],
-                  [1920,1080],
-                  [0,1080]
+                 [ [0,0],[1920,0],[1920,1080],[0,1080]],
+                  [ [100,100],[1820,100],[1820,980],[100,980]]
                 ]
               }
             }
           ]
         }
-      },
-      {
-        "id": "draw1",
-        "type": "osd_draw",
-        "params": {}
-      },
-      {
-        "id": "draw2",
-        "type": "osd_draw",
-        "params": {}
-      },
-      {
-        "id": "sink1",
-        "type": "rtmp_sink",
-        "params": {
-          "output_url": "rtmp://localhost/live/out1"
-        }
-      },
-      {
-        "id": "sink2",
-        "type": "rtmp_sink",
-        "params": {
-          "output_url": "rtmp://localhost/live/out2"
-        }
-      },
-      {
-        "id": "save1",
-        "type": "mp4_save",
-        "params": {
-          "output_url": "file:///home/sevnce/project/ai_stream_pipeline/build/out1.mp4"
-        },
-        "output_size": {
-          "width": 1920,
-          "height": 1080
-        }
       }
     ],
     "edges": [
-      {
-        "from": "src1",
-        "to": "decode1"
-      },
-      {
-        "from": "src2",
-        "to": "decode2"
-      },
-      {
-        "from": "decode1",
-        "to": "preprocess1"
-      },
-      {
-        "from": "decode2",
-        "to": "preprocess2"
-      },
-      {
-        "from": "preprocess1",
-        "to": "infer1"
-      },
-      {
-        "from": "preprocess2",
-        "to": "infer1"
-      },
-      {
-        "from": "infer1",
-        "to": "tracker1"
-      },
-      {
-        "from": "infer1",
-        "to": "tracker2"
-      },
-      {
-        "from": "tracker1",
-        "to": "draw1"
-      },
-      {
-        "from": "tracker2",
-        "to": "draw2"
-      },
-      {
-        "from": "draw1",
-        "to": "sink1"
-      },
-      {
-        "from": "draw2",
-        "to": "sink2"
-      }
+      
     ]
   }
 }

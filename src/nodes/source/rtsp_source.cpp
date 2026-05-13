@@ -301,6 +301,7 @@ void RTSPSourceNode::workerFunc() {
             auto raw_pkt = std::make_shared<core::RawVideoPacket>();
             raw_pkt->stream_id = my_stream_id_;
             raw_pkt->source_id = source_id_;
+            raw_pkt->frame_id = frame_count;
             
             // 计算时间戳
             AVRational& time_base = fmt_ctx_->streams[video_stream_index_]->time_base;

@@ -227,6 +227,7 @@ std::shared_ptr<core::VideoFramePacket> FFmpegDecodeNode::decodePacket(
     frame_pkt->width = width;
     frame_pkt->height = height;
     frame_pkt->channels = 3;
+    frame_pkt->frame_id = raw_pkt->frame_id;
     
     return frame_pkt;
 }

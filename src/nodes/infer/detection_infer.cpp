@@ -195,6 +195,7 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
         result->source_id = frames[b]->source_id;
         result->timestamp_ms = frames[b]->timestamp_ms;
         result->source_frame = frames[b];
+        result->frame_id = frames[b]->frame_id;
         results.push_back(result);
     }
 

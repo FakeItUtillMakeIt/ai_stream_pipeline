@@ -45,7 +45,7 @@ namespace ai_stream
             SMOKING = 5,
             FALL_DOWN = 6,
             MISSING_SAFETY_BELT = 7,
-            HUAMN_GATHERING = 8,
+            HUMAN_GATHERING = 8,
             ABSENCE = 9,
             SLEEPING_ON_DUTY = 10,
             CLAMBING = 11,
@@ -59,7 +59,7 @@ namespace ai_stream
             {AlertType::SMOKING, "smoking"},
             {AlertType::FALL_DOWN, "fall_down"},
             {AlertType::MISSING_SAFETY_BELT, "missing_safety_belt"},
-            {AlertType::HUAMN_GATHERING, "human_gathering"},
+            {AlertType::HUMAN_GATHERING, "human_gathering"},
             {AlertType::ABSENCE, "absence"},
             {AlertType::SLEEPING_ON_DUTY, "sleeping_on_duty"},
             {AlertType::CLAMBING, "climbing"}};

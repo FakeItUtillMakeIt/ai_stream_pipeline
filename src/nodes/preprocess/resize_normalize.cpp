@@ -85,6 +85,7 @@ void ResizeNormalizeNode::pushData(std::shared_ptr<core::BasePacket> packet) {
     new_packet->width = target_width_;
     new_packet->height = target_height_;
     new_packet->channels = 3;
+    new_packet->frame_id = frame->frame_id;
 
     broadcast(new_packet);
 }

@@ -32,6 +32,7 @@ struct BasePacket {
     int64_t timestamp_ms = 0;          // 毫秒时间戳
     uint32_t stream_id = 0;            // 多流并行的关键：用于区分不同的源流
     std::string source_id;             // 可选的源标识符
+    int64_t frame_id;
 
     virtual ~BasePacket() = default;
 };

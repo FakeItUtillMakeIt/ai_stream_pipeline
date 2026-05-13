@@ -159,7 +159,7 @@ namespace ai_stream
             std::vector<int> active_track_ids;
             for (const auto &person_box : person_boxes)
             {
-                bool is_climbing = climbing_detector_.updateDetection(person_box.track_id, person_box, person_box.frame_id);
+                bool is_climbing = climbing_detector_.updateDetection(person_box.track_id, person_box, packet->frame_id);
                 if (is_climbing)
                 {
                     climbing_count++;
