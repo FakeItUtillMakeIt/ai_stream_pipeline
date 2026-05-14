@@ -159,7 +159,7 @@ void DetectionInferNode::inferLoop() {
 
         int actual_batch = static_cast<int>(batch_frames.size());
         LOG_DEBUG_FMT("[DetectionInfer] Batch collected: {}/{}", actual_batch, max_batch_size_.load());
-
+        in_time_ms_ = utils::TimeUtil::currentTimeMs();
         // 3. 执行推理
         auto t0 = std::chrono::high_resolution_clock::now();
         auto results = processBatch(batch_frames);
@@ -172,6 +172,9 @@ void DetectionInferNode::inferLoop() {
         // 4. 广播结果
         for (auto& result : results) {
             if (result) {
+                result->cost_ms = utils::TimeUtil::currentTimeMs() - in_time_ms_;
+                result->cost_time_map = first_frame->cost_time_map;
+                result->cost_time_map.insert({name_,result->cost_ms});
                 broadcast(result);
             }
         }

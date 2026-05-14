@@ -51,6 +51,7 @@ void ResizeNormalizeNode::setOutputDataType(const std::string& dtype) {
 }
 
 void ResizeNormalizeNode::pushData(std::shared_ptr<core::BasePacket> packet) {
+    in_time_ms_ = utils::TimeUtil::currentTimeMs();
     if (packet->type != core::PacketType::DECODED_FRAME) {
         // 如果不是视频帧，直接透传或忽略
         broadcast(packet);
@@ -87,6 +88,9 @@ void ResizeNormalizeNode::pushData(std::shared_ptr<core::BasePacket> packet) {
     new_packet->channels = 3;
     new_packet->frame_id = frame->frame_id;
 
+    new_packet->cost_ms = utils::TimeUtil::currentTimeMs() - in_time_ms_;
+    new_packet->cost_time_map = packet->cost_time_map;
+    new_packet->cost_time_map.insert({name_,packet->cost_ms});
     broadcast(new_packet);
 }
 

@@ -1,6 +1,7 @@
 // include/ai_stream/core/node.h
 #pragma once
 
+#include "utils/time_util.h"
 #include "packet.h"
 #include <atomic>
 #include <memory>
@@ -54,6 +55,7 @@ protected:
     std::vector<std::weak_ptr<Node>> downstreams_;
     std::weak_ptr<Pipeline> pipeline_;
     std::atomic<bool> running_{false};
+    uint64_t in_time_ms_ = 0;
 };
 
 // 为了方便类型转换，提供一个辅助宏

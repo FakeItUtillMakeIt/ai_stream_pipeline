@@ -120,7 +120,7 @@ private:
     std::mutex batch_mutex_;
     std::condition_variable batch_cv_;
     std::deque<std::shared_ptr<core::VideoFramePacket>> batch_buffer_;
-    std::chrono::milliseconds batch_timeout_ms_{50};
+    std::chrono::milliseconds batch_timeout_ms_{20};
     std::atomic<int> max_batch_size_{1};
 };
 

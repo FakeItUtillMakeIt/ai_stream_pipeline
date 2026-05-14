@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <map>
 #include <opencv2/core/mat.hpp>
 
 namespace ai_stream {
@@ -33,6 +34,8 @@ struct BasePacket {
     uint32_t stream_id = 0;            // 多流并行的关键：用于区分不同的源流
     std::string source_id;             // 可选的源标识符
     int64_t frame_id;
+    uint64_t cost_ms = 0;
+    std::map<std::string,uint64_t> cost_time_map;
 
     virtual ~BasePacket() = default;
 };

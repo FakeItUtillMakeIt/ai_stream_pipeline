@@ -72,6 +72,7 @@ void TrackerNode::stop() {
 }
 
 void TrackerNode::pushData(std::shared_ptr<core::BasePacket> packet) {
+    in_time_ms_ = utils::TimeUtil::currentTimeMs();
     if (!running_) return;
     
     if (packet->type != core::PacketType::META_DATA) {
@@ -107,6 +108,14 @@ void TrackerNode::pushData(std::shared_ptr<core::BasePacket> packet) {
         LOG_DEBUG_FMT("[TrackerNode] Detection: Class ID: {}, Confidence: {}, Track ID: {}, Age: {}, Active: {}",
                      det.class_id, det.confidence, det.track_id, det.track_age, det.track_active);
     }   
+    packet->cost_ms = utils::TimeUtil::currentTimeMs() - in_time_ms_;
+    packet->cost_time_map.insert({name_, packet->cost_ms});
+    std::string cost_time_str;
+    for (const auto& each_node:packet->cost_time_map)
+    {
+        cost_time_str += each_node.first + ":" + std::to_string(each_node.second) + "ms,";
+    }
+    LOG_INFO_FMT("{}",cost_time_str);
     //更新数据包
     broadcast(packet);
 }
