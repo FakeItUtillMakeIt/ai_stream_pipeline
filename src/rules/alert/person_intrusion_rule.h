@@ -21,7 +21,6 @@ namespace ai_stream
                 AlertResult &alert_result,
                 int64_t current_time_ms) override;
 
-            std::string getName() const override { return alertTypeMap[getType()]; }
             AlertType getType() const override { return AlertType::PERSON_INTRUSION; }
             void reset() override;
             nlohmann::json getStatistics() const override;

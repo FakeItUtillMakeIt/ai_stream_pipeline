@@ -104,6 +104,11 @@ namespace ai_stream
             AlertType alert_type;
             uint8_t alert_count;
             std::vector<AlertEvent> alert_events;
+            
+            std::string rule_name;
+            RuleStatus rule_status;
+            uint64_t process_time_ms;
+            std::string error_message;
         };
 
         /**
@@ -119,9 +124,11 @@ namespace ai_stream
             virtual RuleStatus process(
                 std::shared_ptr<core::InferenceResultPacket> packet,
                 AlertResult &alert_result,
-                int64_t current_time_ms) = 0;
+                int64_t current_time_ms=0) = 0;
 
-            virtual std::string getName() const = 0;
+            virtual void setName(const std::string& name) {alert_name_=name;}
+            virtual std::string getName() const { return alert_name_.empty()?alertTypeMap[getType()]:alert_name_; };
+        
             virtual AlertType getType() const = 0;
             virtual void reset() = 0;
             virtual nlohmann::json getStatistics() const = 0;
@@ -138,6 +145,7 @@ namespace ai_stream
             std::map<uint8_t, ZonePoints> intrusion_zones_;// 区域列表
             std::map<uint8_t, ZonePoints> valid_intrusion_zones_;
             mutable std::mutex mutex_;
+            std::string alert_name_;
         };
 
         using AlertRulePtr = std::shared_ptr<IAlertRule>;

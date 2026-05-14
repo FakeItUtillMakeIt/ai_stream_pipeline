@@ -19,7 +19,10 @@ namespace ai_stream
             try
             {
                 LOG_INFO_FMT("ClimbingRule::initialize() config: {}", config.dump().c_str());
-
+                if (config.contains("name") && config["name"].is_string())
+                {
+                    setName(config.value("name",""));
+                }
                 if (config.contains("rule_zones") && config["rule_zones"].is_array())
                 {
                     for (size_t i = 0; i < config["rule_zones"].size(); i++)

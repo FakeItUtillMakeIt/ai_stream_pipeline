@@ -54,10 +54,12 @@
         "id": "alert1",
         "type": "alert",
         "params": {
+          "process_type": "parallel",
           "rules": [
             {
               "type": "person_intrusion",
               "params": {
+                "name": "person_intrusion1",
                 "rule_zones":[
                 ]
               }

@@ -29,10 +29,17 @@ public:
     nlohmann::json getStatistics() const;
 
 private:
+    std::vector<rules::AlertResult> process_all_alerts_parallel(std::shared_ptr<core::InferenceResultPacket> packet);
+    std::vector<rules::AlertResult> process_all_alerts_sequence(std::shared_ptr<core::InferenceResultPacket> packet);
+    rules::AlertResult process_single_alert(rules::AlertRulePtr rule,
+                                    std::shared_ptr<core::InferenceResultPacket> packet);
+    
     void handleEvents(const std::vector<rules::AlertEvent>& events);
     void saveSnapshot(std::shared_ptr<core::InferenceResultPacket> packet,
                       const rules::AlertEvent& event);
 
+private:
+    std::atomic<bool> enable_parallel_{true};
     std::vector<rules::AlertRulePtr> rules_;
     AlertCallback callback_;
     mutable std::mutex mutex_;

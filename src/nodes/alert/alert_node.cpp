@@ -16,6 +16,7 @@
 
 #include "3rd_party/log_mgr/log_mgr.h"
 #include <opencv2/opencv.hpp>
+#include <future>
 
 namespace ai_stream {
 namespace nodes {
@@ -51,26 +52,8 @@ void AlertNode::pushData(std::shared_ptr<core::BasePacket> packet) {
     if (!running_) return;
     if (packet->type != core::PacketType::META_DATA) return;
 
-    auto infer = std::dynamic_pointer_cast<core::InferenceResultPacket>(packet);
-    if (!infer) return;
-
-    int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
-
-    // 处理所有规则
-    // todo: 并行处理多个规则，提升性能
-    for (auto& rule : rules_) {
-        rules::AlertResult alert_result;
-        auto status = rule->process(infer, alert_result, now);
-        if (!alert_result.alert_events.empty()) {
-            handleEvents(alert_result.alert_events);
-            for (const auto& e : alert_result.alert_events) {
-                if (e.status == rules::AlertStatus::ALERT_STATUS_OCCUR) {
-                    saveSnapshot(infer, e);
-                }
-            }
-        }
-    }
+    auto infer_packet = std::dynamic_pointer_cast<core::InferenceResultPacket>(packet);
+    auto all_alert_results =process_all_alerts_parallel(infer_packet);
 }
 
 void AlertNode::addRule(rules::AlertRulePtr rule) {
@@ -85,6 +68,105 @@ void AlertNode::setAlertCallback(AlertCallback callback) {
 
 void AlertNode::setSnapshotDir(const std::string& dir) {
     snapshot_dir_ = dir;
+}
+
+std::vector<rules::AlertResult> AlertNode::process_all_alerts_parallel(std::shared_ptr<core::InferenceResultPacket> packet)
+{
+    
+    std::vector<rules::AlertResult> all_alert_results;
+    all_alert_results.reserve(rules_.size());
+    // 申请线程数
+    std::vector<std::future<rules::AlertResult>> futures;
+    futures.reserve(rules_.size());
+    //提交所有规则
+    size_t task_count =0;
+    for (auto& rule : rules_)
+    {
+        auto future = std::async(std::launch::async, [this, &rule, packet]() {
+            return process_single_alert(rule, packet);
+        });
+        futures.push_back(std::move(future));
+        task_count++;
+    }
+    
+    LOG_INFO_FMT("[AlertNode] Submitted {} tasks to future", task_count);
+    //等待并收集所有结果
+    size_t task_done = 0;
+    for (auto& future : futures) { 
+        try
+        {
+            all_alert_results.push_back(future.get());
+            task_done++;
+        }
+        catch(const std::exception& e)
+        {
+            LOG_ERROR_FMT("[AlertNode] Failed to process alert task: {}", e.what());
+            //添加失败的结果
+            rules::AlertResult failed_result;
+            failed_result.rule_name = "Unknown";
+            failed_result.rule_status = rules::RuleStatus::RULE_STATUS_FAIL;
+            failed_result.alert_type = rules::AlertType::ALERT_UNKNOWN;
+            failed_result.error_message= e.what();
+            all_alert_results.push_back(failed_result);
+            task_done++;
+        }
+    }
+    LOG_INFO_FMT("[AlertNode] Completed {} tasks", task_done);
+    return all_alert_results;
+}
+
+std::vector<rules::AlertResult> AlertNode::process_all_alerts_sequence(std::shared_ptr<core::InferenceResultPacket> packet)
+{
+    auto infer = std::dynamic_pointer_cast<core::InferenceResultPacket>(packet);
+    if (!infer) return {};
+
+    int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+
+    std::vector<rules::AlertResult> all_alert_results;
+    // 串行处理所有规则
+    for (auto& rule : rules_) {
+        rules::AlertResult alert_result = process_single_alert(rule, packet);
+        if (!alert_result.alert_events.empty()) {
+            handleEvents(alert_result.alert_events);
+            for (const auto& e : alert_result.alert_events) {
+                if (e.status == rules::AlertStatus::ALERT_STATUS_OCCUR) {
+                    saveSnapshot(infer, e);
+                }
+            }
+        }
+        all_alert_results.push_back(alert_result);
+    }
+    return all_alert_results;
+}
+
+rules::AlertResult AlertNode::process_single_alert(rules::AlertRulePtr rule,
+                                    std::shared_ptr<core::InferenceResultPacket> packet)
+{
+    rules::AlertResult alert_result;
+    alert_result.rule_name = rule->getName();
+    auto start_time = utils::TimeUtil::currentTimeMs();
+    try
+    {
+        alert_result.rule_status = rule->process(packet, alert_result);
+        alert_result.process_time_ms = utils::TimeUtil::currentTimeMs() - start_time;
+        if(alert_result.rule_status == rules::RuleStatus::RULE_STATUS_OK)
+            LOG_INFO_FMT("Alert {} processed success: {} ms", rule->getName(), alert_result.process_time_ms);
+        else
+            LOG_WARN_FMT("Alert {} processed failed, status code: {}", rule->getName(), static_cast<int>(alert_result.rule_status));
+    }
+    catch(const std::exception& e)
+    {
+        alert_result.rule_status = rules::RuleStatus::RULE_STATUS_FAIL;
+        LOG_ERROR_FMT("Failed to process alert {}: {}", rule->getName() ,e.what());
+    }
+    catch(...)
+    {
+        alert_result.rule_status = rules::RuleStatus::RULE_STATUS_FAIL;
+        LOG_ERROR_FMT("Failed to process alert {}", rule->getName());
+    }
+
+    return alert_result;
 }
 
 void AlertNode::handleEvents(const std::vector<rules::AlertEvent>& events) {

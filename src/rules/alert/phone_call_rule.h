@@ -18,7 +18,6 @@ namespace rules {
             int64_t current_time_ms) override;
         void reset() override;
 
-        std::string getName() const override{ return alertTypeMap[getType()]; };
         AlertType getType() const override{ return AlertType::PHONE_CALL; };
         nlohmann::json getStatistics() const override;
 
