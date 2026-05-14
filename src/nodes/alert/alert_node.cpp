@@ -54,6 +54,13 @@ void AlertNode::pushData(std::shared_ptr<core::BasePacket> packet) {
 
     auto infer_packet = std::dynamic_pointer_cast<core::InferenceResultPacket>(packet);
     auto all_alert_results =process_all_alerts_parallel(infer_packet);
+    // 打印报警结果
+    for (auto& r : all_alert_results) {
+        if (r.alert_events.empty()) continue;
+        for (auto& e : r.alert_events) {
+            LOG_INFO_FMT("[AlertNode] Alert: {}-{}-status({}-{})", e.alert_name, static_cast<int>(e.alert_type),static_cast<int>(e.status),e.description);
+        }
+    }
 }
 
 void AlertNode::addRule(rules::AlertRulePtr rule) {

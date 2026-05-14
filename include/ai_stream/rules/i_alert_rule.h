@@ -52,6 +52,7 @@ namespace ai_stream
         };
 
         std::map<AlertType, std::string> alertTypeMap = {
+            {AlertType::ALERT_UNKNOWN, "alert_unknown"},
             {AlertType::PERSON_INTRUSION, "person_intrusion"},
             {AlertType::MISSING_HELMET, "missing_helmet"},
             {AlertType::MISSING_WORK_CLOTHES, "missing_work_clothes"},
@@ -128,13 +129,13 @@ namespace ai_stream
 
             virtual void setName(const std::string& name) {alert_name_=name;}
             virtual std::string getName() const { return alert_name_.empty()?alertTypeMap[getType()]:alert_name_; };
-        
             virtual AlertType getType() const = 0;
             virtual void reset() = 0;
             virtual nlohmann::json getStatistics() const = 0;
             virtual RuleStatus rule_logic(
                 const std::shared_ptr<core::InferenceResultPacket> packet,
                 uint8_t zone_no, ZonePoints zone_points) = 0;
+            std::string getTypeName(){return alertTypeMap[getType()];}
 
             std::map<uint8_t, AlertEvent> zone_alert_map_; // 区域告警事件
 
