@@ -130,12 +130,13 @@ void DetectionInferNode::pushData(std::shared_ptr<core::BasePacket> packet) {
 // ============================================================
 void DetectionInferNode::inferLoop() {
     while (running_) {
+        in_time_ms_ = utils::TimeUtil::currentTimeMs();
         std::vector<std::shared_ptr<core::VideoFramePacket>> batch_frames;
         batch_frames.reserve(max_batch_size_);
 
         // 1. 等待第一帧（阻塞等待）
         std::shared_ptr<core::VideoFramePacket> first_frame;
-        if (!queue_.pop(first_frame, std::chrono::milliseconds(100))) {
+        if (!queue_.pop(first_frame, std::chrono::milliseconds(batch_timeout_ms_))) {
             continue;
         }
         batch_frames.push_back(first_frame);
@@ -159,7 +160,7 @@ void DetectionInferNode::inferLoop() {
 
         int actual_batch = static_cast<int>(batch_frames.size());
         LOG_DEBUG_FMT("[DetectionInfer] Batch collected: {}/{}", actual_batch, max_batch_size_.load());
-        in_time_ms_ = utils::TimeUtil::currentTimeMs();
+        
         // 3. 执行推理
         auto t0 = std::chrono::high_resolution_clock::now();
         auto results = processBatch(batch_frames);

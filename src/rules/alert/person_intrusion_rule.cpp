@@ -160,7 +160,7 @@ namespace ai_stream
                     person_track_ids.push_back(detection.track_id);
                 }
             }
-            LOG_INFO_FMT("PersonIntrusionRule::rule_logic() zone {} person_in_zone:{},person_track_ids size:{},packet_time:{}",    
+            LOG_DEBUG_FMT("PersonIntrusionRule::rule_logic() zone {} person_in_zone:{},person_track_ids size:{},packet_time:{}",    
                 zone_no, person_in_zone,person_track_ids.size(),packet->timestamp_ms);
             // 更新zone_alert_map_
             if (!person_in_zone)

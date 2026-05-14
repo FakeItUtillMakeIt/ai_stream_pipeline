@@ -84,6 +84,7 @@ void FFmpegDecodeNode::stop() {
 }
 
 void FFmpegDecodeNode::pushData(std::shared_ptr<core::BasePacket> packet) {
+    in_time_ms_ = utils::TimeUtil::currentTimeMs();
     if (!running_) return;
     if (packet->type != core::PacketType::RAW_VIDEO) return;
     in_time_ms_ = utils::TimeUtil::currentTimeMs();
@@ -104,8 +105,7 @@ void FFmpegDecodeNode::pushData(std::shared_ptr<core::BasePacket> packet) {
     auto t1 = std::chrono::high_resolution_clock::now();
     LOG_INFO_FMT("[FFmpegDecode] Decoded frame {} ({} ms)", frame_count_, 
                  std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
-    // frame_pkt->cost_ms = utils::TimeUtil::currentTimeMs() - in_time_ms_;
-    // frame_pkt->cost_time_map.insert({name_,utils::TimeUtil::currentTimeMs() - in_time_ms_});
+
     if (frame_pkt) {
         // 广播解码后的帧
         broadcast(frame_pkt);
@@ -230,6 +230,10 @@ std::shared_ptr<core::VideoFramePacket> FFmpegDecodeNode::decodePacket(
     frame_pkt->height = height;
     frame_pkt->channels = 3;
     frame_pkt->frame_id = raw_pkt->frame_id;
+
+    frame_pkt->cost_ms = utils::TimeUtil::currentTimeMs() - in_time_ms_;
+    frame_pkt->cost_time_map = raw_pkt->cost_time_map;
+    frame_pkt->cost_time_map.insert({name_,utils::TimeUtil::currentTimeMs() - in_time_ms_});
     
     return frame_pkt;
 }
