@@ -83,6 +83,7 @@ int main(int argc, char *argv[])
         LOG_INFO("Pipeline stopped. Exiting.");
         LogManager::get_instance().shutdown();
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        std::_Exit(0);
         return 1;
     }
 
@@ -98,6 +99,8 @@ int main(int argc, char *argv[])
     pipeline->stop();
     LOG_INFO("Pipeline stopped. Exiting.");
     LogManager::get_instance().shutdown();
+
+    std::_Exit(0);
 
     return 0;
 }

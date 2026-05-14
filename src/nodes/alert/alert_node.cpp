@@ -3,8 +3,18 @@
 #include "ai_stream/core/packet.h"
 #include "registry/node_factory.h"
 #include "rules/alert/alert_rule_factory.h"
+#include "rules/alert/absence_rule.h"
+#include "rules/alert/climbing_rule.h"
+#include "rules/alert/fall_down_rule.h"
+#include "rules/alert/human_gathering_rule.h"
+#include "rules/alert/missing_helmet_rule.h"
+#include "rules/alert/missing_safety_belt_rule.h"
+#include "rules/alert/person_intrusion_rule.h"
+#include "rules/alert/phone_call_rule.h"
+#include "rules/alert/sleeping_on_duty_rule.h"
+#include "rules/alert/smoking_rule.h"
+
 #include "3rd_party/log_mgr/log_mgr.h"
-#include "rules/alert/person_intrusion_rules.h"
 #include <opencv2/opencv.hpp>
 
 namespace ai_stream {
@@ -89,7 +99,7 @@ void AlertNode::handleEvents(const std::vector<rules::AlertEvent>& events) {
             }
             return "UNKNOWN";
         };
-        LOG_INFO_FMT("[AlertNode] [{}] {}: {}", level_str(e.level), e.alert_name, e.description);
+        LOG_INFO_FMT("[AlertNode] {}: {}", e.alert_name, e.description);
 
         // 回调
         std::lock_guard<std::mutex> lock(mutex_);
@@ -110,7 +120,7 @@ void AlertNode::saveSnapshot(std::shared_ptr<core::InferenceResultPacket> packet
         strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", &tm);
 
         std::string path = fmt::format("{}/{}_{}.jpg",
-            snapshot_dir_, event.alert_type, buf);
+            snapshot_dir_, event.alert_name, buf);
         cv::imwrite(path, *packet->source_frame->mat);
     } catch (...) {
         LOG_ERROR("[AlertNode] Failed to save snapshot");

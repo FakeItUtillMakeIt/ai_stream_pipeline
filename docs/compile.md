@@ -1,0 +1,1 @@
+cmake .. -DWITH_TRACK=ON -DWITH_CUDA=ON -DWITH_ALERT=ON  && make -j

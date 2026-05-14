@@ -82,14 +82,15 @@ namespace ai_stream
             int64_t duration_ms;
             uint16_t non_update_count;
             uint8_t zone_no;
+            std::vector<int> object_ids;
+
             AlertLevel level;
             std::string alert_name;
-            std::string alert_type;
+            AlertType alert_type;
             std::string description;
             AlertStatus status;
             nlohmann::json extra_data;
-            std::vector<int> object_ids;
-
+            
             nlohmann::json toJson() const
             {
                 return {};
