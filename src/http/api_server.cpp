@@ -91,6 +91,7 @@ void ApiServer::stop() {
 void ApiServer::handlePipelineBuild(const httplib::Request& req, httplib::Response& res) {
     try {
         json body = json::parse(req.body);
+        LOG_INFO_FMT("Received pipeline request:{}",body.dump());
         std::string pipeline_id = body.value("id", "");
         if (pipeline_id.empty()) {
             res.status = 400;
@@ -137,6 +138,7 @@ void ApiServer::handlePipelineBuild(const httplib::Request& req, httplib::Respon
 void ApiServer::handlePipelineStart(const httplib::Request& req, httplib::Response& res) {
     try {
         json body = json::parse(req.body);
+        LOG_INFO_FMT("Received pipeline request:{}",body.dump());
         std::string pipeline_id = body.value("id", "");
         
         std::lock_guard<std::mutex> lock(pipelines_mutex_);

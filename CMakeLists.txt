@@ -11,7 +11,7 @@ project(ai_stream_pipeline
 # ------------------------------------------------------------------------------
 # 1. 选项配置
 # ------------------------------------------------------------------------------
-option(BUILD_HTTP_SERVER "Build HTTP API server executable" OFF)
+option(BUILD_HTTP_SERVER "Build HTTP API server executable" ON)
 option(BUILD_TESTS       "Build unit and integration tests" OFF)
 option(BUILD_EXAMPLES    "Build example applications" ON)
 option(ENABLE_COVERAGE   "Enable code coverage instrumentation" OFF)
@@ -24,6 +24,9 @@ option(WITH_ONNX         "Enable ONNX Runtime inference support" OFF)
 # GPU 加速选项
 option(WITH_CUDA "Enable CUDA support for GPU acceleration" ON)
 option(WITH_NPP "Enable NPP library for GPU image processing" ON)
+
+option(WITH_TRACK "Enable tracking node" ON)
+option(WITH_ALERT "Enable alert node" ON)
 
 # ------------------------------------------------------------------------------
 # 2. 全局编译设置
@@ -198,7 +201,7 @@ endif()
 if(BUILD_HTTP_SERVER)
     add_subdirectory(src/http)
     
-    target_link_libraries(ai_stream_server
+    target_link_libraries(http_server
         PRIVATE
             ai_stream_core
             ai_stream_nodes
@@ -207,7 +210,7 @@ if(BUILD_HTTP_SERVER)
     
     # 如果节点库使用了 whole-archive，这里要关闭
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        target_link_options(ai_stream_server PRIVATE -Wl,--no-whole-archive)
+        target_link_options(http_server PRIVATE -Wl,--no-whole-archive)
     endif()
 endif()
 
@@ -252,7 +255,7 @@ install(TARGETS ai_stream_core ai_stream_nodes
 
 # 安装 HTTP 服务器
 if(BUILD_HTTP_SERVER)
-    install(TARGETS ai_stream_server
+    install(TARGETS http_server
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     )
 endif()

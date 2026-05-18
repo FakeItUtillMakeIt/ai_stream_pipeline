@@ -18,7 +18,7 @@ int main(int argc, char* argv[]) {
     LogManager::Config config;
     config.log_dir = "./logs";
     config.log_name = "ai_stream";
-    config.level = LogManager::Level::S_WARN;
+    config.level = LogManager::Level::S_INFO;
     config.max_file_size = 5 * 1024 * 1024; // 5MB
     config.max_files = 5;
     config.console_output = true;
