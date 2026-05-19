@@ -51,7 +51,7 @@ namespace ai_stream
             CLAMBING = 11,
         };
 
-        std::map<AlertType, std::string> alertTypeMap = {
+        inline std::map<AlertType, std::string> alertTypeMap = {
             {AlertType::ALERT_UNKNOWN, "alert_unknown"},
             {AlertType::PERSON_INTRUSION, "person_intrusion"},
             {AlertType::MISSING_HELMET, "missing_helmet"},
