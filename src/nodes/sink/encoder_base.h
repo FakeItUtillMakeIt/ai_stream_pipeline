@@ -3,6 +3,7 @@
 
 #include <string>
 #include <memory>
+#include <atomic>
 
 struct AVFormatContext;
 struct AVCodecContext;
@@ -49,6 +50,7 @@ protected:
     int height_ = 0;
     bool initialized_ = false;
     int64_t next_pts_ = 0;
+    std::atomic<bool> closed_{false}; 
 };
 
 /**

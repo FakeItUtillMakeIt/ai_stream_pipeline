@@ -129,10 +129,6 @@ void MP4SaveNode::writerLoop() {
                               frame->mat->step, next_pts_++);
     }
     
-    // 冲刷编码器
-    if (encoder_) {
-        encoder_->flush();
-    }
 }
 
 bool MP4SaveNode::initFileWriter() {

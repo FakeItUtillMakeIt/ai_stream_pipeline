@@ -281,7 +281,7 @@ bool EncoderBase::encodeFrame(const uint8_t* data, int width, int height,
 }
 
 void EncoderBase::flush() {
-    if (!initialized_ || !fmt_ctx_ ||!codec_ctx_) return;
+    if (!initialized_ || !fmt_ctx_ ||!codec_ctx_ || closed_.load()) return;
     
     LOG_INFO("[EncoderBase] Flushing encoder...");
     
@@ -326,14 +326,26 @@ void EncoderBase::writeTrailer() {
 }
 
 void EncoderBase::close() {
-    if(!fmt_ctx_ && !codec_ctx_ && !av_frame_ && !sws_ctx_)
-    {
-        return;
-    }
+    if(closed_.exchange(true))return;
 
     if (initialized_) {
         flush();
         initialized_ = false;
+    }
+
+    //确保所有编码器输出都被读取
+    if (codec_ctx_)
+    {
+        int ret;
+        AVPacket* pkt = av_packet_alloc();
+        if(pkt)
+        {
+            while ((ret = avcodec_receive_packet(codec_ctx_,pkt)) >= 0)
+            {
+                av_packet_unref(pkt);
+            }
+            av_packet_free(&pkt);
+        }
     }
 
     if (sws_ctx_) {
@@ -349,7 +361,7 @@ void EncoderBase::close() {
         avcodec_free_context(&codec_ctx_);
     }
     if (fmt_ctx_) {
-        if (fmt_ctx_->pb) {
+        if (fmt_ctx_->pb && !(fmt_ctx_->flags & AVFMT_NOFILE)) {
             avio_flush(fmt_ctx_->pb);
             avio_closep(&fmt_ctx_->pb);
         }

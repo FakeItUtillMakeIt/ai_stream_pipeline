@@ -111,8 +111,6 @@ void RTMPSinkNode::encoderLoop() {
         connected_ = true;
     }
     
-    // 冲刷编码器
-    encoder_->flush();
 }
 
 bool RTMPSinkNode::initEncoder() {
