@@ -1,7 +1,7 @@
 // src/rules/alert/climbing_rule.h
 #pragma once
 
-#include "climbing_detector.h"
+#include "detector/climbing_detector.h"
 #include "ai_stream/rules/i_alert_rule.h"
 #include <unordered_map>
 #include <mutex>

@@ -1,7 +1,7 @@
 // src/rules/alert/moving_phone_call_rule.h
 #pragma once
 
-#include "moving_phonecall_detector.h"
+#include "detector/moving_phonecall_detector.h"
 #include "ai_stream/rules/i_alert_rule.h"
 #include <unordered_map>
 #include <mutex>

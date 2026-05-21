@@ -1,7 +1,7 @@
 // src/rules/alert/sleeping_on_duty_rule.h
 #pragma once
 
-#include "station_detector.h"
+#include "detector/station_detector.h"
 #include "ai_stream/rules/i_alert_rule.h"
 #include <unordered_map>
 #include <mutex>

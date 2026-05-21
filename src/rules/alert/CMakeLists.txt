@@ -1,5 +1,5 @@
-file(GLOB ALERT_RULE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp)
-file(GLOB ALERT_RULE_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/*.h)
+file(GLOB ALERT_RULE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/detector/*.cpp)
+file(GLOB ALERT_RULE_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/*.h ${CMAKE_CURRENT_SOURCE_DIR}/detector/*.h)
 
 message(STATUS "=== Alert Rule Sources ===")
 foreach(src ${ALERT_RULE_SOURCES})
@@ -13,6 +13,7 @@ target_compile_options(alert_rules PRIVATE -fPIC)
 target_include_directories(alert_rules 
     PUBLIC 
         ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/detector
         ${PROJECT_SOURCE_DIR}
         ${PROJECT_SOURCE_DIR}/src
         ${OpenCV_INCLUDE_DIRS}
