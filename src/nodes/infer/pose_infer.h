@@ -1,17 +1,24 @@
 // src/nodes/infer/pose_infer.h
-
 #pragma once
+
 #include "ai_stream/nodes/i_infer_node.h"
 #include "src/core/frame_queue.h"
+
 #include <NvInfer.h>
 #include <cuda_runtime_api.h>
+
 #include <thread>
 #include <atomic>
 #include <vector>
 #include <string>
 #include <memory>
 #include <deque>
-#include <opencv2/core.hpp>
+
+namespace nvinfer1 {
+    class IRuntime;
+    class ICudaEngine;
+    class IExecutionContext;
+}
 
 namespace ai_stream {
 namespace nodes {
@@ -37,20 +44,23 @@ public:
 private:
     void inferLoop();
     bool initEngine(const std::string& engine_path);
-    
-    std::vector<std::shared_ptr<core::InferenceResultPacket>> processBatch(
-        const std::vector<std::shared_ptr<core::VideoFramePacket>>& frames);
 
-    void preprocessBatch(const std::vector<cv::Mat*>& images, float* gpu_buffer, int batch_size);
-    
-    // 后处理：每帧取最优候选，解码关键点
-    void postprocessBatch(
-        int batch_size,
-        const float* host_output,  // [B, N, 56]
-        const std::vector<cv::Rect2f>& crop_rois,
-        const std::vector<cv::Size>& source_sizes,
-        float conf_thresh,
-        std::vector<std::shared_ptr<core::InferenceResultPacket>>& results);
+    // 处理单帧 InferenceResultPacket
+    void processFrame(std::shared_ptr<core::InferenceResultPacket> packet);
+
+    // 从 source_mat 按检测框 crop + resize + normalize
+    bool cropAndPreprocess(
+        const cv::Mat& source_mat,
+        const core::InferenceResultPacket::BBox& det,
+        float* host_buffer,
+        int slot_idx);
+
+    // 单帧内多人 batch 后处理
+    void postprocessFrame(
+        std::shared_ptr<core::InferenceResultPacket> packet,
+        const std::vector<int>& person_indices,
+        int num_persons,
+        float* output_host);
 
     // TensorRT 资源
     std::unique_ptr<nvinfer1::IRuntime, void(*)(nvinfer1::IRuntime*)> runtime_{
@@ -61,47 +71,50 @@ private:
         nullptr, [](nvinfer1::IExecutionContext* p){ if (p) delete p; }};
     cudaStream_t stream_ = nullptr;
 
-    // Tensor 名称（根据你的转置模型输出名修改）
+    // Tensor 名称
     std::string input_name_ = "images";
-    std::string output_name_ = "output0_transposed";  
+    std::string output_name_ = "output0_transposed";  // 转置后的输出
 
     // GPU 缓冲区
     void* d_input_ = nullptr;
     void* d_output_ = nullptr;
 
     // CPU 缓冲区
-    std::vector<float> h_output_;
+    std::vector<float> h_output_;  // [max_batch, 8400, 56]
 
     // 常量
     static constexpr int INPUT_H = 640;
     static constexpr int INPUT_W = 640;
-    static constexpr int NUM_KPTS = 17;
-    static constexpr int KPT_DIMS = 3;  // x, y, confidence
-    static constexpr int OUT_DIM = 56;  // 4 box + 1 score + 51 kpts
-    static constexpr int MAX_CANDIDATES = 8400;
+    static constexpr int NUM_CANDIDATES = 8400;  // 80*80 + 40*40 + 20*20
+    static constexpr int POSE_DIM = 56;           // 4 box + 1 score + 51 kpts
+    static constexpr int NUM_KEYPOINTS = 17;
 
     size_t input_size_ = 0;
     size_t output_size_ = 0;
 
     int input_width_ = 640;
     int input_height_ = 640;
-    int batch_size_ = 1;
+    int batch_size_ = 8;   // 单帧最大人数
     std::string precision_ = "fp16";
-    DetectorType detector_type_ = DetectorType::POSE;
+    DetectorType detector_type_ = DetectorType::DETECTION;
 
-    std::vector<std::string> class_names_ = {"person"};
+    // 过滤参数
+    float conf_thresh_ = 0.25f;      // person 置信度阈值
+    float kpt_conf_thresh_ = 0.5f;   // 关键点可见度阈值
+    int person_class_id_ = 0;        // person 的 class_id
 
-    // 配置
-    float conf_thresh_ = 0.25f;
-    float kpt_conf_thresh_ = 0.5f;
+    std::vector<std::string> class_names_ = {
+        "person"
+    };
 
     // 数据队列和线程
-    core::BoundedQueue<std::shared_ptr<core::VideoFramePacket>> queue_{64};
+    core::BoundedQueue<std::shared_ptr<core::InferenceResultPacket>> queue_{64};
     std::thread worker_;
     std::atomic<bool> running_{false};
 
-    std::chrono::milliseconds batch_timeout_ms_{20};
-    std::atomic<int> max_batch_size_{1};
+    // 耗时统计
+    uint64_t in_time_ms_ = 0;
 };
 
-}}
+} // namespace nodes
+} // namespace ai_stream

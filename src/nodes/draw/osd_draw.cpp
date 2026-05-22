@@ -53,7 +53,44 @@ void OSDDrawNode::pushData(std::shared_ptr<core::BasePacket> packet) {
                       static_cast<int>(det.w), static_cast<int>(det.h));
         LOG_DEBUG_FMT("[OSDDraw] Drawing detection: {} {} ({}, {}, {}, {})",std::to_string(det.class_id).c_str(), det.confidence, rect.x, rect.y, rect.width, rect.height);
         cv::rectangle(*draw_mat, rect, box_color_, font_thickness_);
+   
+        if (det.has_keypoints)
+        {
+            // 1. 先画骨架连线（先画线，再画点，避免点盖住线）
+            for (const auto& [i, j] : SKELETON)
+            {
+                const auto& kp1 = det.keypoints[i];
+                const auto& kp2 = det.keypoints[j];
+                
+                // 两个点都可见才连线
+                if (kp1.visible && kp2.visible)
+                {
+                    cv::Point p1(static_cast<int>(kp1.x), static_cast<int>(kp1.y));
+                    cv::Point p2(static_cast<int>(kp2.x), static_cast<int>(kp2.y));
+                    cv::line(*draw_mat, p1, p2, cv::Scalar(255, 128, 0), 2, cv::LINE_AA);
+                }
+            }
 
+            // 2. 再画关键点（点和序号）
+            for (int k = 0; k < 17; ++k)
+            {
+                const auto& kp = det.keypoints[k];
+                if (!kp.visible) continue;  // 不可见跳过，或画灰色点
+                
+                cv::Point pt(static_cast<int>(kp.x), static_cast<int>(kp.y));
+                
+                // 画实心圆
+                cv::circle(*draw_mat, pt, 5, cv::Scalar(0, 255, 0), -1);
+                // 白边
+                cv::circle(*draw_mat, pt, 5, cv::Scalar(255, 255, 255), 1);
+                
+                // 标注序号（小字体）
+                cv::putText(*draw_mat, std::to_string(k), 
+                            cv::Point(pt.x + 8, pt.y - 8),
+                            cv::FONT_HERSHEY_SIMPLEX, 0.5, 
+                            cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
+            }
+        }
         std::string label = det.class_name;
         std::string track_info = "ID:" + std::to_string(det.track_id);
         if (show_confidence_) {

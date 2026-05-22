@@ -125,6 +125,10 @@ namespace ai_stream
                             {
                                 infer_node->setDetectorType(nodes::DetectorType::CLASSIFICATION);
                             }
+                            else if (type == "pose_infer")
+                            {
+                                infer_node->setDetectorType(nodes::DetectorType::POSE);
+                            }
                             else
                             {
                                 // 默认设置为检测器类型

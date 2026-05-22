@@ -66,7 +66,7 @@ struct VideoFramePacket : public BasePacket {
     
     std::shared_ptr<cv::Mat> source_mat;
     std::shared_ptr<cv::Mat> mat;       // 图像数据（通常为 BGR 格式）
-    cv::Rect2f crop_roi;
+
     int width = 0;
     int height = 0;
     int channels = 3;
