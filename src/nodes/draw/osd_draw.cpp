@@ -57,7 +57,7 @@ void OSDDrawNode::pushData(std::shared_ptr<core::BasePacket> packet) {
         if (det.has_keypoints)
         {
             // 1. 先画骨架连线（先画线，再画点，避免点盖住线）
-            for (const auto& [i, j] : SKELETON)
+            for (const auto& [i, j] : core::SKELETON)
             {
                 const auto& kp1 = det.keypoints[i];
                 const auto& kp2 = det.keypoints[j];
