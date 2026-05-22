@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <array>
 #include <opencv2/core/mat.hpp>
 
 namespace ai_stream {
@@ -18,6 +19,8 @@ enum class PacketType : uint8_t {
     UNKNOWN = 0,
     RAW_VIDEO,      // 原始编码视频数据 (H264/H265 字节流)
     DECODED_FRAME,  // 解码后的图像帧 (YUV/RGB)
+    DETECTION,
+    POSE,
     META_DATA,      // 推理结果等元数据
     TENSOR          // 推理输入/输出 Tensor
 };
@@ -63,6 +66,7 @@ struct VideoFramePacket : public BasePacket {
     
     std::shared_ptr<cv::Mat> source_mat;
     std::shared_ptr<cv::Mat> mat;       // 图像数据（通常为 BGR 格式）
+    cv::Rect2f crop_roi;
     int width = 0;
     int height = 0;
     int channels = 3;
@@ -75,7 +79,15 @@ struct VideoFramePacket : public BasePacket {
  */
 struct InferenceResultPacket : public BasePacket {
     InferenceResultPacket() { type = PacketType::META_DATA; }
-    
+    struct KeyPoint {
+        float x;
+        float y;
+        float confidence;
+        bool visible;
+        KeyPoint() : x(0.0f), y(0.0f), confidence(0.0f), visible(false) {}
+        KeyPoint(float x_, float y_, float conf_, bool visible_)
+            : x(x_), y(y_), confidence(conf_), visible(visible_) {}
+    };
     /**
      * @brief 边界框结构
      */
@@ -84,6 +96,9 @@ struct InferenceResultPacket : public BasePacket {
         float confidence;               // 置信度 [0.0, 1.0]
         int class_id;                   // 类别 ID
         std::string class_name;         // 类别名称
+        bool has_keypoints;
+        std::array<KeyPoint, 17> keypoints;
+        float keypoints_conf;
 
         int track_id;
         int track_age;
@@ -96,10 +111,19 @@ struct InferenceResultPacket : public BasePacket {
         BBox() = default;
         BBox(float x_, float y_, float w_, float h_, float conf, int cls_id, const std::string& cls_name = "")
             : x(x_), y(y_), w(w_), h(h_), confidence(conf), class_id(cls_id), class_name(cls_name),
-              track_id(-1), track_age(0), track_active(false), smooth_x(0.0f), smooth_y(0.0f), smooth_w(0.0f), smooth_h(0.0f) {}
+                track_id(-1), track_age(0), track_active(false), smooth_x(0.0f), smooth_y(0.0f), smooth_w(0.0f), smooth_h(0.0f) {}
     };
-    
+
+    struct PoseResult{
+        float person_score;
+        std::array<KeyPoint, 17> keypoints;
+        cv::Rect2f person_box;
+        int matched_det_idx;
+        PoseResult() : person_score(0.0f), matched_det_idx(-1) {}
+    };
+
     std::vector<BBox> detections;                       // 检测结果列表
+    std::vector<PoseResult> pose_results;
     std::shared_ptr<VideoFramePacket> source_frame;     // 关联的原始帧，用于后续画框等操作
 };
 

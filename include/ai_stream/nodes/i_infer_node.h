@@ -16,7 +16,8 @@ namespace nodes {
 enum class DetectorType {
     DETECTION = 0,      /// 目标检测（框+类别）
     SEGMENTATION = 1,   /// 实例分割
-    CLASSIFICATION = 2  /// 图像分类
+    CLASSIFICATION = 2,  /// 图像分类
+    POSE = 3
 };
 
 /**
