@@ -49,6 +49,7 @@ namespace ai_stream
             ABSENCE = 9,
             SLEEPING_ON_DUTY = 10,
             CLAMBING = 11,
+            FIGHTING = 12,
         };
 
         inline std::map<AlertType, std::string> alertTypeMap = {
@@ -63,7 +64,9 @@ namespace ai_stream
             {AlertType::HUMAN_GATHERING, "human_gathering"},
             {AlertType::ABSENCE, "absence"},
             {AlertType::SLEEPING_ON_DUTY, "sleeping_on_duty"},
-            {AlertType::CLAMBING, "climbing"}};
+            {AlertType::CLAMBING, "climbing"},
+            {AlertType::FIGHTING, "fighting"}
+        };
 
         enum class AlertStatus : uint8_t
         {

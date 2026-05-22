@@ -12,6 +12,31 @@
 namespace ai_stream {
 namespace core {
 
+// ========== COCO骨架定义 ==========
+static const std::vector<std::pair<int, int>> SKELETON = {
+    {0, 1}, {0, 2}, {1, 3}, {2, 4},           // 脸部
+    {5, 6}, {5, 7}, {7, 9}, {6, 8}, {8, 10}, // 上肢
+    {5, 11}, {6, 12}, {11, 12},              // 躯干
+    {11, 13}, {13, 15}, {12, 14}, {14, 16}  // 下肢
+};
+
+static const cv::Scalar COLOR_HEAD(0, 255, 0);      // 绿
+static const cv::Scalar COLOR_ARMS(255, 0, 0);      // 蓝
+static const cv::Scalar COLOR_BODY(0, 165, 255);    // 橙
+static const cv::Scalar COLOR_LEGS(0, 0, 255);      // 红
+
+static const cv::Scalar KPT_COLORS[17] = {
+    cv::Scalar(0, 255, 0), cv::Scalar(0, 255, 0), cv::Scalar(0, 255, 0),
+    cv::Scalar(0, 255, 0), cv::Scalar(0, 255, 0),     // 0-4 脸部绿
+    cv::Scalar(255, 0, 0), cv::Scalar(255, 0, 0),     // 5-6 肩蓝
+    cv::Scalar(255, 0, 0), cv::Scalar(255, 0, 0),     // 7-8 肘蓝
+    cv::Scalar(255, 0, 0), cv::Scalar(255, 0, 0),     // 9-10 手腕蓝
+    cv::Scalar(0, 165, 255), cv::Scalar(0, 165, 255), // 11-12 髋橙
+    cv::Scalar(0, 0, 255), cv::Scalar(0, 0, 255),     // 13-14 膝红
+    cv::Scalar(0, 0, 255), cv::Scalar(0, 0, 255)      // 15-16 踝红
+};
+
+
 /**
  * @brief 数据包类型枚举
  */
