@@ -203,6 +203,34 @@ namespace ai_stream
                         }
                     }
 
+                    if (type.find("draw") != std::string::npos)
+                    { 
+                        auto draw_node = std::dynamic_pointer_cast<nodes::IDrawNode>(node);
+                        if(draw_node)
+                        {
+                            // 快照配置
+                            if (params.contains("snapshot"))
+                            {
+                                LOG_INFO_FMT("draw config:{}",params.dump());
+                                auto &snapshot_cfg = params["snapshot"];
+
+                                if (snapshot_cfg.contains("enabled"))
+                                {
+                                    draw_node->setSnapshotEnabled(snapshot_cfg["enabled"].get<bool>());
+                                }
+                                if (snapshot_cfg.contains("interval"))
+                                {
+                                    draw_node->setSnapshotInterval(snapshot_cfg["interval"].get<int>());
+                                }
+                                if (snapshot_cfg.contains("dir"))
+                                {
+                                    draw_node->setSnapshotDir(snapshot_cfg["dir"].get<std::string>());
+                                }
+                            }
+                        }
+
+                    }
+
                     if (type.find("alert") != std::string::npos)
                     { 
                         auto alert_node = std::dynamic_pointer_cast<nodes::AlertNode>(node);

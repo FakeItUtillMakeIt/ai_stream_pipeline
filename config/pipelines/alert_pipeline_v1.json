@@ -70,7 +70,13 @@
       {
         "id": "draw1",
         "type": "osd_draw",
-        "params": {}
+        "params": {
+          "snapshot": {
+            "enabled": true,
+            "interval": 100,
+            "dir": "./draw_snapshot1/"
+          }
+        }
       },
       {
         "id": "sink1",

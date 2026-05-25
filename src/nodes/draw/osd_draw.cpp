@@ -116,7 +116,68 @@ void OSDDrawNode::pushData(std::shared_ptr<core::BasePacket> packet) {
     drawn_frame->height = draw_mat->rows;
     drawn_frame->channels = draw_mat->channels();
 
+    frame_count_++;
+    if (snapshot_enabled_ && frame_count_ % snapshot_interval_ == 0) { 
+        saveSnapshot(drawn_frame,frame_count_);
+    }
+
     broadcast(drawn_frame);
+}
+
+void OSDDrawNode::setSnapshotEnabled(bool enabled)
+{
+    snapshot_enabled_ = enabled;
+    LOG_INFO_FMT("[OSDDraw] Snapshot enabled: {}", enabled);
+}
+
+void OSDDrawNode::setSnapshotInterval(int interval)
+{
+    snapshot_interval_ = interval;
+    snapshot_interval_ = interval > 0 ? interval : 100;
+    LOG_INFO_FMT("[OSDDraw] Snapshot interval: {} frames", snapshot_interval_.load());
+}
+
+void OSDDrawNode::setSnapshotDir(const std::string& dir)
+{
+    snapshot_dir_ = dir;
+    LOG_INFO_FMT("[OSDDraw] Snapshot directory: {}", dir);
+}
+
+void OSDDrawNode::saveSnapshot(std::shared_ptr<core::VideoFramePacket> frame, int frame_num)
+{
+    if(!frame || !frame->mat || frame->mat->empty())
+        return;
+    try {
+        // 生成文件名
+        auto now = std::chrono::system_clock::now();
+        auto time_t = std::chrono::system_clock::to_time_t(now);
+        auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+            now.time_since_epoch()).count() % 1000000;
+        
+        std::tm tm_buf;
+        localtime_r(&time_t, &tm_buf);
+        
+        std::stringstream ss;
+        ss << snapshot_dir_ << "/"
+           << "stream_" << frame->stream_id << "_"
+           << "frame_" << std::setfill('0') << std::setw(6) << frame_num << "_"
+           << std::put_time(&tm_buf, "%Y%m%d_%H%M%S") << "_"
+           << std::setfill('0') << std::setw(6) << us
+           << ".jpg";
+        
+        std::string filename = ss.str();
+        
+        // 保存图片
+        bool success = cv::imwrite(filename, *frame->mat);
+        
+        if (success) {
+            snapshot_count_++;
+            LOG_INFO_FMT("[OSDDraw] Snapshot saved: {} (frame #{}, total: {})", 
+                         filename, frame_num, snapshot_count_);
+        }
+    } catch (const std::exception& e) {
+        LOG_ERROR_FMT("[OSDDraw] Exception saving snapshot: {}", e.what());
+    }
 }
 
 REGISTER_NODE("osd_draw", OSDDrawNode)

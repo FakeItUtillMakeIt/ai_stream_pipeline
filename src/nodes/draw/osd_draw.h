@@ -22,12 +22,24 @@ public:
     bool start() override { return true; }
     void stop() override {}
     void pushData(std::shared_ptr<core::BasePacket> packet) override;
+    void setSnapshotEnabled(bool enabled) override;
+    void setSnapshotInterval(int interval) override;
+    void setSnapshotDir(const std::string& dir) override;
+
+private:
+    void saveSnapshot(std::shared_ptr<core::VideoFramePacket> frame, int frame_num);
 
 private:
     cv::Scalar box_color_{0, 255, 0}; // 默认绿色 BGR
     int font_thickness_ = 2;
     bool show_confidence_ = true;
     std::vector<int> class_filter_;
+    // 快照配置
+    std::atomic<bool> snapshot_enabled_{false};
+    std::atomic<int> snapshot_interval_{100};
+    std::string snapshot_dir_ = "./snapshots";
+    int snapshot_count_ = 0;
+    int frame_count_ = 0;
 };
 
 } // namespace nodes
