@@ -76,6 +76,14 @@ namespace ai_stream
             ALERT_STATUS_DEFAULT = 3
         };
 
+        inline std::map<AlertStatus, std::string> alert_status_map =
+        {
+            {AlertStatus::ALERT_STATUS_OCCUR, " occur"},
+            {AlertStatus::ALERT_STATUS_LAST, " last"},
+            {AlertStatus::ALERT_STATUS_END, " end"},
+            {AlertStatus::ALERT_STATUS_DEFAULT, " default"}
+        };
+
         /**
          * @brief 告警事件
          */

@@ -21,7 +21,7 @@ namespace ai_stream
                 LOG_INFO_FMT("MovingPhoneCallRule::initialize() config: {}", config.dump().c_str());
                 if (config.contains("name") && config["name"].is_string())
                 {
-                    setName(config.value("name",""));
+                    setName(config.value("name", ""));
                 }
                 if (config.contains("rule_zones") && config["rule_zones"].is_array())
                 {
@@ -110,7 +110,6 @@ namespace ai_stream
                 if (it->second.status == AlertStatus::ALERT_STATUS_OCCUR)
                 {
                     it->second.status = AlertStatus::ALERT_STATUS_LAST;
-                    it->second.description = getName() + " Lasting";
                 }
                 if (it->second.duration_ms > alert_duration_ms_ && it->second.status == AlertStatus::ALERT_STATUS_DEFAULT)
                 {
@@ -118,13 +117,12 @@ namespace ai_stream
                     it->second.status = AlertStatus::ALERT_STATUS_OCCUR;
                     it->second.alert_name = getName();
                     it->second.alert_type = getType();
-                    it->second.description = getName() + " Occur";
                 }
                 if (it->second.non_update_count == max_disappear_count_)
                 {
                     it->second.status = AlertStatus::ALERT_STATUS_END;
-                    it->second.description = getName() + " End";
                 }
+                it->second.description = getName() + alert_status_map[it->second.status];
                 it++;
             }
             return RuleStatus::RULE_STATUS_OK;
@@ -179,7 +177,8 @@ namespace ai_stream
             active_track_ids.reserve(person_boxes.size());
             for (const auto &person_box : person_boxes)
             {
-                if(person_box.track_id > 0)active_track_ids.insert(person_box.track_id);
+                if (person_box.track_id > 0)
+                    active_track_ids.insert(person_box.track_id);
                 std::vector<PixelPoint> person_zone{
                     PixelPoint(person_box.x, person_box.y),
                     PixelPoint(person_box.x + person_box.w, person_box.y),
@@ -224,7 +223,7 @@ namespace ai_stream
                         person_phone_boxes.push_back(phone_box);
                     }
                 }
-                if(person_phone_boxes.empty())
+                if (person_phone_boxes.empty())
                 {
                     continue;
                 }
@@ -243,28 +242,31 @@ namespace ai_stream
                             break;
                         }
                     }
-                    if (phone_in_head)break;
+                    if (phone_in_head)
+                        break;
                 }
-                if(!phone_in_head)continue;
-                //检测到打电话
+                if (!phone_in_head)
+                    continue;
+                // 检测到打电话
                 phone_count++;
-                //判断是否在移动
+                // 判断是否在移动
                 bool is_moving = false;
-                if(person_box.track_id > 0)
+                if (person_box.track_id > 0)
                 {
-                    is_moving = moving_pc_detector_.update_track(person_box.track_id, {person_box.x,person_box.y,person_box.w,person_box.y}, packet->frame_id);
-                    //跟踪长度辅助判断
-                    if(person_box.track_age > 10 && is_moving)is_moving=true;
+                    is_moving = moving_pc_detector_.update_track(person_box.track_id, {person_box.x, person_box.y, person_box.w, person_box.y}, packet->frame_id);
+                    // 跟踪长度辅助判断
+                    if (person_box.track_age > 10 && is_moving)
+                        is_moving = true;
                 }
-                if(is_moving)
+                if (is_moving)
                 {
                     moving_phonecall_count++;
                     person_phone_call_track_ids.push_back(person_box.track_id);
                 }
             }
-            //清理不活跃的轨迹
+            // 清理不活跃的轨迹
             moving_pc_detector_.cleanup_old_tracks(active_track_ids);
-            //更新map
+            // 更新map
             if (moving_phonecall_count <= 0)
             {
                 return RuleStatus::RULE_STATUS_OK;

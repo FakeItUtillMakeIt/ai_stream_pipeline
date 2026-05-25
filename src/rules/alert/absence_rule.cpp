@@ -8,7 +8,7 @@ namespace ai_stream
     namespace rules
     {
 
-        AbsenceRule::AbsenceRule() : station_detector_(),absent_threshold_(50)
+        AbsenceRule::AbsenceRule() : station_detector_(), absent_threshold_(50)
         {
             LOG_INFO("AbsenceRule::AbsenceRule()");
             station_detector_.setMinStayDuration(5000); // 设置最小停留时长为5秒
@@ -22,7 +22,7 @@ namespace ai_stream
                 LOG_INFO_FMT("AbsenceRule::initialize() config: {}", config.dump().c_str());
                 if (config.contains("name") && config["name"].is_string())
                 {
-                    setName(config.value("name",""));
+                    setName(config.value("name", ""));
                 }
                 if (config.contains("rule_zones") && config["rule_zones"].is_array())
                 {
@@ -118,7 +118,6 @@ namespace ai_stream
                 if (it->second.status == AlertStatus::ALERT_STATUS_OCCUR)
                 {
                     it->second.status = AlertStatus::ALERT_STATUS_LAST;
-                    it->second.description = getName() + " Lasting";
                 }
                 if (it->second.duration_ms > alert_duration_ms_ && it->second.status == AlertStatus::ALERT_STATUS_DEFAULT)
                 {
@@ -126,13 +125,12 @@ namespace ai_stream
                     it->second.status = AlertStatus::ALERT_STATUS_OCCUR;
                     it->second.alert_name = getName();
                     it->second.alert_type = getType();
-                    it->second.description = getName() + " Occur";
                 }
                 if (it->second.non_update_count == max_disappear_count_)
                 {
                     it->second.status = AlertStatus::ALERT_STATUS_END;
-                    it->second.description = getName() + " End";
                 }
+                it->second.description = getName() + alert_status_map[it->second.status];
                 it++;
             }
             return RuleStatus::RULE_STATUS_OK;

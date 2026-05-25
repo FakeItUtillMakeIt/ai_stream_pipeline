@@ -8,7 +8,7 @@ namespace ai_stream
     namespace rules
     {
 
-        FightingRule::FightingRule():fighting_detector_(FightingDetector::Config())
+        FightingRule::FightingRule() : fighting_detector_(FightingDetector::Config())
         {
             LOG_INFO("FightingRule::FightingRule()");
         }
@@ -107,7 +107,6 @@ namespace ai_stream
                 if (it->second.status == AlertStatus::ALERT_STATUS_OCCUR)
                 {
                     it->second.status = AlertStatus::ALERT_STATUS_LAST;
-                    it->second.description = getName() + " Lasting";
                 }
                 if (it->second.duration_ms > alert_duration_ms_ && it->second.status == AlertStatus::ALERT_STATUS_DEFAULT)
                 {
@@ -115,13 +114,12 @@ namespace ai_stream
                     it->second.status = AlertStatus::ALERT_STATUS_OCCUR;
                     it->second.alert_name = getName();
                     it->second.alert_type = getType();
-                    it->second.description = getName() + " Occur";
                 }
                 if (it->second.non_update_count == max_disappear_count_)
                 {
                     it->second.status = AlertStatus::ALERT_STATUS_END;
-                    it->second.description = getName() + " End";
                 }
+                it->second.description = getName() + alert_status_map[it->second.status];
                 it++;
             }
             return RuleStatus::RULE_STATUS_OK;

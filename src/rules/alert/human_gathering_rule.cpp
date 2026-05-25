@@ -21,7 +21,7 @@ namespace ai_stream
                 LOG_INFO_FMT("HumanGatheringRule::initialize() config: {}", config.dump().c_str());
                 if (config.contains("name") && config["name"].is_string())
                 {
-                    setName(config.value("name",""));
+                    setName(config.value("name", ""));
                 }
                 if (config.contains("rule_zones") && config["rule_zones"].is_array())
                 {
@@ -62,7 +62,7 @@ namespace ai_stream
             if (valid_intrusion_zones_.empty())
             {
                 LOG_INFO("HumanGatheringRule::process() all zones are invalid, global monitoring");
-                //聚集人数阈值配置为所有区域中最小的一个
+                // 聚集人数阈值配置为所有区域中最小的一个
                 gathering_thresh_map_[global_zone_no_] = min_gathering_thresh;
             }
 
@@ -112,7 +112,6 @@ namespace ai_stream
                 if (it->second.status == AlertStatus::ALERT_STATUS_OCCUR)
                 {
                     it->second.status = AlertStatus::ALERT_STATUS_LAST;
-                    it->second.description = getName() + " Lasting";
                 }
                 if (it->second.duration_ms > alert_duration_ms_ && it->second.status == AlertStatus::ALERT_STATUS_DEFAULT)
                 {
@@ -120,13 +119,12 @@ namespace ai_stream
                     it->second.status = AlertStatus::ALERT_STATUS_OCCUR;
                     it->second.alert_name = getName();
                     it->second.alert_type = getType();
-                    it->second.description = getName() + " Occur";
                 }
                 if (it->second.non_update_count == max_disappear_count_)
                 {
                     it->second.status = AlertStatus::ALERT_STATUS_END;
-                    it->second.description = getName() + " End";
                 }
+                it->second.description = getName() + alert_status_map[it->second.status];
                 it++;
             }
             return RuleStatus::RULE_STATUS_OK;

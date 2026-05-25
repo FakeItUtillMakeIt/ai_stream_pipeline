@@ -21,7 +21,7 @@ namespace ai_stream
                 LOG_INFO_FMT("PersonIntrusionRule::initialize() config: {}", config.dump().c_str());
                 if (config.contains("name") && config["name"].is_string())
                 {
-                    setName(config.value("name",""));
+                    setName(config.value("name", ""));
                 }
                 if (config.contains("rule_zones") && config["rule_zones"].is_array())
                 {
@@ -110,7 +110,6 @@ namespace ai_stream
                 if (it->second.status == AlertStatus::ALERT_STATUS_OCCUR)
                 {
                     it->second.status = AlertStatus::ALERT_STATUS_LAST;
-                    it->second.description = getName() + " Lasting";
                 }
                 if (it->second.duration_ms > alert_duration_ms_ && it->second.status == AlertStatus::ALERT_STATUS_DEFAULT)
                 {
@@ -118,13 +117,12 @@ namespace ai_stream
                     it->second.status = AlertStatus::ALERT_STATUS_OCCUR;
                     it->second.alert_name = getName();
                     it->second.alert_type = getType();
-                    it->second.description = getName() + " Occur";
                 }
                 if (it->second.non_update_count == max_disappear_count_)
                 {
                     it->second.status = AlertStatus::ALERT_STATUS_END;
-                    it->second.description = getName() + " End";
                 }
+                it->second.description = getName() + alert_status_map[it->second.status];
                 it++;
             }
             return RuleStatus::RULE_STATUS_OK;
@@ -163,8 +161,8 @@ namespace ai_stream
                     person_track_ids.push_back(detection.track_id);
                 }
             }
-            LOG_DEBUG_FMT("PersonIntrusionRule::rule_logic() zone {} person_in_zone:{},person_track_ids size:{},packet_time:{}",    
-                zone_no, person_in_zone,person_track_ids.size(),packet->timestamp_ms);
+            LOG_DEBUG_FMT("PersonIntrusionRule::rule_logic() zone {} person_in_zone:{},person_track_ids size:{},packet_time:{}",
+                          zone_no, person_in_zone, person_track_ids.size(), packet->timestamp_ms);
             // 更新zone_alert_map_
             if (!person_in_zone)
                 return RuleStatus::RULE_STATUS_OK;
