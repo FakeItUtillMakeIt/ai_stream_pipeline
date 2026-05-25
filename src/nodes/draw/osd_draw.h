@@ -19,7 +19,7 @@ public:
     void setClassFilter(const std::vector<int>& class_ids) override;
 
     // Node 接口
-    bool start() override { return true; }
+    bool start() override;
     void stop() override {}
     void pushData(std::shared_ptr<core::BasePacket> packet) override;
     void setSnapshotEnabled(bool enabled) override;

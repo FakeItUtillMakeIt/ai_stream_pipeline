@@ -5,6 +5,7 @@
 #include "3rd_party/log_mgr/log_mgr.h"
 #include <opencv2/imgproc.hpp>
 #include <opencv2/opencv.hpp>
+#include <fstream>
 
 namespace ai_stream {
 namespace nodes {
@@ -25,6 +26,26 @@ void OSDDrawNode::setShowConfidence(bool show) {
 
 void OSDDrawNode::setClassFilter(const std::vector<int>& class_ids) {
     class_filter_ = class_ids;
+}
+
+bool OSDDrawNode::start()
+{
+    // 如果启用了快照，创建保存目录
+    if (snapshot_enabled_) {
+        if (!std::filesystem::exists(snapshot_dir_)) {
+            try {
+                std::filesystem::create_directories(snapshot_dir_);
+                LOG_INFO_FMT("[OSDDraw] Created snapshot directory: {}", snapshot_dir_);
+            } catch (const std::exception& e) {
+                LOG_ERROR_FMT("[OSDDraw] Failed to create snapshot directory: {}", e.what());
+                snapshot_enabled_ = false;
+            }
+        }
+    }
+    
+    LOG_INFO_FMT("[OSDDraw] Started (snapshot: {}, interval: {})", 
+                 snapshot_enabled_.load(), snapshot_interval_.load());
+    return true;
 }
 
 void OSDDrawNode::pushData(std::shared_ptr<core::BasePacket> packet) {
