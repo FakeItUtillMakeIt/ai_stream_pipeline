@@ -28,7 +28,7 @@ endif()
 
 # 推理节点
 if(WITH_TENSORRT)
-    list(APPEND NODES_SOURCES infer/detection_infer.cpp infer/pose_infer.cpp)
+    list(APPEND NODES_SOURCES infer/detection_infer.cpp infer/pose_infer.cpp infer/cuda_pose_infer.cu)
 endif()
 
 # 动态库
