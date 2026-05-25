@@ -72,7 +72,7 @@
         "type": "osd_draw",
         "params": {
           "snapshot": {
-            "enabled": true,
+            "enabled": false,
             "interval": 100,
             "dir": "./draw_snapshot1/"
           }

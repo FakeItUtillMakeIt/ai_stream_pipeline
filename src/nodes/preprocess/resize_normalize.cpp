@@ -32,10 +32,12 @@ std::pair<int, int> ResizeNormalizeNode::getTargetSize() const {
 
 void ResizeNormalizeNode::setMean(const std::vector<float>& mean) {
     mean_ = mean;
+    LOG_INFO_FMT("[ResizeNormalize] mean set to: {},{},{}", mean_[0],mean_[1],mean_[2]);
 }
 
 void ResizeNormalizeNode::setStd(const std::vector<float>& std) {
     std_ = std;
+    LOG_INFO_FMT("[ResizeNormalize] std set to: {},{},{}", std_[0],std_[1],std_[2]);
 }
 
 void ResizeNormalizeNode::setInterpolationMethod(const std::string& method) {
@@ -74,7 +76,7 @@ void ResizeNormalizeNode::pushData(std::shared_ptr<core::BasePacket> packet) {
         // 实际应用中应逐通道操作，此处简化
     }
 
-    LOG_DEBUG_FMT("[ResizeNormalize] Resized frame to {}x{}", target_width_, target_height_);
+    LOG_INFO_FMT("[ResizeNormalize] Resized frame to {}x{}", target_width_, target_height_);
 
     // 构造新包，保留原 stream_id 和时间戳
     auto new_packet = std::make_shared<core::VideoFramePacket>();

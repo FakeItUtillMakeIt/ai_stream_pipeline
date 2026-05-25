@@ -55,7 +55,7 @@ void OSDDrawNode::pushData(std::shared_ptr<core::BasePacket> packet) {
     }
 
     auto infer_result = std::static_pointer_cast<core::InferenceResultPacket>(packet);
-    if (!infer_result->source_frame || !infer_result->source_frame->mat) {
+    if (!infer_result->source_frame || infer_result->source_frame->source_mat->empty() || !infer_result->source_frame->mat || infer_result->source_frame->mat->empty()) {
         LOG_WARN_FMT("[OSDDraw] Inference result missing source frame");
         return;
     }
