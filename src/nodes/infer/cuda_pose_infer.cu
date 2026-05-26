@@ -217,23 +217,21 @@ void CudaPoseInferNode::pushData(std::shared_ptr<core::BasePacket> packet) {
 // ============================================================
 void CudaPoseInferNode::inferLoop() {
     while (running_) {
-        in_time_ms_ = utils::TimeUtil::currentTimeMs();
+        
 
         std::shared_ptr<core::InferenceResultPacket> packet;
         if (!queue_.pop(packet, std::chrono::milliseconds(100))) {
             continue;
         }
 
-        auto t0 = std::chrono::high_resolution_clock::now();
+        in_time_ms_ = utils::TimeUtil::currentTimeMs();
         processFrame(packet);
-        auto t1 = std::chrono::high_resolution_clock::now();
-
-        float infer_ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
-        LOG_INFO_FMT("[CudaPoseInfer] Frame processed: {} persons, total={:.2f}ms",
-                     packet->pose_results.size(), infer_ms);
 
         // 耗时统计
         packet->cost_ms = utils::TimeUtil::currentTimeMs() - in_time_ms_;
+        LOG_INFO_FMT("[CudaPoseInfer] Frame processed: {} persons, total={}ms",
+                     packet->pose_results.size(), packet->cost_ms);
+
         if (packet->source_frame) {
             packet->cost_time_map = packet->source_frame->cost_time_map;
         }

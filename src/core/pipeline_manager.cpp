@@ -283,7 +283,12 @@ namespace ai_stream
                     if (type.find("sink") != std::string::npos || type.find("save") != std::string::npos)
                     {
                         auto sink_node = std::dynamic_pointer_cast<nodes::ISinkNode>(node);
+                        if (!sink_node)
+                        {
+                            continue;
+                        }
                         sink_node->setTarget(params["output_url"].get<std::string>());
+                        sink_node->setOutputSize(params["output_width"].get<int>(), params["output_height"].get<int>());
                     }
 
                     // 设置节点名称（覆盖工厂默认名）
