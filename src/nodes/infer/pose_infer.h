@@ -49,9 +49,21 @@ private:
     // 处理单帧 InferenceResultPacket
     void processFrame(std::shared_ptr<core::InferenceResultPacket> packet);
 
+    // 处理GPU内存输入（零拷贝路径）
+    void processGPUFrame(std::shared_ptr<core::InferenceResultPacket> packet);
+
     // 从 source_mat 按检测框 crop + resize + normalize
     bool cropAndPreprocess(
         const cv::Mat& source_mat,
+        const core::InferenceResultPacket::BBox& det,
+        float* host_buffer,
+        int slot_idx);
+
+    // 从GPU内存按检测框 crop + resize + normalize
+    bool cropAndPreprocessGPU(
+        void* gpu_data,
+        int img_width,
+        int img_height,
         const core::InferenceResultPacket::BBox& det,
         float* host_buffer,
         int slot_idx);

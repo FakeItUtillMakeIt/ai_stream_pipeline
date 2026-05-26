@@ -84,12 +84,19 @@ struct RawVideoPacket : public BasePacket {
 
 /**
  * @brief 解码后的视频帧包
- * 
- * 使用 shared_ptr 管理 cv::Mat，避免深拷贝
+ *
+ * 支持GPU内存零拷贝和CPU内存两种模式
+ * 使用GPU内存时，避免CPU→GPU的数据复制
  */
 struct VideoFramePacket : public BasePacket {
     VideoFramePacket() { type = PacketType::DECODED_FRAME; }
-    
+
+    // GPU内存支持（零拷贝模式）
+    void* gpu_data = nullptr;           // GPU内存地址
+    size_t gpu_size = 0;                // GPU内存大小
+    bool is_gpu_memory = false;         // 是否为GPU内存模式
+
+    // CPU内存（保留用于fallback）
     std::shared_ptr<cv::Mat> source_mat;
     std::shared_ptr<cv::Mat> mat;       // 图像数据（通常为 BGR 格式）
 

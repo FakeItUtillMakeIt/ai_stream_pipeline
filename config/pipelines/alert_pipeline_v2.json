@@ -23,7 +23,7 @@
       },
       {
         "id": "preprocess1",
-        "type": "resize_normalize",
+        "type": "gpu_resize_normalize",
         "params": {
           
         }

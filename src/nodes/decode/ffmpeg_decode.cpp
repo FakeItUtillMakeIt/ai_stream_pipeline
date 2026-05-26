@@ -130,12 +130,14 @@ std::shared_ptr<core::VideoFramePacket> FFmpegDecodeNode::decodePacket(
     std::shared_ptr<DecoderContext> ctx) {
     
     if (!ctx || !ctx->codec_ctx) {
+        LOG_ERROR_FMT("Decoder context is invalid");
         return nullptr;
     }
     
     // 防止并发解码同一个上下文
     bool expected = false;
     if (!ctx->in_use.compare_exchange_strong(expected, true)) {
+        LOG_ERROR_FMT("Decoder context is in use");
         return nullptr;
     }
     
@@ -154,6 +156,7 @@ std::shared_ptr<core::VideoFramePacket> FFmpegDecodeNode::decodePacket(
     
     if (ret < 0) {
         ctx->in_use = false;
+        LOG_ERROR_FMT("avcodec_send_packet failed, ret: {}", ret);
         return nullptr;
     }
     
@@ -161,7 +164,52 @@ std::shared_ptr<core::VideoFramePacket> FFmpegDecodeNode::decodePacket(
     ret = avcodec_receive_frame(ctx->codec_ctx, ctx->frame);
     if (ret < 0) {
         ctx->in_use = false;
+        LOG_ERROR_FMT("avcodec_receive_frame failed, ret: {}", ret);
         return nullptr;
+    }
+
+    // 4. 如果是硬件解码，获取硬件帧
+    if (ctx->hw_accel_enabled) {
+        ret = av_hwframe_transfer_data(ctx->hw_frame, ctx->frame, 0);
+        if (ret < 0) {
+            LOG_ERROR_FMT("[FFmpegDecode] Failed to transfer hardware frame data");
+            ctx->in_use = false;
+            return nullptr;
+        }
+        LOG_INFO_FMT("[FFmpegDecode] Hardware frame transferred successfully");
+    }
+
+    // 5. 检查是否使用硬件解码模式
+    if (ctx->hw_accel_enabled && ctx->hw_frame) {
+        // 硬件解码模式：直接使用GPU内存
+        AVFrame* hw_frame = ctx->hw_frame;
+
+        // 6. 构造GPU内存的VideoFramePacket
+        auto frame_pkt = std::make_shared<core::VideoFramePacket>();
+        frame_pkt->stream_id = raw_pkt->stream_id;
+        frame_pkt->source_id = raw_pkt->source_id;
+        frame_pkt->timestamp_ms = raw_pkt->timestamp_ms;
+        frame_pkt->gpu_data = hw_frame->data[0];  // GPU内存地址
+        frame_pkt->gpu_size = ctx->frame->width * ctx->frame->height * 3;  // BGR格式大小
+        frame_pkt->is_gpu_memory = true;
+        frame_pkt->width = ctx->frame->width;
+        frame_pkt->height = ctx->frame->height;
+        frame_pkt->channels = 3;
+        frame_pkt->frame_id = raw_pkt->frame_id;
+
+        LOG_INFO_FMT("[FFmpegDecode] Hardware decoded frame: gpu_data={}, size={}",
+                     frame_pkt->gpu_data, frame_pkt->gpu_size);
+
+        // 注意：硬件帧内存由FFmpeg管理，不能立即unref
+        // 这里只unref软件帧，硬件帧在DecoderContext析构时自动释放
+        av_frame_unref(ctx->frame);
+        ctx->in_use = false;
+
+        // 添加格式检查日志
+        LOG_INFO_FMT("[FFmpegDecode] HW frame format: {}, GPU data valid",
+                     ctx->hw_frame->format);
+
+        return frame_pkt;
     }
     
     // 获取帧尺寸

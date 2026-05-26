@@ -41,6 +41,7 @@ public:
     float getAverageLatencyMs() const override;
     void setTensorRTPreprocessEnabled(bool enable) override;
 
+    void processGPUMemory(std::shared_ptr<core::VideoFramePacket> frame);
 private:
     int device_id_;
     bool async_processing_;

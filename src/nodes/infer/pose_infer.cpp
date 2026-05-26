@@ -136,7 +136,21 @@ void PoseInferNode::inferLoop() {
 // 单帧处理核心
 // ============================================================
 void PoseInferNode::processFrame(std::shared_ptr<core::InferenceResultPacket> packet) {
-    if (!packet || !packet->source_frame || !packet->source_frame->source_mat) {
+    if (!packet || !packet->source_frame) {
+        LOG_ERROR_FMT("[PoseInfer] Invalid packet or missing source_frame");
+        return;
+    }
+
+    // 检查是否使用GPU内存输入
+    if (packet->source_frame->is_gpu_memory && packet->source_frame->gpu_data) {
+        // GPU内存模式：使用GPU数据进行推理
+        LOG_DEBUG_FMT("[PoseInfer] Processing GPU memory input");
+        processGPUFrame(packet);
+        return;
+    }
+
+    // CPU内存模式：使用CPU Mat进行推理
+    if (!packet->source_frame->source_mat || packet->source_frame->source_mat->empty()) {
         LOG_ERROR_FMT("[PoseInfer] Invalid packet or missing source_mat");
         return;
     }
@@ -227,7 +241,106 @@ void PoseInferNode::processFrame(std::shared_ptr<core::InferenceResultPacket> pa
 }
 
 // ============================================================
-// Crop + Preprocess：从原图按检测框 crop，resize 640，normalize
+// 处理GPU内存帧
+// ============================================================
+void PoseInferNode::processGPUFrame(std::shared_ptr<core::InferenceResultPacket> packet) {
+    if (!packet || !packet->source_frame) {
+        LOG_ERROR_FMT("[PoseInfer] Invalid packet or missing source_frame");
+        return;
+    }
+
+    void* gpu_data = packet->source_frame->gpu_data;
+    int img_width = packet->source_frame->width;
+    int img_height = packet->source_frame->height;
+
+    if (!gpu_data || img_width <= 0 || img_height <= 0) {
+        LOG_ERROR_FMT("[PoseInfer] Invalid GPU frame data");
+        return;
+    }
+
+    // 1. 收集该帧所有 person 检测框的索引
+    std::vector<int> person_indices;
+    for (int i = 0; i < static_cast<int>(packet->detections.size()); ++i) {
+        const auto& det = packet->detections[i];
+        if (det.class_id == person_class_id_ || det.class_name == "person") {
+            person_indices.push_back(i);
+        }
+    }
+
+    int num_persons = static_cast<int>(person_indices.size());
+    if (num_persons == 0) {
+        LOG_INFO_FMT("[PoseInfer] No person detected in this frame");
+        return;
+    }
+
+    // 2. 限制上限
+    if (num_persons > batch_size_) {
+        LOG_WARN_FMT("[PoseInfer] Frame has {} persons, exceeds max_batch {}, truncating",
+                     num_persons, batch_size_);
+        num_persons = batch_size_;
+        person_indices.resize(num_persons);
+    }
+
+    // 3. 分配 host 输入缓冲区 [num_persons, 3, 640, 640]
+    int hw = INPUT_H * INPUT_W;
+    int person_stride = 3 * hw;
+    alignas(64) static thread_local std::vector<float> host_input;
+    host_input.resize(static_cast<size_t>(num_persons) * person_stride);
+
+    // 4. 逐人 crop + preprocess from GPU memory
+    for (int i = 0; i < num_persons; ++i) {
+        int det_idx = person_indices[i];
+        const auto& det = packet->detections[det_idx];
+
+        if (!cropAndPreprocessGPU(gpu_data, img_width, img_height, det, host_input.data(), i)) {
+            LOG_WARN_FMT("[PoseInfer] Failed to crop person {} from GPU memory", det_idx);
+        }
+    }
+
+    // 5. 设置动态 batch 并拷贝到 GPU
+    nvinfer1::Dims4 input_dims(num_persons, 3, INPUT_H, INPUT_W);
+    if (!context_->setInputShape(input_name_.c_str(), input_dims)) {
+        LOG_ERROR_FMT("[PoseInfer] setInputShape failed for batch={}", num_persons);
+        return;
+    }
+
+    size_t input_bytes = static_cast<size_t>(num_persons) * person_stride * sizeof(float);
+    cudaMemcpyAsync(d_input_, host_input.data(), input_bytes,
+                    cudaMemcpyHostToDevice, stream_);
+
+    // 6. 设置输出缓冲区大小（动态 batch 后输出大小会变）
+    size_t output_bytes = static_cast<size_t>(num_persons) * NUM_CANDIDATES * POSE_DIM * sizeof(float);
+
+    // 7. 设置 Tensor 地址
+    context_->setTensorAddress(input_name_.c_str(), d_input_);
+    context_->setTensorAddress(output_name_.c_str(), d_output_);
+
+    // 8. 执行推理
+    auto t0 = std::chrono::high_resolution_clock::now();
+    if (!context_->enqueueV3(stream_)) {
+        LOG_ERROR_FMT("[PoseInfer] enqueueV3 failed for batch={}", num_persons);
+        return;
+    }
+    cudaStreamSynchronize(stream_);
+    auto t1 = std::chrono::high_resolution_clock::now();
+
+    float infer_ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
+    LOG_INFO_FMT("[PoseInfer] TensorRT enqueue: {} persons, {:.2f}ms", num_persons, infer_ms);
+
+    // 9. 拷贝输出回 host
+    h_output_.resize(num_persons * NUM_CANDIDATES * POSE_DIM);
+    cudaMemcpyAsync(h_output_.data(), d_output_, output_bytes,
+                    cudaMemcpyDeviceToHost, stream_);
+    cudaStreamSynchronize(stream_);
+
+    // 10. 后处理：解码关键点
+    postprocessFrame(packet, person_indices, num_persons, h_output_.data());
+
+    LOG_INFO_FMT("[PoseInfer] GPU frame processed: {} persons", num_persons);
+}
+
+// ============================================================
+// Crop + Preprocess from CPU Memory：从原图按检测框 crop，resize 640，normalize
 // ============================================================
 bool PoseInferNode::cropAndPreprocess(
     const cv::Mat& source_mat,
@@ -278,6 +391,106 @@ bool PoseInferNode::cropAndPreprocess(
     memcpy(batch_ptr + 1 * hw, chs[1].data, hw * sizeof(float));
     memcpy(batch_ptr + 2 * hw, chs[2].data, hw * sizeof(float));
 
+    return true;
+}
+
+// ============================================================
+// Crop + Preprocess from GPU Memory：从GPU内存按检测框 crop，resize 640，normalize
+// ============================================================
+bool PoseInferNode::cropAndPreprocessGPU(
+    void* gpu_data,
+    int img_width,
+    int img_height,
+    const core::InferenceResultPacket::BBox& det,
+    float* host_buffer,
+    int slot_idx) {
+
+    // 检测框转整数坐标（边界检查）
+    int ix1 = std::max(0, static_cast<int>(det.x));
+    int iy1 = std::max(0, static_cast<int>(det.y));
+    int ix2 = std::min(img_width, static_cast<int>(det.x + det.w));
+    int iy2 = std::min(img_height, static_cast<int>(det.y + det.h));
+
+    if (ix1 >= ix2 || iy1 >= iy2) {
+        LOG_WARN_FMT("[PoseInfer] Invalid crop box: ({},{})->({},{}) for image {}x{}",
+                     ix1, iy1, ix2, iy2, img_width, img_height);
+        return false;
+    }
+
+    int roi_width = ix2 - ix1;
+    int roi_height = iy2 - iy1;
+
+    // 分配GPU缓冲区用于处理
+    void* resized_gpu = nullptr;
+    size_t resized_size = INPUT_W * INPUT_H * 3;
+
+    if (cudaMalloc(&resized_gpu, resized_size) != cudaSuccess) {
+        LOG_ERROR_FMT("[PoseInfer] Failed to allocate cropped GPU buffer");
+        return false;
+    }
+
+    // 1. 从GPU内存复制ROI区域到CPU
+    // 注意：NV12格式，需要特殊处理
+    size_t img_pitch = ((img_width + 1) / 2) * 2; // NV12 pitch对齐
+    size_t roi_pitch = ((roi_width + 1) / 2) * 2;
+
+    std::vector<uint8_t> y_plane(img_height * img_pitch);
+    std::vector<uint8_t> uv_plane((img_height / 2) * roi_pitch);
+
+    // 复制Y平面
+    cudaError_t err1 = cudaMemcpy2D(y_plane.data(), img_pitch,
+                                     static_cast<const unsigned char*>(gpu_data), img_pitch,
+                                     img_width, img_height,
+                                     cudaMemcpyDeviceToHost);
+    if (err1 != cudaSuccess) {
+        LOG_ERROR_FMT("[PoseInfer] Failed to copy Y plane: {}", cudaGetErrorString(err1));
+        cudaFree(resized_gpu);
+        return false;
+    }
+
+    // 复制UV平面
+    cudaError_t err2 = cudaMemcpy2D(uv_plane.data(), roi_pitch,
+                                     static_cast<const unsigned char*>(gpu_data) + img_height * img_pitch, img_pitch,
+                                     img_width, img_height / 2,
+                                     cudaMemcpyDeviceToHost);
+    if (err2 != cudaSuccess) {
+        LOG_ERROR_FMT("[PoseInfer] Failed to copy UV plane: {}", cudaGetErrorString(err2));
+        cudaFree(resized_gpu);
+        return false;
+    }
+
+    // 2. CPU端NV12转BGR并crop
+    cv::Mat nv12(img_height * 3 / 2, img_width, CV_8UC1, y_plane.data());
+    cv::Mat bgr;
+    cv::cvtColor(nv12, bgr, cv::COLOR_YUV2BGR_NV12);
+
+    // 3. Crop
+    cv::Rect roi(ix1, iy1, roi_width, roi_height);
+    cv::Mat cropped = bgr(roi);
+
+    // 4. Resize to 640x640
+    cv::Mat resized;
+    cv::resize(cropped, resized, cv::Size(INPUT_W, INPUT_H));
+
+    // 5. Convert to float32 and normalize [0,1]
+    cv::Mat float_img;
+    resized.convertTo(float_img, CV_32FC3, 1.0 / 255.0);
+
+    // 6. 分离通道并拷贝到 host_buffer
+    int hw = INPUT_H * INPUT_W;
+    int batch_stride = 3 * hw;
+    float* batch_ptr = host_buffer + slot_idx * batch_stride;
+
+    std::vector<cv::Mat> chs(3);
+    cv::split(float_img, chs);
+    memcpy(batch_ptr + 0 * hw, chs[0].data, hw * sizeof(float));
+    memcpy(batch_ptr + 1 * hw, chs[1].data, hw * sizeof(float));
+    memcpy(batch_ptr + 2 * hw, chs[2].data, hw * sizeof(float));
+
+    // 清理GPU缓冲区
+    cudaFree(resized_gpu);
+
+    LOG_DEBUG_FMT("[PoseInfer] GPU frame cropAndPreprocess completed");
     return true;
 }
 
