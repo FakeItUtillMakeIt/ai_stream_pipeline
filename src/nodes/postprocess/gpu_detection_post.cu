@@ -3,30 +3,13 @@
 #include "ai_stream/core/packet.h"
 #include "registry/node_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
+#include "utils/cuda_check.h"
 
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 
 namespace ai_stream {
 namespace nodes {
-
-#define CUDA_CHECK(call) \
-    do { \
-        cudaError_t err = call; \
-        if (err != cudaSuccess) { \
-            LOG_ERROR_FMT("[GPUDetectionPost] CUDA error at %s:%d: %s", __FILE__, __LINE__, cudaGetErrorString(err)); \
-            return; \
-        } \
-    } while(0)
-
-#define CUDA_CHECK_BOOL(call) \
-    do { \
-        cudaError_t err = call; \
-        if (err != cudaSuccess) { \
-            LOG_ERROR_FMT("[GPUDetectionPost] CUDA error at %s:%d: %s", __FILE__, __LINE__, cudaGetErrorString(err)); \
-            return false; \
-        } \
-    } while(0)
 
 namespace {
 

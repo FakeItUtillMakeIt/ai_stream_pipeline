@@ -4,6 +4,7 @@
 #include "registry/node_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 #include "tensor_rt_logger.h"
+#include "utils/cuda_check.h"
 
 #include <opencv2/opencv.hpp>
 #include <fstream>
@@ -18,24 +19,6 @@
 namespace ai_stream {
 namespace nodes {
 
-    // CUDA 错误检查宏
-#define CUDA_CHECK(call) \
-    do { \
-        cudaError_t err = call; \
-        if (err != cudaSuccess) { \
-            LOG_ERROR_FMT("[CudaPoseInfer] CUDA error at %s:%d: %s", __FILE__, __LINE__, cudaGetErrorString(err)); \
-            return; \
-        } \
-    } while(0)
-
-#define CUDA_CHECK_BOOL(call) \
-    do { \
-        cudaError_t err = call; \
-        if (err != cudaSuccess) { \
-            LOG_ERROR_FMT("[CudaPoseInfer] CUDA error at %s:%d: %s", __FILE__, __LINE__, cudaGetErrorString(err)); \
-            return false; \
-        } \
-    } while(0)
 
 // ============================================================
 // CUDA Kernel：融合 Crop + Bilinear Resize + Normalize + HWC→NCHW
@@ -336,7 +319,7 @@ void CudaPoseInferNode::processFrame(std::shared_ptr<core::InferenceResultPacket
 
     cudaError_t kernel_err = cudaGetLastError();
     if (kernel_err != cudaSuccess) {
-        LOG_ERROR_FMT("[CudaPoseInfer] Preprocess kernel failed: %s", cudaGetErrorString(kernel_err));
+        LOG_ERROR_FMT("[CudaPoseInfer] Preprocess kernel failed: {}", cudaGetErrorString(kernel_err));
         return;
     }
 
