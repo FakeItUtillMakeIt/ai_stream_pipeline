@@ -22,6 +22,7 @@ public:
     bool start() override;
     void stop() override;
     void pushData(std::shared_ptr<core::BasePacket> packet) override;
+    bool isRunning() const override{return running_.load();}
 
     void addRule(rules::AlertRulePtr rule);
     void setAlertCallback(AlertCallback callback);

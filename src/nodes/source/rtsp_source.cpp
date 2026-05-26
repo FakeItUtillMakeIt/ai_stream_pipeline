@@ -247,9 +247,39 @@ void RTSPSourceNode::workerFunc() {
     
     int frame_count = 0;
     int error_count = 0;
+    int reconnect_count = 0;
     const int MAX_CONSECUTIVE_ERRORS = 10;
+    const int MAX_RECONNECT_ATTEMPTS = 10;
     
     while (running_) {
+        // 如果连接断开，尝试重连
+        if (!fmt_ctx_) {
+            if (reconnect_count >= MAX_RECONNECT_ATTEMPTS) {
+                LOG_ERROR_FMT("[RTSPSource] Max reconnects reached, giving up");
+                auto eos_packet = std::make_shared<core::BasePacket>();
+                eos_packet->type = core::PacketType::STREAM_END;
+                eos_packet->stream_id = my_stream_id_;
+                eos_packet->source_id = source_id_;
+                eos_packet->timestamp_ms = utils::TimeUtil::currentTimeMs();
+                broadcast(eos_packet);
+                running_ = false;
+                break;
+            }
+            
+            reconnect_count++;
+            LOG_INFO_FMT("[RTSPSource] Reconnecting... (attempt {}/{})", reconnect_count, MAX_RECONNECT_ATTEMPTS);
+            
+            if (openInput()) {
+                reconnect_count = 0;  // 重置计数
+                frame_count = 0;      // 可选：重置帧计数
+            } else {
+                // 重连失败，等待后重试
+                for (int i = 0; i < 50 && running_; i++) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                }
+                continue;
+            }
+        }
         // 读取数据包（带超时，避免阻塞）
         int ret = av_read_frame(fmt_ctx_, pkt);
         
@@ -265,28 +295,18 @@ void RTSPSourceNode::workerFunc() {
                 continue;
             } else if (ret == AVERROR_EOF) {
                 LOG_WARN_FMT("[RTSPSource] End of stream reached");
-                break;
+                closeInput();// 释放输入流,进行重连
+                continue;
             } else {
-                error_count++;
                 char errbuf[256];
                 av_strerror(ret, errbuf, sizeof(errbuf));
                 LOG_WARN_FMT("[RTSPSource] Error reading frame: {} ({})", errbuf, ret);
-                
-                if (error_count >= MAX_CONSECUTIVE_ERRORS) {
-                    LOG_ERROR_FMT("[RTSPSource] Too many errors, stopping");
-                    break;
-                }
-                
-                // 等待时检查 running_ 标志
-                for (int i = 0; i < 10 && running_; i++) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                }
+                closeInput();  // 关闭当前连接，触发下次循环重连
                 continue;
             }
         }
         
-        // 重置错误计数
-        error_count = 0;
+        reconnect_count = 0;
         
         // 只处理视频流
         if (pkt->stream_index == video_stream_index_) {

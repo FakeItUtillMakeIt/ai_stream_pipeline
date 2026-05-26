@@ -69,6 +69,13 @@ void RTMPSinkNode::stop() {
 }
 
 void RTMPSinkNode::pushData(std::shared_ptr<core::BasePacket> packet) {
+    if (packet->type == core::PacketType::STREAM_END)
+    {
+        LOG_INFO_FMT("[RTMPSink] Received stream end");
+        stop();
+        broadcast(packet);
+        return;
+    }
     if (!running_) return;
     if (packet->type != core::PacketType::DECODED_FRAME) return;
 

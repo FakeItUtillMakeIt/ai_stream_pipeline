@@ -24,6 +24,7 @@ public:
     // 生命周期管理
     virtual bool start() = 0;
     virtual void stop() = 0;
+    virtual bool isRunning() const {return running_.load();}
     
     // 核心数据处理入口
     virtual void pushData(std::shared_ptr<BasePacket> packet) = 0;

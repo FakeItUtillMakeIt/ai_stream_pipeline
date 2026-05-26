@@ -202,6 +202,16 @@ bool EncoderBase::writeHeader() {
 
 bool EncoderBase::encodeFrame(const uint8_t* data, int width, int height,
                                int step, int64_t pts) {
+    if (!data)
+    {
+        LOG_ERROR("[EncoderBase] Invalid input data");
+        return false;
+    }
+    if (width <= 0 || height <= 0 || step <= 0)
+    {
+        LOG_ERROR("[EncoderBase] Invalid input size");
+        return false;
+    }
     if (!initialized_) {
         LOG_ERROR("[EncoderBase] Not initialized");
         return false;

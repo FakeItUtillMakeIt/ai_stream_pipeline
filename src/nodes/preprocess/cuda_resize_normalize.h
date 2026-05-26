@@ -14,6 +14,7 @@ public:
 
     bool start() override;
     void stop() override;
+    bool isRunning() const override{return running_.load();}
     void pushData(std::shared_ptr<core::BasePacket> packet) override;
 
     void setTargetSize(int width, int height) { target_width_ = width; target_height_ = height; }

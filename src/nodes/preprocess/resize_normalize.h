@@ -15,6 +15,7 @@ public:
     // Node 接口
     bool start() override { return true; }
     void stop() override {}
+    bool isRunning() const override{return running_.load();}
     void pushData(std::shared_ptr<core::BasePacket> packet) override;
 
     // 配置方法（可通过 JSON params 设置）

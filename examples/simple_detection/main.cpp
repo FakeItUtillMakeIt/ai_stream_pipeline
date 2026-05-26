@@ -90,7 +90,7 @@ int main(int argc, char *argv[])
     LOG_INFO_FMT("Pipeline '{}' is running. Press Ctrl+C to stop.", pipeline_id);
 
     // 主循环等待退出信号
-    while (g_running)
+    while (g_running && pipeline->isRunning())
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }

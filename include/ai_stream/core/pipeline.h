@@ -3,6 +3,7 @@
 
 #include "node.h"
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <nlohmann/json.hpp> // 前向声明，避免引入完整 JSON 头文件
@@ -32,9 +33,10 @@ public:
     const std::string& getId() const { return id_; }
     
     // 获取管道状态
-    bool isRunning() const { return running_; }
+    bool isRunning() const;
 
 private:
+    mutable std::mutex mutex_;
     std::string id_;
     NodeMap nodes_;
     std::atomic<bool> running_{false};

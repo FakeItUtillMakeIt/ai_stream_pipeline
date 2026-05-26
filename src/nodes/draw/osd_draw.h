@@ -21,6 +21,7 @@ public:
     // Node 接口
     bool start() override;
     void stop() override {}
+    bool isRunning() const override{return running_.load();}
     void pushData(std::shared_ptr<core::BasePacket> packet) override;
     void setSnapshotEnabled(bool enabled) override;
     void setSnapshotInterval(int interval) override;

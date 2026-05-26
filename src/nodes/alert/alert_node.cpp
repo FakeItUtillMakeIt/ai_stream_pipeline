@@ -46,6 +46,13 @@ void AlertNode::stop() {
 }
 
 void AlertNode::pushData(std::shared_ptr<core::BasePacket> packet) {
+    if (packet->type == core::PacketType::STREAM_END)
+    {
+        LOG_INFO_FMT("[Alert] Received stream end");
+        stop();
+        broadcast(packet);
+        return;
+    }
     // 透传所有数据到下游
     broadcast(packet);
 

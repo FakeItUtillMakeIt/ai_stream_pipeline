@@ -53,6 +53,13 @@ void ResizeNormalizeNode::setOutputDataType(const std::string& dtype) {
 }
 
 void ResizeNormalizeNode::pushData(std::shared_ptr<core::BasePacket> packet) {
+    if (packet->type == core::PacketType::STREAM_END)
+    {
+        LOG_INFO_FMT("[ResizeNormalize] Received stream end");
+        stop();
+        broadcast(packet);
+        return;
+    }
     in_time_ms_ = utils::TimeUtil::currentTimeMs();
     if (packet->type != core::PacketType::DECODED_FRAME) {
         // 如果不是视频帧，直接透传或忽略

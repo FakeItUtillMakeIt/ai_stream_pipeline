@@ -47,7 +47,8 @@ enum class PacketType : uint8_t {
     DETECTION,
     POSE,
     META_DATA,      // 推理结果等元数据
-    TENSOR          // 推理输入/输出 Tensor
+    TENSOR,          // 推理输入/输出 Tensor
+    STREAM_END,
 };
 
 /**

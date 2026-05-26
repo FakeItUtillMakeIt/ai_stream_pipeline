@@ -16,6 +16,7 @@ namespace ai_stream
 
             bool start() override { return true; }
             void stop() override {}
+            bool isRunning() const override{return running_.load();}
             void pushData(std::shared_ptr<core::BasePacket> packet) override;
 
             // 配置参数

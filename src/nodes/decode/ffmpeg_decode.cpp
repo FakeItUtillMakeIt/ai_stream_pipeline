@@ -84,6 +84,13 @@ void FFmpegDecodeNode::stop() {
 }
 
 void FFmpegDecodeNode::pushData(std::shared_ptr<core::BasePacket> packet) {
+    if (packet->type == core::PacketType::STREAM_END)
+    {
+        LOG_INFO("[FFmpegDecode] Stream ended");
+        stop();
+        broadcast(packet);
+        return;
+    }
     in_time_ms_ = utils::TimeUtil::currentTimeMs();
     if (!running_) return;
     if (packet->type != core::PacketType::RAW_VIDEO) return;

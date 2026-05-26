@@ -387,5 +387,20 @@ namespace ai_stream
             return nullptr;
         }
 
+        bool Pipeline::isRunning() const{
+            std::lock_guard<std::mutex> lock(mutex_);
+            for(const auto& node : nodes_)
+            {
+                if(node.second->isRunning())
+                {
+                    //LOG_INFO_FMT("node: {} is running",node.first);
+                    return true;
+                }
+                //LOG_INFO_FMT("node: {} is not running",node.first);
+            }
+            LOG_INFO_FMT("Pipeline {} is not running", id_);
+            return false;
+        }
+
     } // namespace core
 } // namespace ai_stream

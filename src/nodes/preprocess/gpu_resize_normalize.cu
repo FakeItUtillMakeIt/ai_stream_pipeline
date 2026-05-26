@@ -125,6 +125,13 @@ void GPUResizeNormalizeNode::stop() {
 }
 
 void GPUResizeNormalizeNode::pushData(std::shared_ptr<core::BasePacket> packet) {
+    if (packet->type == core::PacketType::STREAM_END)
+    {
+        LOG_INFO_FMT("[GpuResizeNormalize] Received stream end");
+        stop();
+        broadcast(packet);
+        return;
+    }
     if (!running_) {
         broadcast(packet);
         return;
