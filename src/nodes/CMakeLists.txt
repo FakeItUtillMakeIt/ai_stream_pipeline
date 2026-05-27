@@ -21,14 +21,17 @@ if(WITH_CUDA)
     find_package(CUDAToolkit REQUIRED)
 
     list(APPEND NODES_SOURCES
+        decode/hw_cuda_decode.cu
         preprocess/gpu_resize_normalize.cu
+        preprocess/cuda_resize_normalize.cu
         postprocess/gpu_detection_post.cu
+        infer/cuda_pose_infer.cu
     )
 endif()
 
 # 推理节点
 if(WITH_TENSORRT)
-    list(APPEND NODES_SOURCES infer/detection_infer.cpp infer/pose_infer.cpp infer/cuda_pose_infer.cu)
+    list(APPEND NODES_SOURCES infer/detection_infer.cpp infer/pose_infer.cpp )
 endif()
 
 # 动态库

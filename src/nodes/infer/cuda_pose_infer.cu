@@ -359,7 +359,7 @@ void CudaPoseInferNode::ensureSourceBuffer(int w, int h) {
         if (d_source_img_) cudaFree(d_source_img_);
         CUDA_CHECK(cudaMalloc(&d_source_img_, needed));
         source_buffer_size_ = needed;
-        LOG_INFO_FMT("[CudaPoseInfer] Reallocated source GPU buffer: %zu bytes", needed);
+        LOG_INFO_FMT("[CudaPoseInfer] Reallocated source GPU buffer: {} bytes", needed);
     }
 }
 

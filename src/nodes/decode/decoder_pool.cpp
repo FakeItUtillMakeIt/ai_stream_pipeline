@@ -2,6 +2,8 @@
 #include "decoder_pool.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 
+#include <cuda_runtime.h>
+
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/imgutils.h>
@@ -12,6 +14,15 @@ namespace ai_stream {
 namespace nodes {
 
 DecoderContext::~DecoderContext() {
+    if (d_bgr_buffer){
+        cudaFree(d_bgr_buffer);
+    }
+    if (hw_frame) {
+        av_frame_free(&hw_frame);
+    }
+    if (hw_device_ctx) {
+        av_buffer_unref(&hw_device_ctx);
+    }
     if (bgr_buffer) {
         av_free(bgr_buffer);
         bgr_buffer = nullptr;
@@ -40,7 +51,7 @@ DecoderPool::~DecoderPool() {
     LOG_DEBUG_FMT("[DecoderPool] Destroyed");
 }
 
-std::shared_ptr<DecoderContext> DecoderPool::getDecoder(uint32_t stream_id, int codec_id) {
+std::shared_ptr<DecoderContext> DecoderPool::getDecoder(uint32_t stream_id, int codec_id, bool use_hw) {
     std::lock_guard<std::mutex> lock(mutex_);
     
     auto it = decoders_.find(stream_id);
@@ -49,7 +60,7 @@ std::shared_ptr<DecoderContext> DecoderPool::getDecoder(uint32_t stream_id, int 
     }
     
     // 创建新的解码器
-    auto ctx = createDecoder(codec_id);
+    auto ctx = createDecoder(codec_id,use_hw);
     if (ctx) {
         decoders_[stream_id] = ctx;
         LOG_INFO_FMT("[DecoderPool] Created decoder for stream_id={}, codec_id={}", stream_id, codec_id);
@@ -77,12 +88,31 @@ void DecoderPool::clear() {
     decoders_.clear();
 }
 
-std::shared_ptr<DecoderContext> DecoderPool::createDecoder(int codec_id) {
+std::shared_ptr<DecoderContext> DecoderPool::createDecoder(int codec_id, bool use_hw) {
     auto ctx = std::make_shared<DecoderContext>();
     ctx->codec_id = codec_id;
+    ctx->use_hw = use_hw;
     
-    // 查找解码器
-    const AVCodec* codec = avcodec_find_decoder((AVCodecID)codec_id);
+    const AVCodec* codec = nullptr;
+    
+    if (use_hw) {
+        // 优先使用 cuvid 专用解码器
+        if (codec_id == AV_CODEC_ID_H264) {
+            codec = avcodec_find_decoder_by_name("h264_cuvid");
+        } else if (codec_id == AV_CODEC_ID_HEVC) {
+            codec = avcodec_find_decoder_by_name("hevc_cuvid");
+        }
+        
+        if (!codec) {
+            LOG_WARN_FMT("[DecoderPool] HW decoder not found for codec_id={}, fallback to SW", codec_id);
+            ctx->use_hw = false;
+        }
+    }
+    
+    if (!ctx->use_hw) {
+        codec = avcodec_find_decoder((AVCodecID)codec_id);
+    }
+    
     if (!codec) {
         LOG_ERROR_FMT("[DecoderPool] Failed to find decoder for codec_id={}", codec_id);
         return nullptr;
@@ -95,29 +125,46 @@ std::shared_ptr<DecoderContext> DecoderPool::createDecoder(int codec_id) {
         return nullptr;
     }
     
-    // 设置线程数（提高解码性能）
-    ctx->codec_ctx->thread_count = 4;
-    ctx->codec_ctx->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
+    if (ctx->use_hw) {
+        // 初始化 CUDA 设备上下文
+        int ret = av_hwdevice_ctx_create(&ctx->hw_device_ctx, AV_HWDEVICE_TYPE_CUDA, 
+                                          nullptr, nullptr, 0);
+        if (ret < 0) {
+            char errbuf[256];
+            av_strerror(ret, errbuf, sizeof(errbuf));
+            LOG_WARN_FMT("[DecoderPool] av_hwdevice_ctx_create failed: {}, fallback to SW", errbuf);
+            ctx->use_hw = false;
+            avcodec_free_context(&ctx->codec_ctx);
+            return createDecoder(codec_id, false);  // 递归 fallback
+        }
+        
+        ctx->codec_ctx->hw_device_ctx = av_buffer_ref(ctx->hw_device_ctx);
+        ctx->codec_ctx->thread_count = 1;  // 硬件解码不需要多线程
+    } else {
+        ctx->codec_ctx->thread_count = 4;
+        ctx->codec_ctx->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
+    }
     
-    // 打开解码器
     if (avcodec_open2(ctx->codec_ctx, codec, nullptr) < 0) {
         LOG_ERROR_FMT("[DecoderPool] Failed to open codec");
         return nullptr;
     }
     
-    // 分配帧
     ctx->frame = av_frame_alloc();
     ctx->bgr_frame = av_frame_alloc();
-    if (!ctx->frame || !ctx->bgr_frame) {
+    if (ctx->use_hw) {
+        ctx->hw_frame = av_frame_alloc();
+    }
+    if(!ctx->frame || !ctx->bgr_frame || (ctx->use_hw && !ctx->hw_frame))
+    {
         LOG_ERROR_FMT("[DecoderPool] Failed to allocate frames");
         return nullptr;
     }
-    
     ctx->initialized = true;
-    LOG_INFO_FMT("[DecoderPool] Decoder created: {}", codec->name);
-    
+    LOG_INFO_FMT("[DecoderPool] Decoder created: {} (hw={})", codec->name, ctx->use_hw);
     return ctx;
 }
+
 
 } // namespace nodes
 } // namespace ai_stream

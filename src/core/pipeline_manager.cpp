@@ -79,6 +79,10 @@ namespace ai_stream
                             {
                                 decode_node->setOutputBGR(params["output_bgr"].get<bool>());
                             }
+                            if (params.contains("hw_decoder"))
+                            {
+                                decode_node->setHwDecodeEnabled(params["hw_decoder"].get<bool>());
+                            }
 
                             // 快照配置
                             if (params.contains("snapshot"))

@@ -6,6 +6,12 @@
 #include <mutex>
 #include <atomic>
 
+extern "C" {
+#include <libavcodec/avcodec.h>
+#include <libavutil/imgutils.h>
+#include <libswscale/swscale.h>
+}
+
 struct AVCodecContext;
 struct AVFrame;
 struct SwsContext;
@@ -24,6 +30,15 @@ struct DecoderContext {
     SwsContext* sws_ctx = nullptr;     // 用于像素格式转换
     uint8_t* bgr_buffer = nullptr;     // BGR 格式缓冲区
     int buffer_size = 0;
+
+    //硬件解码字段
+    bool use_hw = false;
+    AVBufferRef* hw_device_ctx = nullptr;  // 硬件设备上下文
+    AVFrame* hw_frame = nullptr;        // 用于硬件解码的帧
+
+    void* d_bgr_buffer = nullptr;
+    size_t d_bgr_buffer_size = 0;
+
     int width = 0;
     int height = 0;
     int codec_id = 0;
@@ -44,7 +59,7 @@ public:
     /**
      * @brief 获取或创建指定 stream_id 的解码器
      */
-    std::shared_ptr<DecoderContext> getDecoder(uint32_t stream_id, int codec_id = 0);
+    std::shared_ptr<DecoderContext> getDecoder(uint32_t stream_id, int codec_id = 0,bool use_hw = false);
 
     /**
      * @brief 释放指定 stream_id 的解码器
@@ -62,7 +77,7 @@ public:
     void clear();
 
 private:
-    std::shared_ptr<DecoderContext> createDecoder(int codec_id);
+    std::shared_ptr<DecoderContext> createDecoder(int codec_id,bool use_hw=false);
     void destroyDecoder(std::shared_ptr<DecoderContext> ctx);
 
     std::unordered_map<uint32_t, std::shared_ptr<DecoderContext>> decoders_;

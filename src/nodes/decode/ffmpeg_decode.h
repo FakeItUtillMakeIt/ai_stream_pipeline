@@ -5,6 +5,7 @@
 #include "decoder_pool.h"
 #include <atomic>
 #include <string>
+#include <cuda_runtime.h>
 
 namespace ai_stream {
 namespace nodes {
@@ -29,6 +30,8 @@ public:
     void setSnapshotEnabled(bool enabled) override;
     void setSnapshotInterval(int interval) override;
     void setSnapshotDir(const std::string& dir) override;
+    void setHwDecodeEnabled(bool enabled) override {use_hw_ = enabled;}
+    bool isHwDecodeEnabled() override { return use_hw_.load(); }
 
 private:
     std::shared_ptr<core::VideoFramePacket> decodePacket(
@@ -49,6 +52,8 @@ private:
 
     int snapshot_count_ = 0;
     int frame_count_ = 0;
+    std::atomic<bool> use_hw_{false};
+    cudaStream_t cuda_stream_ = nullptr;  // 用于 NV12→BGR 转换
 };
 
 } // namespace nodes

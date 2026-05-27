@@ -39,7 +39,7 @@ public:
 
     bool start() override;
     void stop() override;
-    bool isRunning() const override{return running_.load();}
+    bool isRunning() const override { return running_.load(); }
     void pushData(std::shared_ptr<core::BasePacket> packet) override;
 
 private:
@@ -49,9 +49,11 @@ private:
     std::vector<std::shared_ptr<core::InferenceResultPacket>> processBatch(
         const std::vector<std::shared_ptr<core::VideoFramePacket>>& frames);
 
-    void preprocessBatch(const std::vector<cv::Mat*>& images, float* gpu_buffer, int batch_size);
-    
-    // 修改：改为按 total_dets + batch_ids 分组
+    // 【新增】双路径预处理
+    void preprocessBatchCpu(const std::vector<cv::Mat*>& images, float* gpu_buffer, int batch_size);
+    void preprocessBatchGpu(const std::vector<void*>& d_ptrs, const std::vector<size_t>& pitches,
+                            float* gpu_buffer, int batch_size);
+
     std::vector<std::vector<core::InferenceResultPacket::BBox>> postprocessBatch(
         int batch_size, int total_dets, const float scale_x[], const float scale_y[], float conf_thresh);
 
@@ -69,34 +71,38 @@ private:
     std::string boxes_name_ = "det_boxes";
     std::string scores_name_ = "det_scores";
     std::string classes_name_ = "det_classes";
-    std::string batch_ids_name_ = "det_batch_ids";  // 新增
-    std::string num_dets_name_ = "det_num_dets";    // scalar 总检测数
+    std::string batch_ids_name_ = "det_batch_ids";
+    std::string num_dets_name_ = "det_num_dets";
 
     // GPU 缓冲区
     void* d_input_ = nullptr;
     void* d_boxes_ = nullptr;
     void* d_scores_ = nullptr;
     void* d_classes_ = nullptr;
-    void* d_batch_ids_ = nullptr;  // 新增
+    void* d_batch_ids_ = nullptr;
     void* d_num_dets_ = nullptr;
+
+    // 【新增】用于 GPU 路径的临时缓冲区（当需要数据整理时）
+    void* d_preprocess_tmp_ = nullptr;
+    size_t d_preprocess_tmp_size_ = 0;
 
     // CPU 缓冲区
     std::vector<float> h_boxes_;
     std::vector<float> h_scores_;
     std::vector<int64_t> h_classes_;
-    std::vector<int64_t> h_batch_ids_;  // 新增
-    int64_t h_num_dets_ = 0;            // 改为标量
+    std::vector<int64_t> h_batch_ids_;
+    int64_t h_num_dets_ = 0;
 
     // 常量
     static constexpr int INPUT_H = 640;
     static constexpr int INPUT_W = 640;
-    static constexpr int MAX_DETS = 20;  // 每类最大检测数，用于分配 buffer 上限
+    static constexpr int MAX_DETS = 20;
     
     size_t input_size_ = 0;
     size_t out_boxes_size_ = 0;
     size_t out_scores_size_ = 0;
     size_t out_classes_size_ = 0;
-    size_t out_batch_ids_size_ = 0;  // 新增
+    size_t out_batch_ids_size_ = 0;
     size_t out_num_dets_size_ = 0;
 
     int input_width_ = 640;
@@ -117,10 +123,6 @@ private:
     std::thread worker_;
     std::atomic<bool> running_{false};
 
-    // 多 batch 收集相关
-    std::mutex batch_mutex_;
-    std::condition_variable batch_cv_;
-    std::deque<std::shared_ptr<core::VideoFramePacket>> batch_buffer_;
     std::chrono::milliseconds batch_timeout_ms_{20};
     std::atomic<int> max_batch_size_{1};
 };

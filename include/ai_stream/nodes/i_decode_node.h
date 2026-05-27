@@ -51,6 +51,9 @@ public:
      *  @param packet 待处理的数据包
      */
     virtual void setSnapshotDir(const std::string& dir) = 0;
+
+    virtual void setHwDecodeEnabled(bool enabled) = 0;
+    virtual bool isHwDecodeEnabled() = 0;
 };
 
 } // namespace nodes

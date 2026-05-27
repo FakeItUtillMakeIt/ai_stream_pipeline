@@ -14,6 +14,8 @@
         "type": "ffmpeg_decode",
         "params": {
           "output_bgr": true,
+          "hw_decoder_type": "h264_cuvid",
+          "hw_decoder": false,
           "snapshot": {
             "enabled": false,
             "interval": 100,
@@ -23,7 +25,7 @@
       },
       {
         "id": "preprocess1",
-        "type": "resize_normalize",
+        "type": "cuda_resize_normalize",
         "params": {
           
         }
@@ -91,8 +93,8 @@
         "type": "rtmp_sink",
         "params": {
           "output_url": "rtmp://localhost/live/out1",
-          "output_width": 1920,
-          "output_height": 1080
+          "output_width": 1280,
+          "output_height": 720
         }
       }
     ],

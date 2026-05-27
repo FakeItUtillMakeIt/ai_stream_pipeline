@@ -14,11 +14,11 @@ public:
 
     bool start() override;
     void stop() override;
-    bool isRunning() const override{return running_.load();}
+    bool isRunning() const override { return running_.load(); }
     void pushData(std::shared_ptr<core::BasePacket> packet) override;
 
     void setTargetSize(int width, int height) { target_width_ = width; target_height_ = height; }
-    std::pair<int, int> getTargetSize() const { return std::make_pair(target_width_, target_height_); }
+    std::pair<int, int> getTargetSize() const { return {target_width_, target_height_}; }
     void setMean(const std::vector<float>& mean);
     void setStd(const std::vector<float>& std);
     void setInterpolationMethod(const std::string& method) { interpolation_method_ = method; }
@@ -33,8 +33,12 @@ public:
     void setTensorRTPreprocessEnabled(bool enable) override;
 
 private:
-    // 按需分配/扩容 GPU 缓冲区
     void ensureGpuBuffers(int src_w, int src_h, int dst_w, int dst_h);
+    
+    // 处理 GPU 输入（硬件解码路径）
+    void processGpuInput(const core::VideoFramePacket& frame, int dst_w, int dst_h);
+    // 处理 CPU 输入（软件解码路径）
+    void processCpuInput(const core::VideoFramePacket& frame, int dst_w, int dst_h);
 
     int device_id_;
     bool async_processing_;
@@ -42,22 +46,22 @@ private:
     cudaEvent_t start_event_;
     cudaEvent_t stop_event_;
 
-    void* input_gpu_ptr_;
-    void* output_gpu_ptr_;
-    size_t input_buffer_size_;   // 当前输入缓冲区字节数
-    size_t output_buffer_size_;  // 当前输出缓冲区字节数
+    void* input_gpu_ptr_ = nullptr;
+    void* output_gpu_ptr_ = nullptr;
+    size_t input_buffer_size_ = 0;
+    size_t output_buffer_size_ = 0;
 
-    int target_width_=640;
-    int target_height_=640;
+    int target_width_ = 640;
+    int target_height_ = 640;
     std::vector<float> mean_;
     std::vector<float> std_;
     std::string interpolation_method_;
-    bool keep_aspect_ratio_;
-    std::string output_dtype_;
+    bool keep_aspect_ratio_ = false;
+    std::string output_dtype_ = "float32";
 
-    std::atomic<int> total_processed_;
-    std::atomic<int64_t> total_latency_ms_;
-    std::atomic<bool> tensorrt_preprocess_enabled_;
+    std::atomic<int> total_processed_{0};
+    std::atomic<int64_t> total_latency_ms_{0};
+    std::atomic<bool> tensorrt_preprocess_enabled_{false};
     std::atomic<bool> running_{false};
 };
 
