@@ -78,8 +78,8 @@ CudaResizeNormalizeNode::CudaResizeNormalizeNode()
       output_gpu_ptr_(nullptr),
       input_buffer_size_(0),
       output_buffer_size_(0),
-      mean_{0.485f, 0.456f, 0.406f},
-      std_{0.229f, 0.224f, 0.225f},
+      mean_{0.0f, 0.0f, 0.0f},   // ← 改为 0，与 CPU 版本一致
+      std_{1.0f, 1.0f, 1.0f},    // ← 改为 1，与 CPU 版本一致
       total_processed_(0),
       total_latency_ms_(0.0f) {
 
@@ -187,7 +187,6 @@ void CudaResizeNormalizeNode::pushData(std::shared_ptr<core::BasePacket> packet)
         return;
     }
 
-    // 计算目标尺寸
     int src_width, src_height;
     int dst_width = target_width_;
     int dst_height = target_height_;
@@ -196,7 +195,7 @@ void CudaResizeNormalizeNode::pushData(std::shared_ptr<core::BasePacket> packet)
         src_width = frame->d_width;
         src_height = frame->d_height;
     } else {
-        if (frame->mat->empty()) {
+        if (!frame->mat || frame->mat->empty()) {
             LOG_WARN_FMT("[CudaResizeNormalize] Received empty CPU frame");
             return;
         }
@@ -228,20 +227,15 @@ void CudaResizeNormalizeNode::pushData(std::shared_ptr<core::BasePacket> packet)
 
     CUDA_CHECK(cudaEventRecord(start_event_, stream_));
 
-    // ============================================================
-    // 双路径：准备 GPU 输入指针，启动 Kernel
-    // ============================================================
     const unsigned char* src_gpu_ptr = nullptr;
     size_t src_pitch = 0;
 
     if (frame->is_gpu && frame->d_ptr) {
         LOG_INFO_FMT("[HWDecode] hardware decode path");
-        // 【硬件解码路径】零拷贝
         src_gpu_ptr = static_cast<const unsigned char*>(frame->d_ptr);
         src_pitch = frame->d_pitch;
     } else {
         LOG_INFO_FMT("[HWDecode] software decode path");
-        // 【软件解码路径】H2D 上传
         src_pitch = static_cast<size_t>(src_width) * 3;
         if (frame->mat->isContinuous()) {
             CUDA_CHECK(cudaMemcpyAsync(input_gpu_ptr_, frame->mat->data,
@@ -275,9 +269,6 @@ void CudaResizeNormalizeNode::pushData(std::shared_ptr<core::BasePacket> packet)
         return;
     }
 
-    // ============================================================
-    // 【关键】同步后构造输出包，不再 D2H 拷贝
-    // ============================================================
     CUDA_CHECK(cudaEventRecord(stop_event_, stream_));
     CUDA_CHECK(cudaEventSynchronize(stop_event_));
 
@@ -289,7 +280,6 @@ void CudaResizeNormalizeNode::pushData(std::shared_ptr<core::BasePacket> packet)
     LOG_INFO_FMT("[CudaResizeNormalize] Processed {}x{} -> {}x{}, latency={:.2f}ms",
                   src_width, src_height, dst_width, dst_height, latency_ms);
 
-    // 构造输出包：GPU 数据直接透传
     auto new_packet = std::make_shared<core::VideoFramePacket>();
     new_packet->stream_id = frame->stream_id;
     new_packet->timestamp_ms = frame->timestamp_ms;
@@ -299,17 +289,15 @@ void CudaResizeNormalizeNode::pushData(std::shared_ptr<core::BasePacket> packet)
     new_packet->channels = 3;
     new_packet->frame_id = frame->frame_id;
 
-    // 【核心】设置 GPU 输出指针，下游直接复用
     new_packet->is_gpu = true;
-    new_packet->d_ptr = output_gpu_ptr_;           // NCHW float 设备指针
-    new_packet->d_pitch = dst_width * 3 * sizeof(float);  // 连续内存 pitch
-    //new_packet->d_pitch = 0;
+    new_packet->d_ptr = output_gpu_ptr_;
+    // 【修正】NCHW 格式下，d_pitch 表示单个通道每行的字节数
+    new_packet->d_pitch = dst_width * sizeof(float);
     new_packet->d_width = dst_width;
     new_packet->d_height = dst_height;
 
-    // CPU mat 保留原始数据（供需要 CPU 的下游节点使用）
-    new_packet->source_mat = frame->mat;
-    new_packet->mat = frame->mat;  // 浅拷贝，不分配新内存
+    new_packet->source_mat = frame->source_mat;
+    new_packet->mat = frame->mat;
 
     broadcast(new_packet);
 }

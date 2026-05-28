@@ -109,10 +109,10 @@ namespace ai_stream
                     if (type.find("resize_normalize") != std::string::npos)
                     { 
                         auto preprocess_node = std::dynamic_pointer_cast<nodes::IPreprocessNode>(node);
-                        std::vector<float> std = {0.229f, 0.224f, 0.225f};
-                        std::vector<float> mean = {0.485f, 0.456f, 0.406f};
-                        preprocess_node->setStd(std);
-                        preprocess_node->setMean(mean);
+                        // std::vector<float> std = {0.229f, 0.224f, 0.225f};
+                        // std::vector<float> mean = {0.485f, 0.456f, 0.406f};
+                        // preprocess_node->setStd(std);
+                        // preprocess_node->setMean(mean);
                         preprocess_node->setTargetSize(640, 640);
                     }
 
