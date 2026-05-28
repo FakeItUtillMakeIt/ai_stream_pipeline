@@ -265,8 +265,8 @@ void CudaResizeNormalizeNode::pushData(std::shared_ptr<core::BasePacket> packet)
         src_width, src_height, src_pitch,
         static_cast<float*>(output_gpu_ptr_),
         dst_width, dst_height,
-        mean_[2], mean_[1], mean_[0],
-        std_[2], std_[1], std_[0]
+        mean_[0], mean_[1], mean_[2],
+        std_[0], std_[1], std_[2]
     );
 
     cudaError_t kernel_err = cudaGetLastError();
