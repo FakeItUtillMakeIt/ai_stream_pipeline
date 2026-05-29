@@ -1,6 +1,7 @@
 // src/core/async_pipeline_manager.cpp
 // 【加速优化】异步流水线管理器 - 支持动态批处理和资源调度
 #include "async_pipeline_manager.h"
+#include "ai_stream/core/metrics.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 #include <fstream>
 #include <sstream>
@@ -376,6 +377,20 @@ void AsyncPipelineManager::monitorResourceUsage() {
             }
 #endif
             last_time = now;
+        }
+
+        // Feed resource stats into MetricsCollector
+        auto& mc = MetricsCollector::instance();
+        mc.setGpuMemoryMb(gpu_memory_mb_.load());
+        mc.setCpuUsagePercent(cpu_usage_percent_.load());
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            int active = 0;
+            for (const auto& [_, p] : pipelines_) {
+                if (p && p->isRunning()) active++;
+            }
+            mc.setActivePipelines(active);
+            mc.setTotalPipelines(static_cast<int>(pipelines_.size()));
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(500));

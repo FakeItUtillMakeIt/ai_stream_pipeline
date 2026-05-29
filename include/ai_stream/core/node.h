@@ -3,6 +3,7 @@
 
 #include "utils/time_util.h"
 #include "packet.h"
+#include "ai_stream/core/metrics.h"
 #include <atomic>
 #include <memory>
 #include <string>
@@ -42,21 +43,26 @@ public:
     // 设置管道上下文 (用于获取全局配置等)
     void setPipeline(std::weak_ptr<Pipeline> pipeline) { pipeline_ = pipeline; }
 
-protected:
-    // 广播数据给所有下游节点
-    void broadcast(std::shared_ptr<BasePacket> packet) {
-        for (auto& weak_down : downstreams_) {
-            if (auto down = weak_down.lock()) {
-                down->pushData(packet);
-            }
-        }
+    // 记录节点处理指标（节点在 pushData 中计算完 latency 后调用）
+    void recordMetrics(uint64_t latency_ms) {
+        recordMetricsImpl(latency_ms, false);
     }
-    
+    void recordDropped() {
+        recordMetricsImpl(0, true);
+    }
+
+protected:
+    // 广播数据给所有下游节点，并自动记录当前节点的处理指标
+    void broadcast(std::shared_ptr<BasePacket> packet);
+
     std::string name_;
     std::vector<std::weak_ptr<Node>> downstreams_;
     std::weak_ptr<Pipeline> pipeline_;
     std::atomic<bool> running_{false};
     uint64_t in_time_ms_ = 0;
+
+private:
+    void recordMetricsImpl(uint64_t latency_ms, bool dropped);
 };
 
 // 为了方便类型转换，提供一个辅助宏

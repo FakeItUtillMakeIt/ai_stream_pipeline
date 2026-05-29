@@ -47,6 +47,11 @@ private:
     // 健康检查
     void handleHealth(const httplib::Request& req, httplib::Response& res);
 
+    // 指标监控
+    void handleMetricsPrometheus(const httplib::Request& req, httplib::Response& res);
+    void handleMetricsJson(const httplib::Request& req, httplib::Response& res);
+    void handleMetricsPipeline(const httplib::Request& req, httplib::Response& res);
+
 private:
     httplib::Server server_;
     std::unordered_map<std::string, std::shared_ptr<core::Pipeline>> pipelines_;

@@ -5,8 +5,31 @@
 namespace ai_stream {
 namespace core {
 
-// Node 基类目前没有需要单独编译的非虚函数，但为了 CMake 完整性和未来扩展，保留此文件
-// 可以将一些通用日志函数或工具函数放在这里
+void Node::broadcast(std::shared_ptr<BasePacket> packet) {
+    auto it = packet->cost_time_map.find(name_);
+    if (it != packet->cost_time_map.end()) {
+        recordMetricsImpl(it->second, false);
+    }
+    for (auto& weak_down : downstreams_) {
+        if (auto down = weak_down.lock()) {
+            down->pushData(packet);
+        }
+    }
+}
+
+void Node::recordMetricsImpl(uint64_t latency_ms, bool dropped) {
+    std::string pid;
+    if (auto p = pipeline_.lock()) {
+        pid = p->getId();
+    }
+    auto& mc = MetricsCollector::instance();
+    if (dropped) {
+        mc.recordDropped(pid, name_);
+    } else {
+        mc.recordLatency(pid, name_, latency_ms);
+        mc.recordProcessed(pid, name_);
+    }
+}
 
 } // namespace core
 } // namespace ai_stream
