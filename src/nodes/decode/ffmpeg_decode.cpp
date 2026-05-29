@@ -236,6 +236,12 @@ std::shared_ptr<core::VideoFramePacket> FFmpegDecodeNode::decodePacket(
             new_frame->d_pitch = width * 3;
             new_frame->d_width = width;
             new_frame->d_height = height;
+            
+            new_frame->d_bgr_ptr = ctx->d_bgr_buffer;
+            new_frame->d_bgr_pitch = width * 3;
+            new_frame->d_bgr_width = width;
+            new_frame->d_bgr_height = height;
+
             new_frame->width = width;
             new_frame->height = height;
             new_frame->channels = 3;

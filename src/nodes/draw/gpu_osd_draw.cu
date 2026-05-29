@@ -105,6 +105,135 @@ __global__ void drawBoxesBatchKernel(
     }
 }
 
+// CUDA 内核：画线段（骨架）
+__global__ void drawLineKernel(
+    unsigned char* image, int width, int height, int pitch,
+    int x1, int y1, int x2, int y2,
+    unsigned char b, unsigned char g, unsigned char r, int thickness)
+{
+    int px = blockIdx.x * blockDim.x + threadIdx.x;
+    int py = blockIdx.y * blockDim.y + threadIdx.y;
+    if (px >= width || py >= height) return;
+
+    // 点到线段的距离
+    float dx = x2 - x1;
+    float dy = y2 - y1;
+    float len_sq = dx * dx + dy * dy;
+    
+    float t = max(0.0f, min(1.0f, ((px - x1) * dx + (py - y1) * dy) / len_sq));
+    float proj_x = x1 + t * dx;
+    float proj_y = y1 + t * dy;
+    float dist = sqrtf((px - proj_x) * (px - proj_x) + (py - proj_y) * (py - proj_y));
+    
+    if (dist <= thickness) {
+        int idx = py * pitch + px * 3;
+        image[idx + 0] = b;
+        image[idx + 1] = g;
+        image[idx + 2] = r;
+    }
+}
+
+// CUDA 内核：画圆（关键点）
+__global__ void drawCircleKernel(
+    unsigned char* image, int width, int height, int pitch,
+    int cx, int cy, int radius,
+    unsigned char b, unsigned char g, unsigned char r, bool fill)
+{
+    int px = blockIdx.x * blockDim.x + threadIdx.x;
+    int py = blockIdx.y * blockDim.y + threadIdx.y;
+    if (px >= width || py >= height) return;
+
+    int dx = px - cx;
+    int dy = py - cy;
+    int dist_sq = dx * dx + dy * dy;
+    int r_sq = radius * radius;
+    
+    bool inside = dist_sq <= r_sq;
+    bool border = dist_sq >= (radius - 1) * (radius - 1) && dist_sq <= r_sq;
+    
+    if (fill ? inside : border) {
+        int idx = py * pitch + px * 3;
+        image[idx + 0] = b;
+        image[idx + 1] = g;
+        image[idx + 2] = r;
+    }
+}
+
+// CUDA 内核：批量画关键点和骨架
+__global__ void drawKeypointsBatchKernel(
+    unsigned char* image, int width, int height, int pitch,
+    const float* kpts,          // [num_persons, 17, 3]  x,y,visible
+    const int* skeleton_pairs,  // [num_pairs, 2]  骨架连接对
+    int num_persons, int num_kpts, int num_pairs,
+    int kpt_radius, int line_thickness)
+{
+    int px = blockIdx.x * blockDim.x + threadIdx.x;
+    int py = blockIdx.y * blockDim.y + threadIdx.y;
+    if (px >= width || py >= height) return;
+
+    int idx = py * pitch + px * 3;
+    
+    // 画骨架线
+    for (int p = 0; p < num_persons; ++p) {
+        for (int s = 0; s < num_pairs; ++s) {
+            int i = skeleton_pairs[s * 2 + 0];
+            int j = skeleton_pairs[s * 2 + 1];
+            
+            float x1 = kpts[(p * num_kpts + i) * 3 + 0];
+            float y1 = kpts[(p * num_kpts + i) * 3 + 1];
+            float v1 = kpts[(p * num_kpts + i) * 3 + 2];
+            float x2 = kpts[(p * num_kpts + j) * 3 + 0];
+            float y2 = kpts[(p * num_kpts + j) * 3 + 1];
+            float v2 = kpts[(p * num_kpts + j) * 3 + 2];
+            
+            if (v1 < 0.5f || v2 < 0.5f) continue;  // 不可见跳过
+            
+            // 点到线段距离检测（简化版：用 Bresenham 或粗线段）
+            float dx = x2 - x1;
+            float dy = y2 - y1;
+            float len_sq = dx * dx + dy * dy;
+            if (len_sq < 1e-6f) continue;
+            
+            float t = max(0.0f, min(1.0f, ((px - x1) * dx + (py - y1) * dy) / len_sq));
+            float proj_x = x1 + t * dx;
+            float proj_y = y1 + t * dy;
+            float dist = sqrtf((px - proj_x) * (px - proj_x) + (py - proj_y) * (py - proj_y));
+            
+            if (dist <= line_thickness) {
+                image[idx + 0] = 0;    // B
+                image[idx + 1] = 128;  // G
+                image[idx + 2] = 255;  // R  橙色骨架
+                return;  // 一个像素只画一次
+            }
+        }
+    }
+    
+    // 画关键点（后画，覆盖骨架）
+    for (int p = 0; p < num_persons; ++p) {
+        for (int k = 0; k < num_kpts; ++k) {
+            float kx = kpts[(p * num_kpts + k) * 3 + 0];
+            float ky = kpts[(p * num_kpts + k) * 3 + 1];
+            float kv = kpts[(p * num_kpts + k) * 3 + 2];
+            
+            if (kv < 0.5f) continue;
+            
+            int dx = px - static_cast<int>(kx);
+            int dy = py - static_cast<int>(ky);
+            int dist_sq = dx * dx + dy * dy;
+            int r_sq = kpt_radius * kpt_radius;
+            
+            if (dist_sq <= r_sq) {
+                // 实心圆：绿色，白边
+                bool border = dist_sq >= (kpt_radius - 1) * (kpt_radius - 1);
+                image[idx + 0] = border ? 255 : 0;   // B
+                image[idx + 1] = border ? 255 : 255; // G
+                image[idx + 2] = border ? 255 : 0;   // R
+                return;
+            }
+        }
+    }
+}
+
 } // anonymous namespace
 
 GpuOSDDrawNode::GpuOSDDrawNode() : IDrawNode("GpuOSDDraw") {
@@ -206,43 +335,48 @@ void GpuOSDDrawNode::pushData(std::shared_ptr<core::BasePacket> packet) {
         }
         filtered_dets.push_back(det);
     }
-
+    LOG_INFO_FMT("[GpuOSDDraw] is_gpu={}, d_bgr_ptr={}, mat={}, source_mat={}",
+             source_frame->is_gpu,
+             source_frame->d_bgr_ptr == nullptr,
+             source_frame->mat == nullptr,
+             source_frame->source_mat == nullptr);
     // 判断路径：GPU 直接绘制 vs CPU 绘制后回传
-    if (source_frame->is_gpu && source_frame->d_ptr) {
+    if (source_frame->is_gpu && source_frame->d_bgr_ptr) {
         // 【加速】GPU 路径：直接在 GPU 内存上绘制
-        LOG_DEBUG_FMT("[GpuOSDDraw] GPU path: drawing {} boxes on GPU", filtered_dets.size());
+        LOG_INFO_FMT("[GpuOSDDraw] GPU path: drawing {} boxes on GPU", filtered_dets.size());
 
         // 克隆 GPU 帧数据（避免修改原始帧）
         auto new_frame = std::make_shared<core::VideoFramePacket>();
         *new_frame = *source_frame;
 
         // 分配新的 GPU 缓冲区并复制数据
-        size_t frame_size = source_frame->d_height * source_frame->d_pitch;
+        size_t frame_size = source_frame->d_bgr_height * source_frame->d_bgr_pitch;
         void* d_output;
         CUDA_CHECK(cudaMalloc(&d_output, frame_size));
-        CUDA_CHECK(cudaMemcpyAsync(d_output, source_frame->d_ptr, frame_size,
+        CUDA_CHECK(cudaMemcpyAsync(d_output, source_frame->d_bgr_ptr, frame_size,
                                    cudaMemcpyDeviceToDevice, stream_));
 
         // GPU 绘制边界框
         if (!filtered_dets.empty()) {
             drawBoxesOnGpu(
                 static_cast<unsigned char*>(d_output),
-                source_frame->d_width, source_frame->d_height, source_frame->d_pitch,
+                source_frame->d_bgr_width, source_frame->d_bgr_height, source_frame->d_bgr_pitch,
                 filtered_dets);
         }
 
         CUDA_CHECK(cudaStreamSynchronize(stream_));
 
         new_frame->d_ptr = d_output;
+        new_frame->d_pitch = source_frame->d_bgr_pitch;
         new_frame->is_gpu = true;
 
         frame_count_++;
         if (snapshot_enabled_ && frame_count_ % snapshot_interval_ == 0) {
             // 需要拷贝回 CPU 保存快照
-            cv::Mat cpu_mat(source_frame->d_height, source_frame->d_width, CV_8UC3);
+            cv::Mat cpu_mat(source_frame->d_bgr_height, source_frame->d_bgr_width, CV_8UC3);
             CUDA_CHECK(cudaMemcpy2D(cpu_mat.data, cpu_mat.step,
-                                    d_output, source_frame->d_pitch,
-                                    source_frame->d_width * 3, source_frame->d_height,
+                                    d_output, source_frame->d_bgr_pitch,
+                                    source_frame->d_bgr_width * 3, source_frame->d_bgr_height,
                                     cudaMemcpyDeviceToHost));
             auto snapshot_frame = std::make_shared<core::VideoFramePacket>();
             snapshot_frame->mat = std::make_shared<cv::Mat>(cpu_mat.clone());
@@ -254,7 +388,7 @@ void GpuOSDDrawNode::pushData(std::shared_ptr<core::BasePacket> packet) {
 
     } else if (source_frame->mat && !source_frame->mat->empty()) {
         // CPU 路径：使用 OpenCV 绘制（fallback）
-        LOG_DEBUG_FMT("[GpuOSDDraw] CPU path: drawing {} boxes with OpenCV", filtered_dets.size());
+        LOG_INFO_FMT("[GpuOSDDraw] CPU path: drawing {} boxes with OpenCV", filtered_dets.size());
 
         auto draw_mat = std::make_shared<cv::Mat>(source_frame->source_mat->clone());
 
@@ -302,12 +436,18 @@ void GpuOSDDrawNode::drawBoxesOnGpu(
 {
     if (detections.empty()) return;
 
-    // 准备 GPU 数据
+    // ========== 1. 准备检测框数据 ==========
     int num_boxes = static_cast<int>(detections.size());
     std::vector<float> h_boxes(num_boxes * 4);
     std::vector<float> h_scores(num_boxes);
     std::vector<int> h_class_ids(num_boxes);
-
+    
+    // 收集关键点和骨架数据
+    int max_kpts = 17;  // COCO 格式
+    std::vector<float> h_kpts;  // 扁平化 [num_persons, 17, 3]
+    std::vector<int> person_kpt_count;  // 每个人实际有多少关键点
+    int total_persons_with_kpts = 0;
+    
     for (int i = 0; i < num_boxes; ++i) {
         h_boxes[i * 4 + 0] = detections[i].x;
         h_boxes[i * 4 + 1] = detections[i].y;
@@ -315,42 +455,77 @@ void GpuOSDDrawNode::drawBoxesOnGpu(
         h_boxes[i * 4 + 3] = detections[i].h;
         h_scores[i] = detections[i].confidence;
         h_class_ids[i] = detections[i].class_id;
+        
+        if (detections[i].has_keypoints && !detections[i].keypoints.empty()) {
+            total_persons_with_kpts++;
+            for (const auto& kp : detections[i].keypoints) {
+                h_kpts.push_back(kp.x);
+                h_kpts.push_back(kp.y);
+                h_kpts.push_back(kp.visible ? 1.0f : 0.0f);
+            }
+            // 如果不足 17 个，补 0
+            for (size_t k = detections[i].keypoints.size(); k < max_kpts; ++k) {
+                h_kpts.push_back(0);
+                h_kpts.push_back(0);
+                h_kpts.push_back(0);
+            }
+        }
     }
 
+    // ========== 2. 拷贝检测框到 GPU ==========
     float* d_boxes;
-    float* d_scores;
-    int* d_class_ids;
-
     CUDA_CHECK(cudaMalloc(&d_boxes, num_boxes * 4 * sizeof(float)));
-    CUDA_CHECK(cudaMalloc(&d_scores, num_boxes * sizeof(float)));
-    CUDA_CHECK(cudaMalloc(&d_class_ids, num_boxes * sizeof(int)));
-
     CUDA_CHECK(cudaMemcpyAsync(d_boxes, h_boxes.data(), num_boxes * 4 * sizeof(float),
                                cudaMemcpyHostToDevice, stream_));
-    CUDA_CHECK(cudaMemcpyAsync(d_scores, h_scores.data(), num_boxes * sizeof(float),
-                               cudaMemcpyHostToDevice, stream_));
-    CUDA_CHECK(cudaMemcpyAsync(d_class_ids, h_class_ids.data(), num_boxes * sizeof(int),
-                               cudaMemcpyHostToDevice, stream_));
 
-    // 启动 CUDA 内核
+    // ========== 3. 画检测框 ==========
     dim3 block(16, 16);
     dim3 grid((width + 15) / 16, (height + 15) / 16);
 
     drawBoxesBatchKernel<<<grid, block, 0, stream_>>>(
         d_bgr, width, height, pitch,
-        d_boxes, d_scores, d_class_ids,
-        num_boxes, 3,  // thickness
+        d_boxes, nullptr, nullptr,
+        num_boxes, font_thickness_,
         static_cast<unsigned char>(box_color_[0]),
         static_cast<unsigned char>(box_color_[1]),
         static_cast<unsigned char>(box_color_[2])
     );
 
-    CUDA_CHECK(cudaStreamSynchronize(stream_));
+    // ========== 4. 画关键点和骨架 ==========
+    if (total_persons_with_kpts > 0 && !h_kpts.empty()) {
+        // 骨架连接对（COCO 格式）
+        static const int h_skeleton[] = {
+            0,1,  0,2,  1,3,  2,4,   // 脸
+            5,6,  5,7,  7,9,  6,8,  8,10,  // 手臂
+            5,11, 6,12, 11,12,  // 躯干
+            11,13, 13,15, 12,14, 14,16  // 腿
+        };
+        const int num_pairs = sizeof(h_skeleton) / sizeof(h_skeleton[0]) / 2;
 
-    // 释放临时 GPU 内存
+        float* d_kpts;
+        int* d_skeleton;
+        CUDA_CHECK(cudaMalloc(&d_kpts, h_kpts.size() * sizeof(float)));
+        CUDA_CHECK(cudaMalloc(&d_skeleton, sizeof(h_skeleton)));
+        
+        CUDA_CHECK(cudaMemcpyAsync(d_kpts, h_kpts.data(), h_kpts.size() * sizeof(float),
+                                   cudaMemcpyHostToDevice, stream_));
+        CUDA_CHECK(cudaMemcpyAsync(d_skeleton, h_skeleton, sizeof(h_skeleton),
+                                   cudaMemcpyHostToDevice, stream_));
+
+        drawKeypointsBatchKernel<<<grid, block, 0, stream_>>>(
+            d_bgr, width, height, pitch,
+            d_kpts, d_skeleton,
+            total_persons_with_kpts, max_kpts, num_pairs,
+            5,  // kpt_radius
+            2   // line_thickness
+        );
+
+        cudaFree(d_kpts);
+        cudaFree(d_skeleton);
+    }
+
+    CUDA_CHECK(cudaStreamSynchronize(stream_));
     cudaFree(d_boxes);
-    cudaFree(d_scores);
-    cudaFree(d_class_ids);
 }
 
 void GpuOSDDrawNode::setSnapshotEnabled(bool enabled) {

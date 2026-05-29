@@ -290,11 +290,16 @@ void CudaResizeNormalizeNode::pushData(std::shared_ptr<core::BasePacket> packet)
     new_packet->frame_id = frame->frame_id;
 
     new_packet->is_gpu = true;
-    new_packet->d_ptr = output_gpu_ptr_;
-    // 【修正】NCHW 格式下，d_pitch 表示单个通道每行的字节数
+    new_packet->d_ptr = output_gpu_ptr_;// NCHW 
+    // NCHW 格式下，d_pitch 表示单个通道每行的字节数
     new_packet->d_pitch = dst_width * sizeof(float);
     new_packet->d_width = dst_width;
     new_packet->d_height = dst_height;
+
+    new_packet->d_bgr_ptr = frame->d_bgr_ptr;
+    new_packet->d_bgr_pitch = frame->d_bgr_pitch;
+    new_packet->d_bgr_width = frame->d_bgr_width;
+    new_packet->d_bgr_height = frame->d_bgr_height;
 
     new_packet->source_mat = frame->source_mat;
     new_packet->mat = frame->mat;

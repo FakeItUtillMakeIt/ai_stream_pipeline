@@ -102,6 +102,12 @@ struct VideoFramePacket : public BasePacket {
     int width = 0;
     int height = 0;
     int channels = 3;
+
+    // 用于后续osd gpu 绘制
+    void* d_bgr_ptr = nullptr;
+    int d_bgr_pitch = 0;
+    int d_bgr_height = 0;
+    int d_bgr_width = 0;
 };
 
 /**

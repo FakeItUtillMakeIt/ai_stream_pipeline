@@ -15,7 +15,7 @@
         "params": {
           "output_bgr": true,
           "hw_decoder_type": "h264_cuvid",
-          "hw_decoder": false,
+          "hw_decoder": true,
           "snapshot": {
             "enabled": false,
             "interval": 100,
