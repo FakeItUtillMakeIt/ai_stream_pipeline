@@ -320,7 +320,7 @@ void ApiServer::handleMetricsJson(const httplib::Request& /*req*/, httplib::Resp
 
 void ApiServer::handleMetricsPipeline(const httplib::Request& req, httplib::Response& res) {
     try{
-        std::string pipeline_id = req.path_params.at("id");
+        std::string pipeline_id = req.path_params.at("pipeline_id");
 
         auto& mc = core::MetricsCollector::instance();
         auto nodes = mc.getPipelineMetrics(pipeline_id);
