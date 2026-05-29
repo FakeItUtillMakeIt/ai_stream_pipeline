@@ -163,6 +163,7 @@ bool CudaPoseInferNode::start() {
     if (!engine_) {
         LOG_WARN_FMT("[CudaPoseInfer] No model loaded, will use mock inference");
     }
+    queue_.reset();
     running_ = true;
     worker_ = std::thread(&CudaPoseInferNode::inferLoop, this);
     LOG_INFO_FMT("[CudaPoseInfer] Started with max_persons={}", batch_size_);

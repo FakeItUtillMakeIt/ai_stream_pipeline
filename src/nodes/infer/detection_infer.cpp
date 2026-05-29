@@ -83,6 +83,7 @@ bool DetectionInferNode::start() {
     if (!engine_) {
         LOG_WARN_FMT("[DetectionInfer] No model loaded, will use mock inference");
     }
+    queue_.reset();
     running_ = true;
     worker_ = std::thread(&DetectionInferNode::inferLoop, this);
     LOG_INFO_FMT("[DetectionInfer] Started with max_batch={}, cuda_graph={}, pinned_memory={}",
@@ -127,7 +128,6 @@ void DetectionInferNode::inferLoop() {
 
         std::shared_ptr<core::VideoFramePacket> first_frame;
         if (!queue_.pop(first_frame, std::chrono::milliseconds(batch_timeout_ms_))) {
-            LOG_WARN_FMT("[DetectionInferNode::inferLoop] No frames in queue for {} ms", batch_timeout_ms_.count());
             continue;
         }
         batch_frames.push_back(first_frame);

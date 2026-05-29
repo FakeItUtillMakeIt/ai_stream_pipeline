@@ -68,6 +68,7 @@ bool PoseInferNode::start() {
     if (!engine_) {
         LOG_WARN_FMT("[PoseInfer] No model loaded, will use mock inference");
     }
+    queue_.reset();
     running_ = true;
     worker_ = std::thread(&PoseInferNode::inferLoop, this);
     LOG_INFO_FMT("[PoseInfer] Started with max_persons={}", batch_size_);

@@ -83,6 +83,19 @@ public:
     }
 
     /**
+     * @brief 重置队列为初始可用状态（清空数据 + 清除停止标记）
+     *
+     * 用于支持 pipeline 停止后重新启动的场景。
+     */
+    void reset() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        stopped_ = false;
+        std::queue<T> empty;
+        std::swap(queue_, empty);
+        not_full_.notify_all();
+    }
+
+    /**
      * @brief 清空队列
      */
     void clear() {
