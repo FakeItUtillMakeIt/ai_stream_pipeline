@@ -16,7 +16,14 @@ set(TRACK_HEADERS
     tracker_node.h
     ocsort_adapter.h
     bytetrack_adapter.h
+    gpu_kalman_filter.h
 )
+
+# 【加速优化】GPU 加速跟踪器
+if(WITH_CUDA)
+    find_package(CUDAToolkit REQUIRED)
+    list(APPEND TRACK_SOURCES gpu_kalman_filter.cu)
+endif()
 
 # ============================================================
 # 创建跟踪节点库
@@ -61,5 +68,15 @@ target_link_libraries(ai_stream_track
         opencv_core
         opencv_imgproc
 )
+
+# 【加速优化】CUDA 链接
+if(WITH_CUDA)
+    target_link_libraries(ai_stream_track
+        PRIVATE
+            ${CUDA_CUDART_LIBRARY}
+            cublas
+            cusolver
+    )
+endif()
 
 target_compile_features(ai_stream_track PRIVATE cxx_std_17)

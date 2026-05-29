@@ -1,4 +1,5 @@
 // src/nodes/infer/detection_infer.h
+// 【加速优化】Pinned Memory + CUDA Graph + 双流异步
 #pragma once
 
 #include "ai_stream/nodes/i_infer_node.h"
@@ -37,6 +38,13 @@ public:
     void setDetectorType(DetectorType type) override { detector_type_ = type; }
     DetectorType getDetectorType() const override { return detector_type_; }
 
+    // 【加速优化】INT8 量化支持
+    void setCalibrationData(const std::vector<std::string>& data) { calibration_data_ = data; }
+    void setCalibrationCache(const std::string& path) { calibration_cache_path_ = path; }
+
+    // 【加速优化】CUDA Graph 开关
+    void setCudaGraphEnabled(bool enable) { cuda_graph_enabled_ = enable; }
+
     bool start() override;
     void stop() override;
     bool isRunning() const override { return running_.load(); }
@@ -45,17 +53,26 @@ public:
 private:
     void inferLoop();
     bool initEngine(const std::string& engine_path);
-    
+
     std::vector<std::shared_ptr<core::InferenceResultPacket>> processBatch(
         const std::vector<std::shared_ptr<core::VideoFramePacket>>& frames);
 
-    // 【新增】双路径预处理
+    // 双路径预处理
     void preprocessBatchCpu(const std::vector<cv::Mat*>& images, float* gpu_buffer, int batch_size);
     void preprocessBatchGpu(const std::vector<void*>& d_ptrs, const std::vector<size_t>& pitches,
                             float* gpu_buffer, int batch_size);
 
     std::vector<std::vector<core::InferenceResultPacket::BBox>> postprocessBatch(
         int batch_size, int total_dets, const float scale_x[], const float scale_y[], float conf_thresh);
+
+    // 【加速优化】CUDA Graph 相关
+    bool captureCudaGraph(int batch_size);
+    bool executeCudaGraph();
+    void destroyCudaGraph();
+
+    // 【加速优化】Pinned Memory 管理
+    bool allocatePinnedMemory();
+    void freePinnedMemory();
 
     // TensorRT 资源
     std::unique_ptr<nvinfer1::IRuntime, void(*)(nvinfer1::IRuntime*)> runtime_{
@@ -64,7 +81,10 @@ private:
         nullptr, [](nvinfer1::ICudaEngine* p){ if (p) delete p; }};
     std::unique_ptr<nvinfer1::IExecutionContext, void(*)(nvinfer1::IExecutionContext*)> context_{
         nullptr, [](nvinfer1::IExecutionContext* p){ if (p) delete p; }};
-    cudaStream_t stream_ = nullptr;
+
+    // 【加速优化】双流架构：compute_stream 用于推理，transfer_stream 用于内存传输
+    cudaStream_t compute_stream_ = nullptr;   // 推理计算流
+    cudaStream_t transfer_stream_ = nullptr;  // 数据传输流
 
     // Tensor 名称
     std::string input_name_ = "images";
@@ -82,22 +102,37 @@ private:
     void* d_batch_ids_ = nullptr;
     void* d_num_dets_ = nullptr;
 
-    // 【新增】用于 GPU 路径的临时缓冲区（当需要数据整理时）
+    // 用于 GPU 路径的临时缓冲区
     void* d_preprocess_tmp_ = nullptr;
     size_t d_preprocess_tmp_size_ = 0;
 
-    // CPU 缓冲区
+    // 【加速优化】Pinned Host Memory (page-locked, 2-3x 更快的 H2D/D2H 传输)
+    float* h_pinned_input_ = nullptr;          // pinned input buffer
+    float* h_pinned_boxes_ = nullptr;          // pinned output buffer
+    float* h_pinned_scores_ = nullptr;         // pinned scores buffer
+    int64_t* h_pinned_classes_ = nullptr;      // pinned classes buffer
+    int64_t* h_pinned_batch_ids_ = nullptr;    // pinned batch_ids buffer
+    int64_t* h_pinned_num_dets_ = nullptr;     // pinned num_dets buffer
+
+    // CPU fallback 缓冲区（pinned memory 不可用时）
     std::vector<float> h_boxes_;
     std::vector<float> h_scores_;
     std::vector<int64_t> h_classes_;
     std::vector<int64_t> h_batch_ids_;
     int64_t h_num_dets_ = 0;
 
+    // 【加速优化】CUDA Graph 相关
+    cudaGraph_t cuda_graph_ = nullptr;
+    cudaGraphExec_t cuda_graph_exec_ = nullptr;
+    int cuda_graph_batch_size_ = 0;           // graph 对应的 batch size
+    std::atomic<bool> cuda_graph_enabled_{false};
+    bool cuda_graph_ready_ = false;
+
     // 常量
     static constexpr int INPUT_H = 640;
     static constexpr int INPUT_W = 640;
     static constexpr int MAX_DETS = 20;
-    
+
     size_t input_size_ = 0;
     size_t out_boxes_size_ = 0;
     size_t out_scores_size_ = 0;
@@ -111,10 +146,14 @@ private:
     std::string precision_ = "fp16";
     DetectorType detector_type_ = DetectorType::DETECTION;
 
+    // 【加速优化】INT8 校准数据
+    std::vector<std::string> calibration_data_;
+    std::string calibration_cache_path_;
+
     std::vector<std::string> class_names_ = {
-        "person", "head", "helmet", "clothes_red", "clothes_gray", 
+        "person", "head", "helmet", "clothes_red", "clothes_gray",
         "clothes_yellow", "clothes_blue", "clothes_similar",
-        "clothes_reflective", "phone", "smoking", "fall", 
+        "clothes_reflective", "phone", "smoking", "fall",
         "safety_belt", "sleeping"
     };
 

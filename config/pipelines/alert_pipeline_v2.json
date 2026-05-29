@@ -85,7 +85,7 @@
       },
       {
         "id": "draw1",
-        "type": "osd_draw",
+        "type": "gpu_osd_draw",
         "params": {
           "snapshot": {
             "enabled": true,

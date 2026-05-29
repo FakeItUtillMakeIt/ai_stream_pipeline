@@ -26,12 +26,17 @@ if(WITH_CUDA)
         preprocess/cuda_resize_normalize.cu
         postprocess/gpu_detection_post.cu
         infer/cuda_pose_infer.cu
+        draw/gpu_osd_draw.cu
     )
 endif()
 
 # 推理节点
 if(WITH_TENSORRT)
-    list(APPEND NODES_SOURCES infer/detection_infer.cpp infer/pose_infer.cpp )
+    list(APPEND NODES_SOURCES
+        infer/detection_infer.cpp
+        infer/pose_infer.cpp
+        infer/int8_calibrator.cpp
+    )
 endif()
 
 # 动态库
@@ -62,6 +67,8 @@ if(WITH_CUDA)
             ${CUDA_nppc_LIBRARY}
             ${CUDA_nppig_LIBRARY}
             ${CUDA_nppicc_LIBRARY}
+            # cuBLAS for GPU Kalman filter
+            ${CUDA_cublas_LIBRARY}
             # TensorRT
             nvinfer
             nvonnxparser
