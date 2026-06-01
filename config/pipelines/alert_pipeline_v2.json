@@ -25,7 +25,7 @@
       },
       {
         "id": "preprocess1",
-        "type": "cuda_resize_normalize",
+        "type": "resize_normalize",
         "params": {
           
         }
@@ -46,7 +46,7 @@
       },
       {
         "id": "pose_infer1",
-        "type": "cuda_pose_infer",
+        "type": "pose_infer",
         "params": {
           "detector_type": "yolov8_pose",
           "detector_config": {
@@ -85,7 +85,7 @@
       },
       {
         "id": "draw1",
-        "type": "gpu_osd_draw",
+        "type": "osd_draw",
         "params": {
           "snapshot": {
             "enabled": true,
@@ -127,6 +127,10 @@
       },
       {
         "from": "tracker1",
+        "to": "alert1"
+      },
+      {
+        "from": "alert1",
         "to": "draw1"
       },
       {

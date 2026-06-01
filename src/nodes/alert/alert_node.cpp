@@ -53,8 +53,7 @@ void AlertNode::pushData(std::shared_ptr<core::BasePacket> packet) {
         broadcast(packet);
         return;
     }
-    // 透传所有数据到下游
-    broadcast(packet);
+    
 
     if (!running_) return;
     if (packet->type != core::PacketType::META_DATA) return;
@@ -68,6 +67,9 @@ void AlertNode::pushData(std::shared_ptr<core::BasePacket> packet) {
             LOG_INFO_FMT("[AlertNode] Alert: {}-{}-status({}-{})", e.alert_name, static_cast<int>(e.alert_type),static_cast<int>(e.status),e.description);
         }
     }
+    infer_packet->alert_result = std::move(all_alert_results);
+    // 透传所有数据到下游
+    broadcast(infer_packet);
 }
 
 void AlertNode::addRule(rules::AlertRulePtr rule) {

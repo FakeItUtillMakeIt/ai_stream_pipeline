@@ -132,7 +132,7 @@ void OSDDrawNode::pushData(std::shared_ptr<core::BasePacket> packet) {
                     cv::FONT_HERSHEY_SIMPLEX, 0.5, box_color_, font_thickness_);
         LOG_DEBUG_FMT("[OSDDraw] Label: {}, track_id: {}", label.c_str(), det.track_id);
     }
-
+    addPanel(*draw_mat, infer_result->alert_result);
     LOG_DEBUG_FMT("[OSDDraw] Drawing {} detections", infer_result->detections.size());
 
     // 构造新的视频帧包（包含绘制后的图像）
@@ -169,6 +169,60 @@ void OSDDrawNode::setSnapshotDir(const std::string& dir)
 {
     snapshot_dir_ = dir;
     LOG_INFO_FMT("[OSDDraw] Snapshot directory: {}", dir);
+}
+
+void OSDDrawNode::addPanel(cv::Mat& origin,const std::vector<rules::AlertResult>& alert_results)
+{
+    const int margin = 15;               // 距离左上角边距
+    const int padding = 10;              // 背景板内边距
+    const int line_height = 28;          // 行高
+    const double font_scale = 0.6;       // 字体大小
+    const int font_thickness = 1;        // 字体粗细
+    const cv::Scalar text_color(0, 255, 0);   // 绿色文字 (BGR)
+    const cv::Scalar bg_color(0, 0, 0);       // 黑色背景
+
+    std::vector<std::string> lines;
+    lines.push_back("human behavior:");
+    //报警类别行
+    for (auto& alert_result : alert_results)
+    {
+        lines.push_back(alert_result.rule_name + "(" + std::to_string(alert_result.alert_count) + ")");
+    }
+    if (!lines.empty()) {
+        // 3. 计算背景板尺寸
+        int max_w = 0;
+        for (const auto& line : lines) {
+            int baseline = 0;
+            cv::Size ts = cv::getTextSize(line, cv::FONT_HERSHEY_SIMPLEX, 
+                                            font_scale, font_thickness, &baseline);
+            max_w = std::max(max_w, ts.width);
+        }
+        int bg_w = std::min(max_w + padding * 2, origin.cols - margin * 2);
+        int bg_h = std::min(static_cast<int>(lines.size()) * line_height + padding * 2, 
+                            origin.rows - margin * 2);
+
+        // 4. 绘制半透明背景
+        cv::Rect bg_rect(margin, margin, bg_w, bg_h);
+        cv::Mat overlay;
+        origin.copyTo(overlay);
+        cv::rectangle(overlay, bg_rect, bg_color, -1);
+        cv::addWeighted(overlay, 0.5, origin, 0.5, 0, origin);
+
+        // 5. 绘制文字（带阴影提高可读性）
+        for (size_t i = 0; i < lines.size(); ++i) {
+            int y = margin + padding + static_cast<int>(i + 1) * line_height - 6;
+            cv::Point pos(margin + padding, y);
+
+            // 黑色阴影
+            cv::putText(origin, lines[i], cv::Point(pos.x + 1, pos.y + 1),
+                        cv::FONT_HERSHEY_SIMPLEX, font_scale, 
+                        cv::Scalar(0, 0, 0), font_thickness + 1, cv::LINE_AA);
+            // 主文字
+            cv::putText(origin, lines[i], pos,
+                        cv::FONT_HERSHEY_SIMPLEX, font_scale, 
+                        text_color, font_thickness, cv::LINE_AA);
+        }
+    }
 }
 
 void OSDDrawNode::saveSnapshot(std::shared_ptr<core::VideoFramePacket> frame, int frame_num)

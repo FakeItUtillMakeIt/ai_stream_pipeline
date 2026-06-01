@@ -29,7 +29,7 @@ public:
 
 private:
     void saveSnapshot(std::shared_ptr<core::VideoFramePacket> frame, int frame_num);
-
+    void addPanel(cv::Mat& img,const std::vector<rules::AlertResult>& alert_results);
 private:
     cv::Scalar box_color_{0, 255, 0}; // 默认绿色 BGR
     int font_thickness_ = 2;
