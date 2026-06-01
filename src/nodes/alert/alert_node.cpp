@@ -64,7 +64,7 @@ void AlertNode::pushData(std::shared_ptr<core::BasePacket> packet) {
     for (auto& r : all_alert_results) {
         if (r.alert_events.empty()) continue;
         for (auto& e : r.alert_events) {
-            LOG_INFO_FMT("[AlertNode] Alert: {}-{}-status({}-{})", e.alert_name, static_cast<int>(e.alert_type),static_cast<int>(e.status),e.description);
+            LOG_INFO_FMT("[AlertNode] Alert: {}-{}-status({}-{})", e.alert_name, rules::alertTypeMap[e.alert_type],static_cast<int>(e.status),e.description);
         }
     }
     infer_packet->alert_result = std::move(all_alert_results);
@@ -167,7 +167,7 @@ rules::AlertResult AlertNode::process_single_alert(rules::AlertRulePtr rule,
         alert_result.rule_status = rule->process(packet, alert_result);
         alert_result.process_time_ms = utils::TimeUtil::currentTimeMs() - start_time;
         if(alert_result.rule_status == rules::RuleStatus::RULE_STATUS_OK)
-            LOG_INFO_FMT("Alert {} processed success: {} ms", rule->getName(), alert_result.process_time_ms);
+            LOG_INFO_FMT("Alert type:{} - {} processed success: {} ms", rules::alertTypeMap[rule->getType()] ,rule->getName(), alert_result.process_time_ms);
         else
             LOG_WARN_FMT("Alert {} processed failed, status code: {}", rule->getName(), static_cast<int>(alert_result.rule_status));
     }

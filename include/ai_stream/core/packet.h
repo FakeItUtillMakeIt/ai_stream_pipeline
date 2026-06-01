@@ -119,6 +119,8 @@ namespace rules
         RuleStatus rule_status;
         uint64_t process_time_ms;
         std::string error_message;
+        AlertResult() : stream_id(0), alert_type(AlertType::ALERT_UNKNOWN), alert_count(0), rule_status(RuleStatus::RULE_STATUS_NOT_INITIALIZED),
+            alert_events(){}
     };
 }
 namespace core {

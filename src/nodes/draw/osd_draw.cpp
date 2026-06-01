@@ -171,58 +171,160 @@ void OSDDrawNode::setSnapshotDir(const std::string& dir)
     LOG_INFO_FMT("[OSDDraw] Snapshot directory: {}", dir);
 }
 
-void OSDDrawNode::addPanel(cv::Mat& origin,const std::vector<rules::AlertResult>& alert_results)
+void OSDDrawNode::addPanel(cv::Mat& origin, const std::vector<rules::AlertResult>& alert_results)
 {
-    const int margin = 15;               // 距离左上角边距
-    const int padding = 10;              // 背景板内边距
-    const int line_height = 28;          // 行高
-    const double font_scale = 0.6;       // 字体大小
-    const int font_thickness = 1;        // 字体粗细
-    const cv::Scalar text_color(0, 255, 0);   // 绿色文字 (BGR)
-    const cv::Scalar bg_color(0, 0, 0);       // 黑色背景
+    if (origin.empty()) return;
 
-    std::vector<std::string> lines;
-    lines.push_back("human behavior:");
-    //报警类别行
-    for (auto& alert_result : alert_results)
+    // ============================================================
+    // 1. 按业务类别分组
+    // ============================================================
+    std::vector<rules::AlertEvent> person_behaviors;
+    std::vector<rules::AlertEvent> safety_items;
+    
+    for (const auto& alert : alert_results) {
+       
+        for (const auto& alert_event : alert.alert_events) { 
+            if (alert_event.alert_type == rules::AlertType::ALERT_UNKNOWN) {          // 1=劳保用品
+                safety_items.push_back(alert_event);
+            } else {
+                person_behaviors.push_back(alert_event); // 0=人员行为
+            }
+        }
+    }
+
+    // ============================================================
+    // 2. 分辨率自适应参数（基于 1920*1080 基准）
+    // ============================================================
+    const int BASE_WIDTH = 1920;
+    const int BASE_HEIGHT = 1080;
+    double scale_ratio = std::min(static_cast<double>(origin.cols) / BASE_WIDTH,
+                                  static_cast<double>(origin.rows) / BASE_HEIGHT);
+
+    int margin = static_cast<int>(20 * scale_ratio);
+    int padding = static_cast<int>(10 * scale_ratio);
+    int line_height = static_cast<int>(32 * scale_ratio);
+    double font_scale = 0.6 * scale_ratio;
+    int font_thickness = std::max(1, static_cast<int>(1 * scale_ratio));
+
+    // ============================================================
+    // 3. 计算画布总高度
+    // ============================================================
+    int total_lines = 0;
+    int person_rows = static_cast<int>((person_behaviors.size() + 3 - 1) / 3);
+    int safety_rows = static_cast<int>((safety_items.size() + 2 - 1) / 2);
+    
+    if (!person_behaviors.empty()) total_lines += person_rows + 2; // 标题+间距
+    if (!safety_items.empty())     total_lines += safety_rows + 2;
+    if (total_lines == 0)          total_lines = 2;                // 至少留空标题行
+
+    int panel_width = static_cast<int>(464 * scale_ratio);
+    int panel_height = total_lines * line_height + padding * 2;
+
+    // 限制在画面内
+    panel_width  = std::min(panel_width,  origin.cols - margin * 2);
+    panel_height = std::min(panel_height, origin.rows - margin * 2);
+    
+    cv::Rect panel_rect(margin, margin, panel_width, panel_height);
+    panel_rect &= cv::Rect(0, 0, origin.cols, origin.rows); // 安全裁剪
+    if (panel_rect.width <= 0 || panel_rect.height <= 0) return;
+
+    // ============================================================
+    // 4. 创建灰色画布（参考代码风格）
+    // ============================================================
+    cv::Mat panel(panel_rect.height, panel_rect.width, CV_8UC3, cv::Scalar(200, 200, 200));
+    int content_y = padding;
+
+    // ============================================================
+    // 5. 绘制 Logo（支持 Alpha 透明通道）
+    // ============================================================
+    std::string logo_path = "/home/sevnce/project/ai_stream_pipeline/logo/logo.png";
+    cv::Mat logo = cv::imread(logo_path, cv::IMREAD_UNCHANGED);
+    if (!logo.empty()) {
+        double logo_scale = static_cast<double>(panel_width) / (logo.cols * 2.0);
+        int target_w = static_cast<int>(logo.cols * logo_scale);
+        int target_h = static_cast<int>(logo.rows * logo_scale);
+        cv::Mat resized_logo;
+        cv::resize(logo, resized_logo, cv::Size(target_w, target_h), 0, 0, cv::INTER_LINEAR);
+
+        int logo_x = (panel_width - target_w) / 2;
+        int logo_y = static_cast<int>(5 * scale_ratio);
+        cv::Rect logo_roi(logo_x, logo_y, target_w, target_h);
+        logo_roi &= cv::Rect(0, 0, panel_width, panel_height);
+
+        if (resized_logo.channels() == 4) {
+            std::vector<cv::Mat> channels;
+            cv::split(resized_logo, channels);
+            cv::Mat bgr_logo;
+            cv::merge(std::vector<cv::Mat>{channels[0], channels[1], channels[2]}, bgr_logo);
+            bgr_logo.copyTo(panel(logo_roi), channels[3]); // Alpha 掩码
+        } else {
+            resized_logo.copyTo(panel(logo_roi));
+        }
+        content_y = logo_roi.y + logo_roi.height + static_cast<int>(5 * scale_ratio);
+    }
+
+    // ============================================================
+    // 6. Lambda：绘制单类别区块（标题 + 多列项）
+    // ============================================================
+    auto drawCategory = [&](const std::vector<rules::AlertEvent>& items,
+                            const std::string& title,
+                            int items_per_row,
+                            int x_spacing_factor)
     {
-        lines.push_back(alert_result.rule_name + "(" + std::to_string(alert_result.alert_count) + ")");
-    }
-    if (!lines.empty()) {
-        // 3. 计算背景板尺寸
-        int max_w = 0;
-        for (const auto& line : lines) {
-            int baseline = 0;
-            cv::Size ts = cv::getTextSize(line, cv::FONT_HERSHEY_SIMPLEX, 
-                                            font_scale, font_thickness, &baseline);
-            max_w = std::max(max_w, ts.width);
+        if (items.empty()) return;
+
+        // 标题（红色）
+        cv::Scalar title_color(0, 0, 200);
+        cv::putText(panel, title,
+                    cv::Point(padding, content_y + line_height),
+                    cv::FONT_HERSHEY_SIMPLEX, font_scale * 1.2,
+                    title_color, font_thickness, cv::LINE_AA);
+        content_y += static_cast<int>(line_height * 1.2);
+
+        int item_count = 0;
+        int line_x = padding;
+        int x_spacing = static_cast<int>(padding * x_spacing_factor);
+
+        for (const auto& item : items) {
+            std::string text = item.alert_name;
+            // 告警状态 红色，否则绿色
+            cv::Scalar color = (item.status!=rules::AlertStatus::ALERT_STATUS_DEFAULT) ? cv::Scalar(0, 0, 255)
+                                                      : cv::Scalar(0, 150, 0);
+            LOG_INFO_FMT("alert_name: {}", text);
+            cv::putText(panel, text,
+                        cv::Point(line_x, content_y + line_height),
+                        cv::FONT_HERSHEY_SIMPLEX, font_scale * 0.9,
+                        color, font_thickness, cv::LINE_AA);
+
+            item_count++;
+            line_x += x_spacing;
+
+            // 每行满额换行
+            if (item_count % items_per_row == 0) {
+                content_y += line_height;
+                line_x = padding;
+            }
         }
-        int bg_w = std::min(max_w + padding * 2, origin.cols - margin * 2);
-        int bg_h = std::min(static_cast<int>(lines.size()) * line_height + padding * 2, 
-                            origin.rows - margin * 2);
-
-        // 4. 绘制半透明背景
-        cv::Rect bg_rect(margin, margin, bg_w, bg_h);
-        cv::Mat overlay;
-        origin.copyTo(overlay);
-        cv::rectangle(overlay, bg_rect, bg_color, -1);
-        cv::addWeighted(overlay, 0.5, origin, 0.5, 0, origin);
-
-        // 5. 绘制文字（带阴影提高可读性）
-        for (size_t i = 0; i < lines.size(); ++i) {
-            int y = margin + padding + static_cast<int>(i + 1) * line_height - 6;
-            cv::Point pos(margin + padding, y);
-
-            // 黑色阴影
-            cv::putText(origin, lines[i], cv::Point(pos.x + 1, pos.y + 1),
-                        cv::FONT_HERSHEY_SIMPLEX, font_scale, 
-                        cv::Scalar(0, 0, 0), font_thickness + 1, cv::LINE_AA);
-            // 主文字
-            cv::putText(origin, lines[i], pos,
-                        cv::FONT_HERSHEY_SIMPLEX, font_scale, 
-                        text_color, font_thickness, cv::LINE_AA);
+        if (item_count % items_per_row != 0) {
+            content_y += line_height;
         }
-    }
+        content_y += static_cast<int>(line_height * 0.5); // 类别间留白
+    };
+
+    // ============================================================
+    // 7. 绘制两类告警（人员行为 3列/行，劳保用品 2列/行）
+    // ============================================================
+    LOG_INFO_FMT("person behavior:{},safety item:{}",person_behaviors.size(),safety_items.size());
+    drawCategory(person_behaviors, "human behavior", 3, 8);
+    //drawCategory(safety_items,     "safty item", 2, 12);
+
+    // ============================================================
+    // 8. 半透明叠加到原图（参考代码风格）
+    // ============================================================
+    cv::Mat roi_img = origin(panel_rect);
+    double alpha = 0.8;
+    double beta = 1.0 - alpha;
+    cv::addWeighted(panel, alpha, roi_img, beta, 0, roi_img);
 }
 
 void OSDDrawNode::saveSnapshot(std::shared_ptr<core::VideoFramePacket> frame, int frame_num)
