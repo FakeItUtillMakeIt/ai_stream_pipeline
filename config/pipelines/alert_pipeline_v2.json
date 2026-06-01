@@ -90,7 +90,9 @@
           "snapshot": {
             "enabled": true,
             "interval": 100,
-            "dir": "./draw_snapshot1/"
+            "dir": "./draw_snapshot1/",
+            "font_file": "/home/sevnce/project/ai_stream_pipeline/resources/ai.ttf",
+            "logo_file": "/home/sevnce/project/ai_stream_pipeline/resources/logo.png"
           }
         }
       },

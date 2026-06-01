@@ -66,6 +66,45 @@ namespace rules
         {AlertType::FIGHTING, "fighting"}
     };
 
+    inline std::map<AlertType, std::string> alertTypeChMap = {
+        {AlertType::ALERT_UNKNOWN, "未知告警"},
+        {AlertType::PERSON_INTRUSION, "人员入侵"},
+        {AlertType::MISSING_HELMET, "未戴安全帽"},
+        {AlertType::MISSING_WORK_CLOTHES, "未穿工作服"},
+        {AlertType::PHONE_CALL, "打电话"},
+        {AlertType::SMOKING, "吸烟"},
+        {AlertType::FALL_DOWN, "跌倒"},
+        {AlertType::MISSING_SAFETY_BELT, "未戴安全带"},
+        {AlertType::HUMAN_GATHERING, "人员聚集"},
+        {AlertType::ABSENCE, "离岗"},
+        {AlertType::SLEEPING_ON_DUTY, "睡岗"},
+        {AlertType::CLAMBING, "攀爬"},
+        {AlertType::FIGHTING, "打架"}
+    };
+
+    enum class AlertItemType : uint8_t
+    {
+        ITEM_UNKNOWN = 0,
+        ITEM_PERSON_BEHAVIOR = 1,
+        ITEM_SAFETY_ITEM = 2,
+    };
+
+    inline std::map<AlertType, AlertItemType> alertItemTypeMap = {
+        {AlertType::ALERT_UNKNOWN, AlertItemType::ITEM_UNKNOWN},
+        {AlertType::PERSON_INTRUSION, AlertItemType::ITEM_PERSON_BEHAVIOR},
+        {AlertType::MISSING_HELMET, AlertItemType::ITEM_SAFETY_ITEM},
+        {AlertType::MISSING_WORK_CLOTHES, AlertItemType::ITEM_SAFETY_ITEM},
+        {AlertType::PHONE_CALL, AlertItemType::ITEM_PERSON_BEHAVIOR},
+        {AlertType::SMOKING, AlertItemType::ITEM_PERSON_BEHAVIOR},
+        {AlertType::FALL_DOWN, AlertItemType::ITEM_PERSON_BEHAVIOR},
+        {AlertType::MISSING_SAFETY_BELT, AlertItemType::ITEM_SAFETY_ITEM},
+        {AlertType::HUMAN_GATHERING, AlertItemType::ITEM_PERSON_BEHAVIOR},
+        {AlertType::ABSENCE, AlertItemType::ITEM_PERSON_BEHAVIOR},
+        {AlertType::SLEEPING_ON_DUTY, AlertItemType::ITEM_PERSON_BEHAVIOR},
+        {AlertType::CLAMBING, AlertItemType::ITEM_PERSON_BEHAVIOR},
+        {AlertType::FIGHTING, AlertItemType::ITEM_PERSON_BEHAVIOR}
+    };
+
     enum class AlertStatus : uint8_t
     {
         ALERT_STATUS_OCCUR = 0,

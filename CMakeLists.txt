@@ -179,6 +179,7 @@ target_link_libraries(ai_stream_nodes
         opencv_core
         opencv_imgproc
         opencv_videoio
+        opencv_freetype
         ${FFMPEG_LIBRARIES}
 )
 

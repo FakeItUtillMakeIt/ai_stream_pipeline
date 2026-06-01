@@ -235,6 +235,15 @@ namespace ai_stream
                                 {
                                     draw_node->setSnapshotDir(snapshot_cfg["dir"].get<std::string>());
                                 }
+                                if (snapshot_cfg.contains("font_file"))
+                                {
+                                    draw_node->setFontFile(snapshot_cfg["font_file"].get<std::string>());
+                                }
+                                if (snapshot_cfg.contains("logo_file"))
+                                {
+                                    draw_node->setLogoFile(snapshot_cfg["logo_file"].get<std::string>());
+                                }
+
                             }
                         }
 

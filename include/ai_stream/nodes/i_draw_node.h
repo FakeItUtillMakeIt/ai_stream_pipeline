@@ -4,6 +4,7 @@
 #include "ai_stream/core/node.h"
 #include <string>
 #include <vector>
+#include <opencv2/freetype.hpp>
 
 namespace ai_stream {
 namespace nodes {
@@ -53,6 +54,20 @@ public:
      *  @param packet 待处理的数据包
      */
     virtual void setSnapshotDir(const std::string& dir) = 0;
+
+    virtual void setFontFile(const std::string& font_path)
+    {
+        font_file_ = font_path;
+    }
+
+    virtual void setLogoFile(const std::string& logo_path)
+    {
+        logo_file_ = logo_path;
+    }
+    public:
+        std::string logo_file_;
+        std::string font_file_;
+        cv::Ptr<cv::freetype::FreeType2> m_ft2;
 };
 
 } // namespace nodes

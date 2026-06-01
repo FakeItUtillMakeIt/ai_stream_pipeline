@@ -3,6 +3,7 @@
 
 #include "ai_stream/nodes/i_draw_node.h"
 #include <opencv2/core/mat.hpp>
+#include <opencv2/freetype.hpp>
 
 namespace ai_stream {
 namespace nodes {
@@ -26,6 +27,8 @@ public:
     void setSnapshotEnabled(bool enabled) override;
     void setSnapshotInterval(int interval) override;
     void setSnapshotDir(const std::string& dir) override;
+    void setFontFile(const std::string& font_path) override;
+    void setLogoFile(const std::string& logo_path) override;
 
 private:
     void saveSnapshot(std::shared_ptr<core::VideoFramePacket> frame, int frame_num);
@@ -41,6 +44,7 @@ private:
     std::string snapshot_dir_ = "./snapshots";
     int snapshot_count_ = 0;
     int frame_count_ = 0;
+    
 };
 
 } // namespace nodes

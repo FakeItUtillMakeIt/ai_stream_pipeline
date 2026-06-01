@@ -543,6 +543,16 @@ void GpuOSDDrawNode::setSnapshotDir(const std::string& dir) {
     LOG_INFO_FMT("[GpuOSDDraw] Snapshot directory: {}", dir);
 }
 
+void GpuOSDDrawNode::setFontFile(const std::string& font_path) {
+    font_file_ = font_path;
+    LOG_INFO_FMT("[GpuOSDDraw] Font file set: {}", font_path);
+}
+
+void GpuOSDDrawNode::setLogoFile(const std::string& logo_path) {
+    logo_file_ = logo_path;
+    LOG_INFO_FMT("[GpuOSDDraw] Logo file set: {}", logo_path);
+}
+
 void GpuOSDDrawNode::saveSnapshot(std::shared_ptr<core::VideoFramePacket> frame, int frame_num) {
     if (!frame || !frame->mat || frame->mat->empty()) return;
     try {
