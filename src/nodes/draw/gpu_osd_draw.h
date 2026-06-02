@@ -54,7 +54,7 @@ private:
     cudaEvent_t stop_event_;
 
     cv::Scalar box_color_{0, 255, 0}; // 默认绿色 BGR
-    int font_thickness_ = 2;
+    int font_thickness_ = 1;
     bool show_confidence_ = true;
     std::vector<int> class_filter_;
 

@@ -97,7 +97,7 @@ void OSDDrawNode::pushData(std::shared_ptr<core::BasePacket> packet) {
                 {
                     cv::Point p1(static_cast<int>(kp1.x), static_cast<int>(kp1.y));
                     cv::Point p2(static_cast<int>(kp2.x), static_cast<int>(kp2.y));
-                    cv::line(*draw_mat, p1, p2, cv::Scalar(255, 128, 0), 2, cv::LINE_AA);
+                    cv::line(*draw_mat, p1, p2, cv::Scalar(255, 128, 0), 1, cv::LINE_AA);
                 }
             }
 
