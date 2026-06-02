@@ -27,12 +27,10 @@ public:
     void setSnapshotEnabled(bool enabled) override;
     void setSnapshotInterval(int interval) override;
     void setSnapshotDir(const std::string& dir) override;
-    void setFontFile(const std::string& font_path) override;
-    void setLogoFile(const std::string& logo_path) override;
 
 private:
     void saveSnapshot(std::shared_ptr<core::VideoFramePacket> frame, int frame_num);
-    void addPanel(cv::Mat& img,const std::vector<rules::AlertResult>& alert_results);
+
 private:
     cv::Scalar box_color_{0, 255, 0}; // 默认绿色 BGR
     int font_thickness_ = 2;

@@ -35,8 +35,6 @@ public:
     void setSnapshotEnabled(bool enabled) override;
     void setSnapshotInterval(int interval) override;
     void setSnapshotDir(const std::string& dir) override;
-    void setFontFile(const std::string& font_path) override;
-    void setLogoFile(const std::string& logo_path) override;
 
     // GPU 特定配置
     void setGpuDeviceId(int device_id) { device_id_ = device_id; }

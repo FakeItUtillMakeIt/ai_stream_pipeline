@@ -249,6 +249,7 @@ GpuOSDDrawNode::GpuOSDDrawNode() : IDrawNode("GpuOSDDraw") {
 
     cudaEventCreate(&start_event_);
     cudaEventCreate(&stop_event_);
+    m_ft2_ = cv::freetype::createFreeType2();
 }
 
 GpuOSDDrawNode::~GpuOSDDrawNode() {
@@ -378,6 +379,7 @@ void GpuOSDDrawNode::pushData(std::shared_ptr<core::BasePacket> packet) {
                                     d_output, source_frame->d_bgr_pitch,
                                     source_frame->d_bgr_width * 3, source_frame->d_bgr_height,
                                     cudaMemcpyDeviceToHost));
+            addPanel(cpu_mat, infer_result->alert_result); // 在快照上添加面板信息
             auto snapshot_frame = std::make_shared<core::VideoFramePacket>();
             snapshot_frame->mat = std::make_shared<cv::Mat>(cpu_mat.clone());
             snapshot_frame->stream_id = infer_result->stream_id;
@@ -543,15 +545,6 @@ void GpuOSDDrawNode::setSnapshotDir(const std::string& dir) {
     LOG_INFO_FMT("[GpuOSDDraw] Snapshot directory: {}", dir);
 }
 
-void GpuOSDDrawNode::setFontFile(const std::string& font_path) {
-    font_file_ = font_path;
-    LOG_INFO_FMT("[GpuOSDDraw] Font file set: {}", font_path);
-}
-
-void GpuOSDDrawNode::setLogoFile(const std::string& logo_path) {
-    logo_file_ = logo_path;
-    LOG_INFO_FMT("[GpuOSDDraw] Logo file set: {}", logo_path);
-}
 
 void GpuOSDDrawNode::saveSnapshot(std::shared_ptr<core::VideoFramePacket> frame, int frame_num) {
     if (!frame || !frame->mat || frame->mat->empty()) return;
