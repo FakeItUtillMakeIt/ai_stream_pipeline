@@ -223,7 +223,7 @@ void OSDDrawNode::addPanel(cv::Mat& origin, const std::vector<rules::AlertResult
     int padding = static_cast<int>(10 * scale_ratio);
     int line_height = static_cast<int>(32 * scale_ratio);
     double font_scale = 1.2 * scale_ratio;
-    int font_thickness = std::max(1, static_cast<int>(1.5 * scale_ratio));
+    int font_thickness = std::max(1, static_cast<int>(1 * scale_ratio));
 
     // ============================================================
     // 3. 计算画布尺寸（含 Logo 区域）
@@ -257,7 +257,7 @@ void OSDDrawNode::addPanel(cv::Mat& origin, const std::vector<rules::AlertResult
     int panel_height = total_lines * line_height + padding * 2;
     panel_height = std::min(panel_height, origin.rows - margin * 2);
     
-    cv::Rect panel_rect(margin, margin, panel_width, panel_height);
+    cv::Rect panel_rect(0, 0, panel_width, panel_height);
     panel_rect &= cv::Rect(0, 0, origin.cols, origin.rows);
     if (panel_rect.width <= 0 || panel_rect.height <= 0) return;
 
@@ -313,11 +313,12 @@ void OSDDrawNode::addPanel(cv::Mat& origin, const std::vector<rules::AlertResult
             bool has_cn = false;
             for (unsigned char c : text) { if (c > 127) { has_cn = true; break; } }
             if (has_cn) {
-                m_ft2->putText(img, text, pos, static_cast<int>(scale * 20), color, thickness, cv::LINE_AA, true);
+                int ft_height = static_cast<int>(scale * 20);
+                m_ft2->putText(img, text, pos, ft_height, color, -1, cv::LINE_AA, true);
                 return;
             }
         }
-        cv::putText(img, text, pos, cv::FONT_HERSHEY_SIMPLEX, scale, color, thickness, cv::LINE_AA);
+        cv::putText(img, text, pos, cv::FONT_HERSHEY_SIMPLEX, scale, color, 2, cv::LINE_AA);
     };
 
     // ============================================================
@@ -330,10 +331,10 @@ void OSDDrawNode::addPanel(cv::Mat& origin, const std::vector<rules::AlertResult
     {
         if (items.empty()) return;
 
-        // 标题（红色）
-        cv::Scalar title_color(0, 0, 200);
+        // 标题（蓝色）
+        cv::Scalar title_color(200, 0, 0);
         putTextEx(panel, title, cv::Point(padding, content_y + line_height),
-                  font_scale * 1.2, title_color, font_thickness);
+                  font_scale * 1.5, title_color, font_thickness);
         content_y += static_cast<int>(line_height * 1.2);
 
         int item_count = 0;
@@ -354,7 +355,7 @@ void OSDDrawNode::addPanel(cv::Mat& origin, const std::vector<rules::AlertResult
             LOG_INFO_FMT("[OSDDraw] Panel item: {}", text);
 
             putTextEx(panel, text, cv::Point(padding, content_y + line_height),
-                      font_scale * 1, color, font_thickness);
+                      font_scale * 1.2, color, font_thickness);
 
             item_count++;
             line_x += x_spacing;
