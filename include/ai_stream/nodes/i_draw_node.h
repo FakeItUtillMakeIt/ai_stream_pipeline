@@ -225,7 +225,7 @@ public:
 
             int item_count = 0;
             int line_x = padding;
-            int x_spacing = static_cast<int>(padding * x_spacing_factor);
+            int x_spacing = static_cast<int>(padding * x_spacing_factor)* 2.1;
 
             for (const auto& item : items) {
                 std::string text = rules::alertTypeChMap.at(item.alert_type);
@@ -240,7 +240,7 @@ public:
 
                 //LOG_INFO_FMT("[OSDDraw] Panel item: {}", text);
 
-                putTextEx(panel, text, cv::Point(padding, content_y + line_height),
+                putTextEx(panel, text, cv::Point(line_x, content_y + line_height),
                         font_scale * 1.2, color, font_thickness);
 
                 item_count++;
