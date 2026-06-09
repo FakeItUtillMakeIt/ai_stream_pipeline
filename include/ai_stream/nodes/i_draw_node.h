@@ -228,12 +228,14 @@ public:
             int x_spacing = static_cast<int>(padding * x_spacing_factor)* 2.1;
 
             for (const auto& item : items) {
-                std::string text = rules::alertTypeChMap.at(item.alert_type);
-                // 防御：如果名称为空，用 alert_type 兜底
-                if (text.empty()) {
-                    text = "Alert_" + rules::alertTypeChMap.at(item.alert_type);
+                std::string text;
+                if (rules::alertTypeChMap.find(item.alert_type) != rules::alertTypeChMap.end()) {
+                    text = rules::alertTypeChMap.at(item.alert_type);
+                } else {
+                    LOG_INFO_FMT("[OSDDraw] Unknown alert type: {}", static_cast<int>(item.alert_type));
+                    text = "Alert_" + std::to_string(static_cast<int>(item.alert_type));
                 }
-
+                
                 // 告警状态非默认时红色，否则绿色
                 cv::Scalar color = (item.status != rules::AlertStatus::ALERT_STATUS_DEFAULT)
                                 ? cv::Scalar(0, 0, 255) : cv::Scalar(0, 150, 0);

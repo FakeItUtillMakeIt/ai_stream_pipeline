@@ -11,6 +11,7 @@ project(ai_stream_pipeline
 # ------------------------------------------------------------------------------
 # 1. 选项配置
 # ------------------------------------------------------------------------------
+set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build, options are: Debug Release MinSizeRel RelWithDebInfo.")
 option(BUILD_HTTP_SERVER "Build HTTP API server executable" ON)
 option(BUILD_TESTS       "Build unit and integration tests" OFF)
 option(BUILD_EXAMPLES    "Build example applications" ON)

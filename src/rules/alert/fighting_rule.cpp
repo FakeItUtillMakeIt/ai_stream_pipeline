@@ -118,6 +118,8 @@ namespace ai_stream
                 if (it->second.non_update_count == max_disappear_count_)
                 {
                     it->second.status = AlertStatus::ALERT_STATUS_END;
+                    it->second.alert_name = getName();
+                    it->second.alert_type = getType();
                 }
                 it->second.description = getName() + alert_status_map[it->second.status];
                 it++;
@@ -189,6 +191,6 @@ namespace ai_stream
             return RuleStatus::RULE_STATUS_OK;
         }
 
-        REGISTER_ALERT_RULE("human_gathering", FightingRule)
+        REGISTER_ALERT_RULE("fighting", FightingRule)
     }
 }
