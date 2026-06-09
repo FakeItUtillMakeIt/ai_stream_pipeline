@@ -31,6 +31,7 @@ AlertNode::~AlertNode() {
 }
 
 bool AlertNode::start() {
+    std::lock_guard<std::mutex> lock(mutex_);
     running_ = true;
     if (!snapshot_dir_.empty()) {
         std::filesystem::create_directories(snapshot_dir_);
@@ -41,7 +42,10 @@ bool AlertNode::start() {
 
 void AlertNode::stop() {
     running_ = false;
-    for (auto& r : rules_) r->reset();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& r : rules_) r->reset();
+    }
     LOG_INFO("[AlertNode] Stopped");
 }
 
@@ -60,7 +64,6 @@ void AlertNode::pushData(std::shared_ptr<core::BasePacket> packet) {
 
     auto infer_packet = std::dynamic_pointer_cast<core::InferenceResultPacket>(packet);
     auto all_alert_results =process_all_alerts_parallel(infer_packet);
-    // 打印报警结果
     for (auto& r : all_alert_results) {
         if (r.alert_events.empty()) continue;
         for (auto& e : r.alert_events) {
@@ -68,11 +71,11 @@ void AlertNode::pushData(std::shared_ptr<core::BasePacket> packet) {
         }
     }
     infer_packet->alert_result = std::move(all_alert_results);
-    // 透传所有数据到下游
     broadcast(infer_packet);
 }
 
 void AlertNode::addRule(rules::AlertRulePtr rule) {
+    std::lock_guard<std::mutex> lock(mutex_);
     rules_.push_back(std::move(rule));
     LOG_INFO_FMT("[AlertNode] Added rule: {} ({})", rules_.back()->getName(), rules_.back()->getName());
 }
@@ -88,25 +91,31 @@ void AlertNode::setSnapshotDir(const std::string& dir) {
 
 std::vector<rules::AlertResult> AlertNode::process_all_alerts_parallel(std::shared_ptr<core::InferenceResultPacket> packet)
 {
-    
     std::vector<rules::AlertResult> all_alert_results;
-    all_alert_results.reserve(rules_.size());
-    // 申请线程数
-    std::vector<std::future<rules::AlertResult>> futures;
-    futures.reserve(rules_.size());
-    //提交所有规则
-    size_t task_count =0;
-    for (auto& rule : rules_)
+    
+    std::vector<rules::AlertRulePtr> rules_snapshot;
     {
-        auto future = std::async(std::launch::async, [this, &rule, packet]() {
-            return process_single_alert(rule, packet);
+        std::lock_guard<std::mutex> lock(mutex_);
+        rules_snapshot = rules_;
+    }
+    
+    all_alert_results.reserve(rules_snapshot.size());
+    std::vector<std::future<rules::AlertResult>> futures;
+    futures.reserve(rules_snapshot.size());
+    
+    size_t task_count =0;
+    for (auto& rule : rules_snapshot)
+    {
+        auto rule_copy = rule;
+        auto future = std::async(std::launch::async, [this, rule_copy, packet]() {
+            return process_single_alert(rule_copy, packet);
         });
         futures.push_back(std::move(future));
         task_count++;
     }
     
     LOG_INFO_FMT("[AlertNode] Submitted {} tasks to future", task_count);
-    //等待并收集所有结果
+    
     size_t task_done = 0;
     for (auto& future : futures) { 
         try
@@ -117,7 +126,6 @@ std::vector<rules::AlertResult> AlertNode::process_all_alerts_parallel(std::shar
         catch(const std::exception& e)
         {
             LOG_ERROR_FMT("[AlertNode] Failed to process alert task: {}", e.what());
-            //添加失败的结果
             rules::AlertResult failed_result;
             failed_result.rule_name = "Unknown";
             failed_result.rule_status = rules::RuleStatus::RULE_STATUS_FAIL;
@@ -136,22 +144,20 @@ std::vector<rules::AlertResult> AlertNode::process_all_alerts_sequence(std::shar
     auto infer = std::dynamic_pointer_cast<core::InferenceResultPacket>(packet);
     if (!infer) return {};
 
-    int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
-
     std::vector<rules::AlertResult> all_alert_results;
-    // 串行处理所有规则
-    for (auto& rule : rules_) {
-        rules::AlertResult alert_result = process_single_alert(rule, packet);
-        if (!alert_result.alert_events.empty()) {
-            handleEvents(alert_result.alert_events);
-            for (const auto& e : alert_result.alert_events) {
-                if (e.status == rules::AlertStatus::ALERT_STATUS_OCCUR) {
-                    saveSnapshot(infer, e);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& rule : rules_) {
+            rules::AlertResult alert_result = process_single_alert(rule, packet);
+            if (!alert_result.alert_events.empty()) {
+                for (const auto& e : alert_result.alert_events) {
+                    if (e.status == rules::AlertStatus::ALERT_STATUS_OCCUR) {
+                        saveSnapshot(infer, e);
+                    }
                 }
             }
+            all_alert_results.push_back(alert_result);
         }
-        all_alert_results.push_back(alert_result);
     }
     return all_alert_results;
 }
@@ -226,6 +232,7 @@ void AlertNode::saveSnapshot(std::shared_ptr<core::InferenceResultPacket> packet
 }
 
 nlohmann::json AlertNode::getStatistics() const {
+    std::lock_guard<std::mutex> lock(mutex_);
     nlohmann::json stats;
     for (const auto& r : rules_) {
         stats[r->getName()] = r->getStatistics();

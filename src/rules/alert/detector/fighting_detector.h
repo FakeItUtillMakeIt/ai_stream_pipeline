@@ -12,6 +12,7 @@
 #include <cmath>
 #include <algorithm>
 #include <memory>
+#include <mutex>
 #include <unordered_set>
 
 using namespace ai_stream;
@@ -100,6 +101,7 @@ private:
     std::unordered_map<int, TrackState> tracks_;
     std::unordered_map<int, int> fighting_tracks_;
     std::deque<bool> fight_history_;
+    mutable std::mutex mutex_;
     static constexpr int MAX_HISTORY = 30;
 
     // 核心检测函数

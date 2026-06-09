@@ -12,6 +12,7 @@ FightingDetector::FightingDetector(const Config& cfg) : cfg_(cfg) {
 
 // ========== 重置 ==========
 void FightingDetector::reset() {
+    std::lock_guard<std::mutex> lock(mutex_);
     tracks_.clear();
     fighting_tracks_.clear();
     fight_history_.clear();
@@ -20,7 +21,9 @@ void FightingDetector::reset() {
 // ========== 主处理函数 ==========
 FightingResult FightingDetector::process(
     const std::vector<core::InferenceResultPacket::BBox>& detections) {
-
+    
+    std::lock_guard<std::mutex> lock(mutex_);
+    
     FightingResult result;
 
     // 收集活跃track_id
@@ -618,8 +621,8 @@ float FightingDetector::calculateSpeed(const std::deque<cv::Point2f>& history, i
     if (history.size() < static_cast<size_t>(offset + recent_n)) return 0.0f;
     
     size_t end = history.size() - offset;
+    if (end <= static_cast<size_t>(recent_n)) return 0.0f;
     size_t start = end - recent_n;
-    if (start < 0) start = 0;
 
     float total_dist = 0.0f;
     for (size_t i = start + 1; i < end; ++i) {
