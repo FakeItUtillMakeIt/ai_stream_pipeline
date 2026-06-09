@@ -180,9 +180,6 @@ FightingResult FightingDetector::process(
     // 关键：打架需要至少两人参与
     bool is_fighting = (fighting_person_count >= cfg_.min_involved_persons);
 
-    LOG_INFO_FMT("Fighting person count: {}, fight score: {:.2f},individual scores: {}", 
-                 fighting_person_count, result.fight_score, individual_scores.size());
-
     // 收集所有事件
     for (const auto& [tid, evts] : individual_events) {
         result.events.insert(result.events.end(), evts.begin(), evts.end());
@@ -196,7 +193,8 @@ FightingResult FightingDetector::process(
     }
 
     result.is_fighting = is_fighting;
-
+    LOG_INFO_FMT("Fighting person count: {}, fight score: {:.2f},individual scores: {},is fighting: {}", 
+                 fighting_person_count, result.fight_score, individual_scores.size(),is_fighting);
     // 历史平滑
     fight_history_.push_back(is_fighting);
     if (fight_history_.size() > MAX_HISTORY) fight_history_.pop_front();
@@ -204,7 +202,6 @@ FightingResult FightingDetector::process(
     // 清理不活跃
     cleanupInactive(active_ids);
 
-    LOG_INFO_FMT("Fighting detection result: is_fighting={}", is_fighting);
     return result;
 }
 
