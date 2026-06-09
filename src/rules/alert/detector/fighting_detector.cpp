@@ -20,7 +20,7 @@ void FightingDetector::reset() {
 // ========== 主处理函数 ==========
 FightingResult FightingDetector::process(
     const std::vector<core::InferenceResultPacket::BBox>& detections) {
-    
+
     FightingResult result;
 
     // 收集活跃track_id
@@ -39,7 +39,7 @@ FightingResult FightingDetector::process(
         return result;
     }
 
-    // === 修改：为每个人独立计算 score ===
+    // === 为每个人独立计算 score ===
     std::unordered_map<int, float> individual_scores;
     std::unordered_map<int, std::vector<FightingEvent>> individual_events;
 
@@ -50,7 +50,7 @@ FightingResult FightingDetector::process(
 
         auto& state = tracks_[det.track_id];
         state.last_bbox = cv::Rect2f(det.x, det.y, det.w, det.h);
-        
+
         // 更新中心点历史
         cv::Point2f center(det.x + det.w/2, det.y + det.h/2);
         state.center_history.push_back(center);
@@ -68,7 +68,8 @@ FightingResult FightingDetector::process(
             evt.confidence = punch_conf;
             individual_events[det.track_id].push_back(evt);
             individual_scores[det.track_id] += punch_conf * 0.5f;
-            LOG_INFO_FMT("Track {} punch detected with confidence {:.2f} score:{:.2f}", det.track_id, punch_conf, individual_scores[det.track_id]);
+            LOG_INFO_FMT("Track {} punch detected with confidence {:.2f} score:{:.2f}", 
+                         det.track_id, punch_conf, individual_scores[det.track_id]);
         }
 
         // Fall检测
@@ -79,8 +80,9 @@ FightingResult FightingDetector::process(
             evt.track_id = det.track_id;
             evt.confidence = 0.8f;
             individual_events[det.track_id].push_back(evt);
-            individual_scores[det.track_id] += 0.4f;
-            LOG_INFO_FMT("Track {} fall detected with confidence {:.2f} score:{:.2f}", det.track_id, evt.confidence, individual_scores[det.track_id]);
+            individual_scores[det.track_id] += 0.4f;  // 提高 fall 权重
+            LOG_INFO_FMT("Track {} fall detected with confidence {:.2f} score:{:.2f}", 
+                         det.track_id, evt.confidence, individual_scores[det.track_id]);
         }
     }
 
@@ -89,8 +91,9 @@ FightingResult FightingDetector::process(
     for (auto& inter : interactions) {
         for (int tid : inter.involved_track_ids) {
             individual_events[tid].push_back(inter);
-            individual_scores[tid] += inter.confidence * 0.4f;
-            LOG_INFO_FMT("Track {} interaction detected with confidence {:.2f} score:{:.2f}", tid, inter.confidence, individual_scores[tid]);
+            individual_scores[tid] += inter.confidence * 0.4f;  // 提高 interaction 权重
+            LOG_INFO_FMT("Track {} interaction detected with confidence {:.2f} score:{:.2f}", 
+                         tid, inter.confidence, individual_scores[tid]);
         }
     }
 
@@ -173,15 +176,18 @@ FightingResult FightingDetector::process(
         }
         total_score += individual_scores[tid];
     }
-    LOG_INFO_FMT("Fighting person count: {}, fight score: {:.2f},individual scores: {}", fighting_person_count, total_score, individual_scores.size());
+
     // 关键：打架需要至少两人参与
     bool is_fighting = (fighting_person_count >= cfg_.min_involved_persons);
+
+    LOG_INFO_FMT("Fighting person count: {}, fight score: {:.2f},individual scores: {}", 
+                 fighting_person_count, result.fight_score, individual_scores.size());
 
     // 收集所有事件
     for (const auto& [tid, evts] : individual_events) {
         result.events.insert(result.events.end(), evts.begin(), evts.end());
     }
-    
+
     // 全局分数
     if (!individual_scores.empty()) {
         result.fight_score = std::min(1.0f, total_score / individual_scores.size());
@@ -189,7 +195,6 @@ FightingResult FightingDetector::process(
         result.fight_score = 0.0f;
     }
 
-    LOG_INFO_FMT("Fighting detection result: is_fighting={}", is_fighting);
     result.is_fighting = is_fighting;
 
     // 历史平滑
@@ -199,16 +204,17 @@ FightingResult FightingDetector::process(
     // 清理不活跃
     cleanupInactive(active_ids);
 
+    LOG_INFO_FMT("Fighting detection result: is_fighting={}", is_fighting);
     return result;
 }
 
-// ========== Punch检测（增强版）==========
+// ========== Punch检测 ==========
 bool FightingDetector::detectPunch(
     const core::InferenceResultPacket::BBox& det, 
     TrackState& state, 
     float& out_confidence,
     const std::vector<core::InferenceResultPacket::BBox>& all_dets) {
-    
+
     const auto& kpts = det.keypoints;
 
     const auto& lw = kpts[Config::LEFT_WRIST];
@@ -237,15 +243,15 @@ bool FightingDetector::detectPunch(
     float min_target_dist = std::numeric_limits<float>::max();
     cv::Point2f target_dir;
     bool has_target = false;
-    
+
     for (const auto& other : all_dets) {
         if (other.track_id == det.track_id || other.track_id < 0) continue;
         if (!other.has_keypoints) continue;
-        
+
         float dx = (other.x + other.w/2) - (det.x + det.w/2);
         float dy = (other.y + other.h/2) - (det.y + det.h/2);
         float dist = std::sqrt(dx*dx + dy*dy);
-        
+
         // 目标需在合理范围内（3倍自身宽度）
         if (dist < min_target_dist && dist < det.w * 3.0f && dist > det.w * 0.5f) {
             min_target_dist = dist;
@@ -273,26 +279,24 @@ bool FightingDetector::detectPunch(
             float arm_ext = calculateArmExtension(ls, le, lw);
             if (arm_ext < cfg_.punch_min_arm_extension) {
                 LOG_DEBUG_FMT("Track {} left arm extension {:.2f} too low", det.track_id, arm_ext);
-                out_confidence = 0.0f;
-                // 继续检查右手，不直接返回
             } else {
                 float conf = 0.0f;
-                
+
                 if (speed > cfg_.punch_speed_threshold) {
                     conf = std::min(1.0f, speed / (cfg_.punch_speed_threshold * 2.0f));
-                    
+
                     // 角度变化小（直线运动）增加置信度
                     if (angle < 45.0f) {
                         conf = std::min(1.0f, conf * 1.2f);
                     }
-                    
+
                     // === 方向一致性检查 ===
                     if (has_target) {
                         cv::Point2f wrist_dir(lw.x - ls.x, lw.y - ls.y);
                         float wrist_angle = std::atan2(wrist_dir.y, wrist_dir.x) * 180.0f / CV_PI;
                         float target_angle = std::atan2(target_dir.y, target_dir.x) * 180.0f / CV_PI;
                         float angle_diff = std::abs(normalizeAngle(wrist_angle - target_angle));
-                        
+
                         if (angle_diff > cfg_.punch_max_angle_diff) {
                             conf *= 0.3f;  // 方向偏差大，大幅降低置信度
                             LOG_DEBUG_FMT("Track {} left wrist angle diff {:.1f} too large", 
@@ -302,7 +306,7 @@ bool FightingDetector::detectPunch(
                                           / cfg_.punch_max_angle_diff * 0.5f);
                         }
                     }
-                    
+
                     // === 速度突变检测（收拳特征）===
                     if (state.left_wrist_history.size() >= 5) {
                         float recent_speed = calculateSpeed(state.left_wrist_history, 3, 0);
@@ -340,19 +344,19 @@ bool FightingDetector::detectPunch(
                 LOG_DEBUG_FMT("Track {} right arm extension {:.2f} too low", det.track_id, arm_ext);
             } else {
                 float conf = 0.0f;
-                
+
                 if (speed > cfg_.punch_speed_threshold) {
                     conf = std::min(1.0f, speed / (cfg_.punch_speed_threshold * 2.0f));
                     if (angle < 45.0f) {
                         conf = std::min(1.0f, conf * 1.2f);
                     }
-                    
+
                     if (has_target) {
                         cv::Point2f wrist_dir(rw.x - rs.x, rw.y - rs.y);
                         float wrist_angle = std::atan2(wrist_dir.y, wrist_dir.x) * 180.0f / CV_PI;
                         float target_angle = std::atan2(target_dir.y, target_dir.x) * 180.0f / CV_PI;
                         float angle_diff = std::abs(normalizeAngle(wrist_angle - target_angle));
-                        
+
                         if (angle_diff > cfg_.punch_max_angle_diff) {
                             conf *= 0.3f;
                         } else {
@@ -360,7 +364,7 @@ bool FightingDetector::detectPunch(
                                           / cfg_.punch_max_angle_diff * 0.5f);
                         }
                     }
-                    
+
                     if (state.right_wrist_history.size() >= 5) {
                         float recent_speed = calculateSpeed(state.right_wrist_history, 3, 0);
                         float older_speed = calculateSpeed(state.right_wrist_history, 3, 2);
@@ -385,13 +389,13 @@ bool FightingDetector::detectPunch(
         && state.right_wrist_history.size() >= 3) {
         float left_speed = calculateSpeed(state.left_wrist_history);
         float right_speed = calculateSpeed(state.right_wrist_history);
-        
+
         if (left_speed > cfg_.punch_speed_threshold && right_speed > cfg_.punch_speed_threshold) {
             best_conf *= 0.5f;  // 双手同时高速，大幅降低置信度
             if (best_conf < 0.5f) {
                 is_punch = false;
             }
-            LOG_INFO_FMT("Track {} both hands high speed, reduce confidence,score: {:.2f}", det.track_id, best_conf);
+            LOG_INFO_FMT("Track {} both hands high speed, reduce confidence", det.track_id);
         }
     }
 
@@ -409,16 +413,16 @@ bool FightingDetector::detectPunch(
 bool FightingDetector::detectFall(
     const core::InferenceResultPacket::BBox& det, 
     TrackState& state) {
-    
+
     if (!det.has_keypoints) return false;
-    
+
     const auto& kpts = det.keypoints;
     bool is_fall = false;
 
     // === 方法1：基于关键点的高度分析 ===
     float head_y = -1, ankle_y = -1;
     bool has_head = false, has_ankle = false;
-    
+
     // 取头部最高点（最小的y值，因为y轴向下）
     for (int idx : {Config::NOSE, Config::LEFT_EYE, Config::RIGHT_EYE, 
                     Config::LEFT_EAR, Config::RIGHT_EAR}) {
@@ -429,7 +433,7 @@ bool FightingDetector::detectFall(
             }
         }
     }
-    
+
     // 取脚踝最低点（最大的y值）
     for (int idx : {Config::LEFT_ANKLE, Config::RIGHT_ANKLE}) {
         if (isKeypointValid(kpts[idx])) {
@@ -454,21 +458,21 @@ bool FightingDetector::detectFall(
         const auto& rs = kpts[Config::RIGHT_SHOULDER];
         const auto& lh = kpts[Config::LEFT_HIP];
         const auto& rh = kpts[Config::RIGHT_HIP];
-        
+
         if (isKeypointValid(ls) && isKeypointValid(rs) && 
             isKeypointValid(lh) && isKeypointValid(rh)) {
-            
+
             float shoulder_y = (ls.y + rs.y) / 2.0f;
             float hip_y = (lh.y + rh.y) / 2.0f;
             float shoulder_x = (ls.x + rs.x) / 2.0f;
             float hip_x = (lh.x + rh.x) / 2.0f;
-            
+
             float dx = std::abs(hip_x - shoulder_x);
             float dy = std::abs(hip_y - shoulder_y);
-            
+
             if (dx > 1.0f) {  // 避免除零
                 float body_angle = std::atan2(dy, dx) * 180.0f / CV_PI;
-                
+
                 // 身体接近水平（角度小）且臀部不低于肩部太多（不是弯腰）
                 if (body_angle < cfg_.fall_torso_angle_threshold && 
                     hip_y < shoulder_y + det.h * 0.3f) {
@@ -496,7 +500,7 @@ bool FightingDetector::detectFall(
     }
 }
 
-// ========== Interaction检测（增强版）==========
+// ========== Interaction检测 ==========
 std::vector<FightingEvent> FightingDetector::detectInteractions(
     const std::vector<core::InferenceResultPacket::BBox>& detections) {
 
@@ -514,13 +518,13 @@ std::vector<FightingEvent> FightingDetector::detectInteractions(
             float center_dx = (d2.x + d2.w/2) - (d1.x + d1.w/2);
             float center_dy = (d2.y + d2.h/2) - (d1.y + d1.h/2);
             float center_dist = std::sqrt(center_dx*center_dx + center_dy*center_dy);
-            
+
             if (center_dist > cfg_.interaction_distance_threshold * 2.0f) continue;
 
             // 相对运动分析
             auto& s1 = tracks_[d1.track_id];
             auto& s2 = tracks_[d2.track_id];
-            
+
             cv::Point2f v1 = calculateVelocity(s1);
             cv::Point2f v2 = calculateVelocity(s2);
             cv::Point2f relative_v(v2.x - v1.x, v2.y - v1.y);
@@ -532,7 +536,7 @@ std::vector<FightingEvent> FightingDetector::detectInteractions(
             if (conn_len > 0) {
                 connection = cv::Point2f(center_dx/conn_len, center_dy/conn_len);
             }
-            
+
             // 相向运动检测
             float dot_product = relative_v.x * connection.x + relative_v.y * connection.y;
             bool approaching = dot_product < cfg_.interaction_approach_dot_threshold;
@@ -561,7 +565,7 @@ std::vector<FightingEvent> FightingDetector::detectInteractions(
                 {Config::LEFT_WRIST, Config::RIGHT_WRIST},
                 {Config::RIGHT_WRIST, Config::LEFT_WRIST}
             };
-            
+
             for (auto& pair : wrist_pairs) {
                 if (isKeypointValid(k1[pair[0]]) && isKeypointValid(k2[pair[1]])) {
                     float d = euclideanDistance(k1[pair[0]], k2[pair[1]]);
@@ -580,7 +584,7 @@ std::vector<FightingEvent> FightingDetector::detectInteractions(
             // 判定条件
             bool has_contact = (min_dist < effective_threshold);
             bool has_approach = approaching && relative_speed > cfg_.interaction_min_relative_speed;
-            
+
             if (has_contact && (has_approach || facing)) {
                 FightingEvent evt;
                 evt.type = "interaction";
@@ -599,7 +603,6 @@ std::vector<FightingEvent> FightingDetector::detectInteractions(
     return events;
 }
 
-// ========== 辅助函数 ==========
 
 float FightingDetector::calculateSpeed(const std::deque<cv::Point2f>& history) {
     if (history.size() < 2) return 0.0f;
@@ -620,14 +623,14 @@ float FightingDetector::calculateSpeed(const std::deque<cv::Point2f>& history, i
     size_t end = history.size() - offset;
     size_t start = end - recent_n;
     if (start < 0) start = 0;
-    
+
     float total_dist = 0.0f;
     for (size_t i = start + 1; i < end; ++i) {
         float dx = history[i].x - history[i-1].x;
         float dy = history[i].y - history[i-1].y;
         total_dist += std::sqrt(dx*dx + dy*dy);
     }
-    
+
     size_t count = end - start - 1;
     return count > 0 ? total_dist / static_cast<float>(count) : 0.0f;
 }
@@ -658,14 +661,14 @@ float FightingDetector::calculateAngleChange(const std::deque<cv::Point2f>& hist
 float FightingDetector::euclideanDistance(
     const core::InferenceResultPacket::KeyPoint& a, 
     const core::InferenceResultPacket::KeyPoint& b) {
-    
+
     float dx = a.x - b.x;
     float dy = a.y - b.y;
     return std::sqrt(dx*dx + dy*dy);
 }
 
 bool FightingDetector::isKeypointValid(const core::InferenceResultPacket::KeyPoint& kp) {
-    return kp.visible && kp.confidence > 0.3f;  // 提高置信度阈值
+    return kp.visible && kp.confidence > 0.3f;
 }
 
 // ========== 新增辅助函数 ==========
@@ -674,13 +677,13 @@ float FightingDetector::calculateArmExtension(
     const core::InferenceResultPacket::KeyPoint& shoulder,
     const core::InferenceResultPacket::KeyPoint& elbow,
     const core::InferenceResultPacket::KeyPoint& wrist) {
-    
+
     float upper_arm = euclideanDistance(shoulder, elbow);
     float forearm = euclideanDistance(elbow, wrist);
     float full_arm = euclideanDistance(shoulder, wrist);
-    
+
     if (upper_arm + forearm < 1.0f) return 0.0f;
-    
+
     // 伸展度 = 实际肩-腕距离 / (上臂+前臂) 理论最大距离
     return full_arm / (upper_arm + forearm);
 }
@@ -692,53 +695,49 @@ float FightingDetector::calculateTorsoAngle(
     const auto& rs = kpts[Config::RIGHT_SHOULDER];
     const auto& lh = kpts[Config::LEFT_HIP];
     const auto& rh = kpts[Config::RIGHT_HIP];
-    
+
     if (!isKeypointValid(ls) || !isKeypointValid(rs) || 
         !isKeypointValid(lh) || !isKeypointValid(rh)) {
         return 0.0f;
     }
-    
+
     float shoulder_x = (ls.x + rs.x) / 2.0f;
     float shoulder_y = (ls.y + rs.y) / 2.0f;
     float hip_x = (lh.x + rh.x) / 2.0f;
     float hip_y = (lh.y + rh.y) / 2.0f;
-    
+
     return std::atan2(hip_y - shoulder_y, hip_x - shoulder_x) * 180.0f / CV_PI;
 }
 
 cv::Point2f FightingDetector::calculateVelocity(const TrackState& state) {
     if (state.center_history.size() < 2) return cv::Point2f(0, 0);
-    
+
     const auto& p1 = state.center_history[state.center_history.size() - 2];
     const auto& p2 = state.center_history[state.center_history.size() - 1];
-    
+
     return cv::Point2f(p2.x - p1.x, p2.y - p1.y);
 }
 
 bool FightingDetector::checkFacingEachOther(
     const core::InferenceResultPacket::BBox& d1,
     const core::InferenceResultPacket::BBox& d2) {
-    
+
     if (!d1.has_keypoints || !d2.has_keypoints) return false;
-    
+
     const auto& k1 = d1.keypoints;
     const auto& k2 = d2.keypoints;
-    
-    // 使用鼻子和耳朵判断朝向
+
     bool d1_has_nose = isKeypointValid(k1[Config::NOSE]);
     bool d2_has_nose = isKeypointValid(k2[Config::NOSE]);
-    
+
     if (!d1_has_nose || !d2_has_nose) return false;
-    
-    // 简化的面对面判断：两人的鼻子在对方的bbox范围内
-    // 更精确的做法是用肩-鼻向量判断朝向
+
     float c1x = d1.x + d1.w/2;
     float c2x = d2.x + d2.w/2;
-    
-    // 如果d1在d2左边，d1应该面向右（鼻子x > 中心x），d2应该面向左
+
     bool d1_facing_right = k1[Config::NOSE].x > c1x;
     bool d2_facing_left = k2[Config::NOSE].x < c2x;
-    
+
     if (c1x < c2x) {
         return d1_facing_right && d2_facing_left;
     } else {
@@ -754,7 +753,7 @@ float FightingDetector::normalizeAngle(float angle) {
 
 int FightingDetector::countFalls(
     const std::vector<core::InferenceResultPacket::BBox>& detections) {
-    
+
     int count = 0;
     for (const auto& det : detections) {
         if (det.track_id < 0) continue;
