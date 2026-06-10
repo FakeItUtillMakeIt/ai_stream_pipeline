@@ -66,7 +66,7 @@ public:
         float fps = 30.0f;                         // 帧率，用于速度归一化
 
         // Punch检测
-        float punch_speed_threshold = 80.0f;        // 挥拳速度阈值 (pixels/frame)
+        float punch_speed_threshold = 30.0f;        // 挥拳速度阈值 (pixels/frame)
         float punch_min_arm_extension = 0.4f;
         float punch_max_angle_diff = 45.0f;
         float punch_min_speed_drop_ratio = 0.7f;
@@ -82,7 +82,7 @@ public:
         float fall_torso_angle_threshold = 30.0f;
 
         // Interaction检测
-        float interaction_distance_threshold = 60.0f;
+        float interaction_distance_threshold = 120.0f;
         float interaction_near_multiplier = 1.2f;
         float interaction_far_multiplier = 0.6f;
         float interaction_min_relative_speed = 30.0f;
@@ -91,7 +91,7 @@ public:
         // 状态机参数
         int suspicious_enter_threshold = 3;     // 进入SUSPICIOUS所需连续帧数
         int suspicious_exit_threshold = 5;        // 退出SUSPICIOUS所需连续正常帧数
-        int conflict_enter_threshold = 5;         // 进入CONFLICT所需连续帧数
+        int conflict_enter_threshold = 3;         // 进入CONFLICT所需连续帧数
         int conflict_exit_threshold = 3;          // 退出CONFLICT所需连续正常帧数
         int cooldown_frames = 30;                 // 冷却帧数
 

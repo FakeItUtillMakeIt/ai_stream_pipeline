@@ -523,8 +523,11 @@ bool FightingDetector::detectPunch(
 
     // 姿态预筛选：躯干角度
     float torso_angle = calculateTorsoAngle(kpts);
-    if (std::abs(torso_angle) > cfg_.punch_torso_angle_max) {
-        out_confidence = 0.0f;
+    LOG_INFO_FMT("Track {} torso_angle={:.1f}",det.track_id,torso_angle);
+    // 与垂直方向比较
+    float deviation = std::abs(std::abs(torso_angle) - 90.0f);
+
+    if (deviation > cfg_.punch_torso_angle_max) {
         return false;
     }
 
@@ -843,43 +846,45 @@ std::vector<FightingEvent> FightingDetector::detectInteractions(
 
             const auto& k1 = d1.keypoints;
             const auto& k2 = d2.keypoints;
-            float min_wrist_dist = std::numeric_limits<float>::max();
-            float min_head_dist = std::numeric_limits<float>::max();
-            bool has_wrist_contact = false;
-            bool has_head_contact = false;
+            float min_dist = std::numeric_limits<float>::max();
+            std::vector<std::string> contacts;
 
-            // 只检测交叉手腕对（异侧手腕），忽略同侧对
-            // 同侧手腕在两人靠近走动时天然接近，容易产生误报
-            const int cross_wrist_pairs[2][2] = {
+            // 手腕距离（含同侧和异侧，提升检测灵敏度）
+            const int wrist_pairs[4][2] = {
+                {Config::LEFT_WRIST, Config::LEFT_WRIST},
+                {Config::RIGHT_WRIST, Config::RIGHT_WRIST},
                 {Config::LEFT_WRIST, Config::RIGHT_WRIST},
                 {Config::RIGHT_WRIST, Config::LEFT_WRIST}
             };
 
-float wrist_threshold = effective_threshold * 0.85f;
-            float head_threshold = effective_threshold * 0.7f;
-            for (auto& pair : cross_wrist_pairs) {
+            for (auto& pair : wrist_pairs) {
                 if (isKeypointValid(k1[pair[0]]) && isKeypointValid(k2[pair[1]])) {
                     float d = euclideanDistance(k1[pair[0]], k2[pair[1]]);
-                    if (d < min_wrist_dist) min_wrist_dist = d;
-                    if (d < wrist_threshold) has_wrist_contact = true;
+                    if (d < min_dist) min_dist = d;
+                    if (d < effective_threshold) contacts.push_back("wrist");
                 }
             }
 
+            // 头部距离
             if (isKeypointValid(k1[Config::NOSE]) && isKeypointValid(k2[Config::NOSE])) {
                 float d = euclideanDistance(k1[Config::NOSE], k2[Config::NOSE]);
-                min_head_dist = d;
-                if (d < head_threshold) has_head_contact = true;
+                if (d < min_dist) min_dist = d;
+                if (d < effective_threshold) contacts.push_back("head");
             }
 
-            bool has_contact = has_wrist_contact || has_head_contact;
+            LOG_INFO_FMT("Interaction min_dist={:.1f}, threshold={:.1f}",min_dist,effective_threshold);
+            // 判定条件
+            bool has_contact = (min_dist < effective_threshold);
             bool has_approach = approaching && relative_speed > cfg_.interaction_min_relative_speed;
 
             if (has_contact && (has_approach || facing)) {
                 FightingEvent evt;
                 evt.type = "interaction";
                 evt.involved_track_ids = {d1.track_id, d2.track_id};
-                evt.contact_parts = has_wrist_contact ? "wrist" : "head";
-                evt.confidence = 0.5f + (has_approach ? 0.3f : 0.0f) + (facing ? 0.2f : 0.0f);
+                evt.contact_parts = contacts.empty() ? "near" : contacts[0];
+                evt.confidence = (has_contact ? 0.5f : 0.0f) + 
+                                (has_approach ? 0.3f : 0.0f) + 
+                                (facing ? 0.2f : 0.0f);
                 evt.timestamp_ms = frame_counter_;
                 LOG_INFO_FMT("Interaction detected between track {} and {}, contact: {}, approach: {}, facing: {}, conf: {:.2f}", 
                              d1.track_id, d2.track_id, evt.contact_parts, has_approach, facing, evt.confidence);
