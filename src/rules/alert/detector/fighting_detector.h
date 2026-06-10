@@ -37,12 +37,19 @@ struct FightingResult {
 class FightingDetector {
 public:
     struct Config {
-        // Punch检测
+        // 基础参数
         int history_frames = 10;
-        float punch_speed_threshold = 120.0f;
-        float punch_min_arm_extension = 0.4f;   // 手臂伸展度最小比例
-        float punch_max_angle_diff = 45.0f;     // 与目标方向最大偏差
-        float punch_min_speed_drop_ratio = 0.7f; // 收拳速度下降比例
+        float fps = 30.0f;                         // 帧率，用于速度归一化
+        
+        // Punch检测
+        float punch_speed_threshold = 3600.0f;      // 挥拳速度阈值 (pixels/sec, 120px/frame × 30fps)
+        float punch_min_arm_extension = 0.4f;       // 手臂伸展度最小比例
+        float punch_max_angle_diff = 45.0f;         // 与目标方向最大偏差
+        float punch_min_speed_drop_ratio = 0.7f;    // 收拳速度下降比例
+        float punch_torso_angle_max = 60.0f;        // 挥拳躯干角度上限
+        float punch_straight_angle_max = 45.0f;     // 直线运动角度上限
+        float punch_target_dist_max = 3.0f;         // 目标距离上限 (×det.w)
+        float punch_target_dist_min = 0.5f;         // 目标距离下限 (×det.w)
         
         // Fall检测
         float fall_aspect_ratio_threshold = 2.0f;
@@ -52,7 +59,8 @@ public:
         
         // Interaction检测
         float interaction_distance_threshold = 60.0f;
-        float interaction_near_multiplier = 1.2f;
+        float interaction_near_multiplier = 1.2f;  // approaching+facing 距离放大
+        float interaction_far_multiplier = 0.6f;   // 无交互时距离缩小
         float interaction_min_relative_speed = 30.0f;
         float interaction_approach_dot_threshold = -0.3f; // 相向运动点积阈值
         
@@ -114,8 +122,8 @@ private:
         const std::vector<core::InferenceResultPacket::BBox>& detections);
 
     // 辅助函数
-    static float calculateSpeed(const std::deque<cv::Point2f>& history);
-    static float calculateSpeed(const std::deque<cv::Point2f>& history, int recent_n, int offset);
+    float calculateSpeed(const std::deque<cv::Point2f>& history);
+    float calculateSpeed(const std::deque<cv::Point2f>& history, int recent_n, int offset);
     static float calculateAngleChange(const std::deque<cv::Point2f>& history);
     static float euclideanDistance(const core::InferenceResultPacket::KeyPoint& a, 
                                    const core::InferenceResultPacket::KeyPoint& b);

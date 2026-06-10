@@ -4,6 +4,7 @@
 #include "fighting_detector.h"
 #include <iostream>
 #include <unordered_set>
+#include <set>
 
 // ========== 构造函数 ==========
 FightingDetector::FightingDetector(const Config& cfg) : cfg_(cfg) {
@@ -83,7 +84,8 @@ FightingResult FightingDetector::process(
             evt.track_id = det.track_id;
             evt.confidence = 0.8f;
             individual_events[det.track_id].push_back(evt);
-            individual_scores[det.track_id] += 0.4f;  // 提高 fall 权重
+            // fall score 使用 max 而非累加，避免多帧持续fall导致分数无限增长
+            individual_scores[det.track_id] = std::max(individual_scores[det.track_id], 0.4f);
             LOG_INFO_FMT("Track {} fall detected with confidence {:.2f} score:{:.2f}", 
                          det.track_id, evt.confidence, individual_scores[det.track_id]);
         }
@@ -183,9 +185,21 @@ FightingResult FightingDetector::process(
     // 关键：打架需要至少两人参与
     bool is_fighting = (fighting_person_count >= cfg_.min_involved_persons);
 
-    // 收集所有事件
+    // 收集所有事件（interaction按参与人对去重）
+    std::set<std::pair<int, int>> seen_interactions;
     for (const auto& [tid, evts] : individual_events) {
-        result.events.insert(result.events.end(), evts.begin(), evts.end());
+        for (const auto& evt : evts) {
+            if (evt.type == "interaction" && evt.involved_track_ids.size() >= 2) {
+                int a = evt.involved_track_ids[0];
+                int b = evt.involved_track_ids[1];
+                if (a > b) std::swap(a, b);
+                if (seen_interactions.insert({a, b}).second) {
+                    result.events.push_back(evt);
+                }
+            } else {
+                result.events.push_back(evt);
+            }
+        }
     }
 
     // 全局分数
@@ -234,7 +248,7 @@ bool FightingDetector::detectPunch(
 
     // === 姿态预筛选：躯干角度 ===
     float torso_angle = calculateTorsoAngle(kpts);
-    if (std::abs(torso_angle) > 60.0f) {
+    if (std::abs(torso_angle) > cfg_.punch_torso_angle_max) {
         out_confidence = 0.0f;
         return false;
     }
@@ -252,8 +266,7 @@ bool FightingDetector::detectPunch(
         float dy = (other.y + other.h/2) - (det.y + det.h/2);
         float dist = std::sqrt(dx*dx + dy*dy);
 
-        // 目标需在合理范围内（3倍自身宽度）
-        if (dist < min_target_dist && dist < det.w * 3.0f && dist > det.w * 0.5f) {
+        if (dist < min_target_dist && dist < det.w * cfg_.punch_target_dist_max && dist > det.w * cfg_.punch_target_dist_min) {
             min_target_dist = dist;
             target_dir = cv::Point2f(dx, dy);
             has_target = true;
@@ -286,24 +299,29 @@ bool FightingDetector::detectPunch(
                     conf = std::min(1.0f, speed / (cfg_.punch_speed_threshold * 2.0f));
 
                     // 角度变化小（直线运动）增加置信度
-                    if (angle < 45.0f) {
+                    if (angle < cfg_.punch_straight_angle_max) {
                         conf = std::min(1.0f, conf * 1.2f);
                     }
 
-                    // === 方向一致性检查 ===
-                    if (has_target) {
-                        cv::Point2f wrist_dir(lw.x - ls.x, lw.y - ls.y);
-                        float wrist_angle = std::atan2(wrist_dir.y, wrist_dir.x) * 180.0f / CV_PI;
-                        float target_angle = std::atan2(target_dir.y, target_dir.x) * 180.0f / CV_PI;
-                        float angle_diff = std::abs(normalizeAngle(wrist_angle - target_angle));
+                    // === 方向一致性检查（使用手腕运动速度方向）===
+                    if (has_target && state.left_wrist_history.size() >= 2) {
+                        const auto& prev = state.left_wrist_history[state.left_wrist_history.size() - 2];
+                        const auto& back = state.left_wrist_history.back();
+                        float vx = back.x - prev.x;
+                        float vy = back.y - prev.y;
+                        if (std::abs(vx) > 1.0f || std::abs(vy) > 1.0f) {
+                            float wrist_angle = std::atan2(vy, vx) * 180.0f / CV_PI;
+                            float target_angle = std::atan2(target_dir.y, target_dir.x) * 180.0f / CV_PI;
+                            float angle_diff = std::abs(normalizeAngle(wrist_angle - target_angle));
 
-                        if (angle_diff > cfg_.punch_max_angle_diff) {
-                            conf *= 0.3f;  // 方向偏差大，大幅降低置信度
-                            LOG_DEBUG_FMT("Track {} left wrist angle diff {:.1f} too large", 
-                                         det.track_id, angle_diff);
-                        } else {
-                            conf *= (1.0f + (cfg_.punch_max_angle_diff - angle_diff) 
-                                          / cfg_.punch_max_angle_diff * 0.5f);
+                            if (angle_diff > cfg_.punch_max_angle_diff) {
+                                conf *= 0.3f;
+                                LOG_DEBUG_FMT("Track {} left wrist angle diff {:.1f} too large", 
+                                             det.track_id, angle_diff);
+                            } else {
+                                conf *= (1.0f + (cfg_.punch_max_angle_diff - angle_diff) 
+                                              / cfg_.punch_max_angle_diff * 0.5f);
+                            }
                         }
                     }
 
@@ -347,21 +365,26 @@ bool FightingDetector::detectPunch(
 
                 if (speed > cfg_.punch_speed_threshold) {
                     conf = std::min(1.0f, speed / (cfg_.punch_speed_threshold * 2.0f));
-                    if (angle < 45.0f) {
+                    if (angle < cfg_.punch_straight_angle_max) {
                         conf = std::min(1.0f, conf * 1.2f);
                     }
 
-                    if (has_target) {
-                        cv::Point2f wrist_dir(rw.x - rs.x, rw.y - rs.y);
-                        float wrist_angle = std::atan2(wrist_dir.y, wrist_dir.x) * 180.0f / CV_PI;
-                        float target_angle = std::atan2(target_dir.y, target_dir.x) * 180.0f / CV_PI;
-                        float angle_diff = std::abs(normalizeAngle(wrist_angle - target_angle));
+                    if (has_target && state.right_wrist_history.size() >= 2) {
+                        const auto& prev = state.right_wrist_history[state.right_wrist_history.size() - 2];
+                        const auto& back = state.right_wrist_history.back();
+                        float vx = back.x - prev.x;
+                        float vy = back.y - prev.y;
+                        if (std::abs(vx) > 1.0f || std::abs(vy) > 1.0f) {
+                            float wrist_angle = std::atan2(vy, vx) * 180.0f / CV_PI;
+                            float target_angle = std::atan2(target_dir.y, target_dir.x) * 180.0f / CV_PI;
+                            float angle_diff = std::abs(normalizeAngle(wrist_angle - target_angle));
 
-                        if (angle_diff > cfg_.punch_max_angle_diff) {
-                            conf *= 0.3f;
-                        } else {
-                            conf *= (1.0f + (cfg_.punch_max_angle_diff - angle_diff) 
-                                          / cfg_.punch_max_angle_diff * 0.5f);
+                            if (angle_diff > cfg_.punch_max_angle_diff) {
+                                conf *= 0.3f;
+                            } else {
+                                conf *= (1.0f + (cfg_.punch_max_angle_diff - angle_diff) 
+                                              / cfg_.punch_max_angle_diff * 0.5f);
+                            }
                         }
                     }
 
@@ -447,7 +470,7 @@ bool FightingDetector::detectFall(
     // 关键点身体高度远小于检测框高度 → 身体横躺
     if (has_head && has_ankle) {
         float body_height = ankle_y - head_y;
-        if (body_height < det.h * cfg_.fall_body_height_ratio) {
+        if (body_height > 0 && body_height < det.h * cfg_.fall_body_height_ratio) {
             is_fall = true;
         }
     }
@@ -547,9 +570,9 @@ std::vector<FightingEvent> FightingDetector::detectInteractions(
             // 动态距离阈值
             float effective_threshold = cfg_.interaction_distance_threshold;
             if (approaching && facing) {
-                effective_threshold *= 1.2f;
+                effective_threshold *= cfg_.interaction_near_multiplier;
             } else if (!approaching && !facing) {
-                effective_threshold *= 0.6f;
+                effective_threshold *= cfg_.interaction_far_multiplier;
             }
 
             // 关键点接触检测
@@ -614,9 +637,8 @@ float FightingDetector::calculateSpeed(const std::deque<cv::Point2f>& history) {
         total_dist += std::sqrt(dx*dx + dy*dy);
     }
 
-    return total_dist / static_cast<float>(history.size() - 1);
+return total_dist * cfg_.fps / static_cast<float>(history.size() - 1);
 }
-
 float FightingDetector::calculateSpeed(const std::deque<cv::Point2f>& history, int recent_n, int offset) {
     if (history.size() < static_cast<size_t>(offset + recent_n)) return 0.0f;
     
@@ -631,8 +653,8 @@ float FightingDetector::calculateSpeed(const std::deque<cv::Point2f>& history, i
         total_dist += std::sqrt(dx*dx + dy*dy);
     }
 
-    size_t count = end - start - 1;
-    return count > 0 ? total_dist / static_cast<float>(count) : 0.0f;
+size_t count = end - start - 1;
+    return count > 0 ? total_dist * cfg_.fps / static_cast<float>(count) : 0.0f;
 }
 
 float FightingDetector::calculateAngleChange(const std::deque<cv::Point2f>& history) {
@@ -727,27 +749,29 @@ bool FightingDetector::checkFacingEachOther(
     const auto& k1 = d1.keypoints;
     const auto& k2 = d2.keypoints;
 
-    bool d1_has_nose = isKeypointValid(k1[Config::NOSE]);
-    bool d2_has_nose = isKeypointValid(k2[Config::NOSE]);
+    if (!isKeypointValid(k1[Config::NOSE]) || !isKeypointValid(k2[Config::NOSE])) return false;
 
-    if (!d1_has_nose || !d2_has_nose) return false;
+    float c1x = d1.x + d1.w/2, c1y = d1.y + d1.h/2;
+    float c2x = d2.x + d2.w/2, c2y = d2.y + d2.h/2;
 
-    float c1x = d1.x + d1.w/2;
-    float c2x = d2.x + d2.w/2;
+    float nose_off1_x = k1[Config::NOSE].x - c1x;
+    float nose_off1_y = k1[Config::NOSE].y - c1y;
+    float nose_off2_x = k2[Config::NOSE].x - c2x;
+    float nose_off2_y = k2[Config::NOSE].y - c2y;
 
-    bool d1_facing_right = k1[Config::NOSE].x > c1x;
-    bool d2_facing_left = k2[Config::NOSE].x < c2x;
+    float conn_x = c2x - c1x;
+    float conn_y = c2y - c1y;
 
-    if (c1x < c2x) {
-        return d1_facing_right && d2_facing_left;
-    } else {
-        return !d1_facing_right && !d2_facing_left;
-    }
+    float dot1 = nose_off1_x * conn_x + nose_off1_y * conn_y;
+    float dot2 = nose_off2_x * (-conn_x) + nose_off2_y * (-conn_y);
+
+    return dot1 > 0 && dot2 > 0;
 }
 
 float FightingDetector::normalizeAngle(float angle) {
-    while (angle > 180.0f) angle -= 360.0f;
-    while (angle < -180.0f) angle += 360.0f;
+    angle = std::fmod(angle, 360.0f);
+    if (angle > 180.0f) angle -= 360.0f;
+    else if (angle < -180.0f) angle += 360.0f;
     return angle;
 }
 
