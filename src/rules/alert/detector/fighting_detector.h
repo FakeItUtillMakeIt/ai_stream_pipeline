@@ -66,7 +66,7 @@ public:
         float fps = 30.0f;                         // 帧率，用于速度归一化
 
         // Punch检测
-        float punch_speed_threshold = 3600.0f;      // 挥拳速度阈值 (pixels/sec)
+        float punch_speed_threshold = 80.0f;        // 挥拳速度阈值 (pixels/frame)
         float punch_min_arm_extension = 0.4f;
         float punch_max_angle_diff = 45.0f;
         float punch_min_speed_drop_ratio = 0.7f;
@@ -78,7 +78,7 @@ public:
         // Fall检测
         float fall_aspect_ratio_threshold = 2.0f;
         int fall_min_frames = 3;
-        float fall_body_height_ratio = 0.5f;
+        float fall_body_height_ratio = 0.35f;
         float fall_torso_angle_threshold = 30.0f;
 
         // Interaction检测
@@ -89,9 +89,9 @@ public:
         float interaction_approach_dot_threshold = -0.3f;
 
         // 状态机参数
-        int suspicious_enter_threshold = 2;     // 进入SUSPICIOUS所需连续帧数
+        int suspicious_enter_threshold = 3;     // 进入SUSPICIOUS所需连续帧数
         int suspicious_exit_threshold = 5;        // 退出SUSPICIOUS所需连续正常帧数
-        int conflict_enter_threshold = 2;         // 进入CONFLICT所需连续帧数
+        int conflict_enter_threshold = 5;         // 进入CONFLICT所需连续帧数
         int conflict_exit_threshold = 3;          // 退出CONFLICT所需连续正常帧数
         int cooldown_frames = 30;                 // 冷却帧数
 
@@ -196,7 +196,7 @@ private:
         const FrameAnalysis& analysis,
         const std::vector<int>& active_ids);
 
-    // ========== 检测函数（行为层，与最新版本一致）==========
+    // ========== 检测函数==========
 
     bool detectPunch(const core::InferenceResultPacket::BBox& det, 
                      TrackState& state, 
@@ -208,10 +208,10 @@ private:
     std::vector<FightingEvent> detectInteractions(
         const std::vector<core::InferenceResultPacket::BBox>& detections);
 
-    // ========== 辅助函数（与最新版本一致）==========
+    // ========== 辅助函数==========
 
-    float calculateSpeed(const std::deque<cv::Point2f>& history);
-    float calculateSpeed(const std::deque<cv::Point2f>& history, int recent_n, int offset);
+    static float calculateSpeed(const std::deque<cv::Point2f>& history);
+    static float calculateSpeed(const std::deque<cv::Point2f>& history, int recent_n, int offset);
     static float calculateAngleChange(const std::deque<cv::Point2f>& history);
     static float euclideanDistance(const core::InferenceResultPacket::KeyPoint& a, 
                                    const core::InferenceResultPacket::KeyPoint& b);
