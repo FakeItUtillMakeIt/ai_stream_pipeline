@@ -6,25 +6,223 @@
 #include <unordered_set>
 #include <set>
 
-// ========== 构造函数 ==========
-FightingDetector::FightingDetector(const Config& cfg) : cfg_(cfg) {
+// ========== StateMachine实现 ==========
+
+void FightingDetector::StateMachine::reset() {
+    current_state = FightingState::IDLE;
+    previous_state = FightingState::IDLE;
+    state_duration = 0;
+    total_fighting_frames = 0;
+    suspicious_count = 0;
+    normal_count = 0;
+    conflict_count = 0;
+    cooldown_count = 0;
+}
+
+std::string FightingDetector::StateMachine::getStateString() const {
+    switch (current_state) {
+        case FightingState::IDLE:       return "IDLE";
+        case FightingState::SUSPICIOUS: return "SUSPICIOUS";
+        case FightingState::CONFLICT:   return "CONFLICT";
+        case FightingState::COOLDOWN:     return "COOLDOWN";
+        default: return "UNKNOWN";
+    }
+}
+
+void FightingDetector::StateMachine::update(StateTransitionEvent event, const Config& cfg) {
+    previous_state = current_state;
+    state_duration++;
+
+    switch (current_state) {
+        case FightingState::IDLE: {
+            if (event == StateTransitionEvent::INDIVIDUAL_SUSPICIOUS) {
+                suspicious_count++;
+                normal_count = 0;
+                if (suspicious_count >= cfg.suspicious_enter_threshold) {
+                    current_state = FightingState::SUSPICIOUS;
+                    state_duration = 0;
+                    suspicious_count = 0;
+                    LOG_INFO("State transition: IDLE -> SUSPICIOUS");
+                }
+            } else {
+                suspicious_count = std::max(0, suspicious_count - 1);
+                normal_count++;
+            }
+            break;
+        }
+
+        case FightingState::SUSPICIOUS: {
+            if (event == StateTransitionEvent::CONFIRMED_FIGHTING) {
+                conflict_count++;
+                normal_count = 0;
+                if (conflict_count >= cfg.conflict_enter_threshold) {
+                    current_state = FightingState::CONFLICT;
+                    state_duration = 0;
+                    conflict_count = 0;
+                    LOG_INFO("State transition: SUSPICIOUS -> CONFLICT");
+                }
+            } else if (event == StateTransitionEvent::MULTI_PERSON_SUSPICIOUS) {
+                // 多人可疑加速进入冲突状态
+                conflict_count += 2;
+                normal_count = 0;
+                if (conflict_count >= cfg.conflict_enter_threshold) {
+                    current_state = FightingState::CONFLICT;
+                    state_duration = 0;
+                    conflict_count = 0;
+                    LOG_INFO("State transition: SUSPICIOUS -> CONFLICT (accelerated)");
+                }
+            } else if (event == StateTransitionEvent::NO_EVENT) {
+                normal_count++;
+                conflict_count = std::max(0, conflict_count - 1);
+                if (normal_count >= cfg.suspicious_exit_threshold) {
+                    current_state = FightingState::IDLE;
+                    state_duration = 0;
+                    normal_count = 0;
+                    LOG_INFO("State transition: SUSPICIOUS -> IDLE");
+                }
+            } else {
+                // 保持可疑状态
+                normal_count = std::max(0, normal_count - 1);
+            }
+            break;
+        }
+
+        case FightingState::CONFLICT: {
+            // 在冲突状态中累计总冲突帧数
+            total_fighting_frames++;
+
+            if (event == StateTransitionEvent::NO_EVENT || 
+                event == StateTransitionEvent::INDIVIDUAL_SUSPICIOUS) {
+                normal_count++;
+                if (normal_count >= cfg.conflict_exit_threshold) {
+                    current_state = FightingState::COOLDOWN;
+                    state_duration = 0;
+                    normal_count = 0;
+                    cooldown_count = 0;
+                    LOG_INFO_FMT("State transition: CONFLICT -> COOLDOWN (total_fighting_frames={})", 
+                                 total_fighting_frames);
+                }
+            } else {
+                // 持续冲突中，重置正常计数
+                normal_count = std::max(0, normal_count - 2);
+            }
+            break;
+        }
+
+        case FightingState::COOLDOWN: {
+            cooldown_count++;
+            if (event == StateTransitionEvent::CONFIRMED_FIGHTING) {
+                // 冷却期间再次检测到冲突，回到冲突状态，累计帧数不清零
+                current_state = FightingState::CONFLICT;
+                state_duration = 0;
+                cooldown_count = 0;
+                normal_count = 0;
+                LOG_INFO("State transition: COOLDOWN -> CONFLICT (re-trigger)");
+            } else if (cooldown_count >= cfg.cooldown_frames) {
+                current_state = FightingState::IDLE;
+                state_duration = 0;
+                cooldown_count = 0;
+                total_fighting_frames = 0;  // 冷却结束，重置累计帧数
+                LOG_INFO("State transition: COOLDOWN -> IDLE");
+            }
+            break;
+        }
+    }
+}
+
+// ========== TrackState实现 ==========
+
+void FightingDetector::TrackState::reset() {
+    left_wrist_history.clear();
+    right_wrist_history.clear();
+    center_history.clear();
+    punch_frame_count = 0;
+    fall_frame_count = 0;
+    last_bbox = cv::Rect2f();
+}
+
+// ========== FrameAnalysis实现 ==========
+
+void FightingDetector::FrameAnalysis::clear() {
+    individual_scores.clear();
+    individual_events.clear();
+    is_suspicious.clear();
+    suspicious_person_count = 0;
+    total_fall_count = 0;
+    total_score = 0.0f;
+    has_interaction = false;
+}
+
+// ========== FightingDetector构造函数 ==========
+
+FightingDetector::FightingDetector(const Config& cfg) : cfg_(cfg), frame_counter_(0) {
     fight_history_.clear();
 }
 
 // ========== 重置 ==========
+
 void FightingDetector::reset() {
     std::lock_guard<std::mutex> lock(mutex_);
     tracks_.clear();
-    fighting_tracks_.clear();
     fight_history_.clear();
+    state_machine_.reset();
+    frame_counter_ = 0;
 }
 
-// ========== 主处理函数 ==========
+// ========== 状态查询接口 ==========
+
+FightingState FightingDetector::getCurrentState() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return state_machine_.current_state;
+}
+
+std::string FightingDetector::getCurrentStateString() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return state_machine_.getStateString();
+}
+
+int FightingDetector::getStateDuration() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return state_machine_.state_duration;
+}
+
+int FightingDetector::getTotalFightingFrames() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return state_machine_.total_fighting_frames;
+}
+
+// ========== 状态行为钩子 ==========
+
+void FightingDetector::onEnterIdle() {
+    if (state_machine_.previous_state != FightingState::IDLE) {
+        LOG_INFO("Entered IDLE state");
+    }
+}
+
+void FightingDetector::onEnterSuspicious() {
+    LOG_INFO("Entered SUSPICIOUS state - potential conflict detected");
+}
+
+void FightingDetector::onEnterConflict() {
+    LOG_INFO("Entered CONFLICT state - FIGHTING DETECTED!");
+}
+
+void FightingDetector::onEnterCooldown() {
+    LOG_INFO("Entered COOLDOWN state - conflict ended, monitoring for re-trigger");
+}
+
+void FightingDetector::onStateTick(FightingState state) {
+    (void)state; // 保留扩展接口
+}
+
+// ========== 主处理函数（状态机驱动）==========
+
 FightingResult FightingDetector::process(
     const std::vector<core::InferenceResultPacket::BBox>& detections) {
-    
+
     std::lock_guard<std::mutex> lock(mutex_);
-    
+    frame_counter_++;
+
     FightingResult result;
 
     // 收集活跃track_id
@@ -40,12 +238,68 @@ FightingResult FightingDetector::process(
         cleanupInactive(active_ids);
         fight_history_.push_back(false);
         if (fight_history_.size() > MAX_HISTORY) fight_history_.pop_front();
+
+        // 空帧也驱动状态机
+        state_machine_.update(StateTransitionEvent::NO_EVENT, cfg_);
+        result.is_fighting = (state_machine_.current_state == FightingState::CONFLICT);
+        result.current_state = state_machine_.getStateString();
+        result.fighting_duration_frames = state_machine_.state_duration;
+        result.total_fighting_frames = state_machine_.total_fighting_frames;
+
+        onStateTick(state_machine_.current_state);
         return result;
     }
 
-    // === 为每个人独立计算 score ===
-    std::unordered_map<int, float> individual_scores;
-    std::unordered_map<int, std::vector<FightingEvent>> individual_events;
+    // === 阶段1：帧级分析（行为层）===
+    FrameAnalysis analysis = analyzeFrame(detections);
+
+    // === 阶段2：确定状态转换事件 ===
+    StateTransitionEvent transition_event = determineTransitionEvent(analysis);
+
+    // === 阶段3：驱动状态机 ===
+    state_machine_.update(transition_event, cfg_);
+
+    // === 阶段4：状态进入钩子 ===
+    if (state_machine_.previous_state != state_machine_.current_state) {
+        switch (state_machine_.current_state) {
+            case FightingState::IDLE:       onEnterIdle(); break;
+            case FightingState::SUSPICIOUS: onEnterSuspicious(); break;
+            case FightingState::CONFLICT:   onEnterConflict(); break;
+            case FightingState::COOLDOWN:   onEnterCooldown(); break;
+        }
+    }
+
+    // === 阶段5：构建结果 ===
+    result = buildResult(analysis, active_ids);
+    result.current_state = state_machine_.getStateString();
+    result.fighting_duration_frames = state_machine_.state_duration;
+    result.total_fighting_frames = state_machine_.total_fighting_frames;
+    result.is_fighting = (state_machine_.current_state == FightingState::CONFLICT);
+
+    // === 阶段6：历史平滑与清理 ===
+    fight_history_.push_back(result.is_fighting);
+    if (fight_history_.size() > MAX_HISTORY) fight_history_.pop_front();
+
+    cleanupInactive(active_ids);
+    onStateTick(state_machine_.current_state);
+
+    LOG_INFO_FMT("Frame {}: State={}, Duration={}, TotalFightFrames={}, Event={}, Fighting={}", 
+                 frame_counter_, 
+                 state_machine_.getStateString(),
+                 state_machine_.state_duration,
+                 state_machine_.total_fighting_frames,
+                 static_cast<int>(transition_event),
+                 result.is_fighting);
+
+    return result;
+}
+
+// ========== 帧级分析（与最新版本逻辑一致）==========
+
+FightingDetector::FrameAnalysis FightingDetector::analyzeFrame(
+    const std::vector<core::InferenceResultPacket::BBox>& detections) {
+
+    FrameAnalysis analysis;
 
     // 1. 逐人检测 Punch + Fall
     for (const auto& det : detections) {
@@ -62,7 +316,7 @@ FightingResult FightingDetector::process(
             state.center_history.pop_front();
         }
 
-        // Punch检测（传入所有检测用于目标分析）
+        // Punch检测
         float punch_conf = 0.0f;
         bool is_punch = detectPunch(det, state, punch_conf, detections);
         if (is_punch) {
@@ -70,10 +324,11 @@ FightingResult FightingDetector::process(
             evt.type = "punch";
             evt.track_id = det.track_id;
             evt.confidence = punch_conf;
-            individual_events[det.track_id].push_back(evt);
-            individual_scores[det.track_id] += punch_conf * 0.5f;
+            evt.timestamp_ms = frame_counter_;
+            analysis.individual_events[det.track_id].push_back(evt);
+            analysis.individual_scores[det.track_id] += punch_conf * 0.5f;
             LOG_INFO_FMT("Track {} punch detected with confidence {:.2f} score:{:.2f}", 
-                         det.track_id, punch_conf, individual_scores[det.track_id]);
+                         det.track_id, punch_conf, analysis.individual_scores[det.track_id]);
         }
 
         // Fall检测
@@ -83,11 +338,13 @@ FightingResult FightingDetector::process(
             evt.type = "fall";
             evt.track_id = det.track_id;
             evt.confidence = 0.8f;
-            individual_events[det.track_id].push_back(evt);
+            evt.timestamp_ms = frame_counter_;
+            analysis.individual_events[det.track_id].push_back(evt);
             // fall score 使用 max 而非累加，避免多帧持续fall导致分数无限增长
-            individual_scores[det.track_id] = std::max(individual_scores[det.track_id], 0.4f);
+            analysis.individual_scores[det.track_id] = std::max(
+                analysis.individual_scores[det.track_id], 0.4f);
             LOG_INFO_FMT("Track {} fall detected with confidence {:.2f} score:{:.2f}", 
-                         det.track_id, evt.confidence, individual_scores[det.track_id]);
+                         det.track_id, evt.confidence, analysis.individual_scores[det.track_id]);
         }
     }
 
@@ -95,23 +352,23 @@ FightingResult FightingDetector::process(
     auto interactions = detectInteractions(detections);
     for (auto& inter : interactions) {
         for (int tid : inter.involved_track_ids) {
-            individual_events[tid].push_back(inter);
-            individual_scores[tid] += inter.confidence * 0.4f;  // 提高 interaction 权重
+            analysis.individual_events[tid].push_back(inter);
+            analysis.individual_scores[tid] += inter.confidence * 0.4f;
+            analysis.has_interaction = true;
             LOG_INFO_FMT("Track {} interaction detected with confidence {:.2f} score:{:.2f}", 
-                         tid, inter.confidence, individual_scores[tid]);
+                         tid, inter.confidence, analysis.individual_scores[tid]);
         }
     }
 
-    // 3. 个体综合判定
-    std::unordered_map<int, int> new_fighting_counts;
-    int total_fall_count = countFalls(detections);  // 先计算全局 fall 数量
+    // 3. 个体综合判定（生成is_suspicious标记）
+    analysis.total_fall_count = countFalls(detections);
 
     for (const auto& det : detections) {
         if (det.track_id < 0) continue;
 
         int tid = det.track_id;
-        float score = individual_scores[tid];
-        const auto& evts = individual_events[tid];
+        float score = analysis.individual_scores[tid];
+        const auto& evts = analysis.individual_events[tid];
 
         bool has_punch = false, has_fall = false, has_interaction = false;
         int punch_count = 0, fall_count = 0;
@@ -127,67 +384,87 @@ FightingResult FightingDetector::process(
             LOG_INFO_FMT("Track {} has multiple fall events", tid);
         }
 
-        // 组合规则判定
+        // 组合规则判定（与最新版本逻辑一致）
         bool is_suspicious = false;
 
-        // 规则1：punch + interaction = 高置信度冲突
         if (has_punch && has_interaction && score > 0.4f) {
             is_suspicious = true;
             LOG_INFO_FMT("Track {} triggered rule1: punch + interaction", tid);
         }
-        // 规则2：fall + interaction = 可能冲突（一人被打倒）
         else if (has_fall && has_interaction && score > 0.3f) {
             is_suspicious = true;
             LOG_INFO_FMT("Track {} triggered rule2: fall + interaction", tid);
         }
-        // 规则3：连续 punch = 冲突
         else if (tracks_[tid].punch_frame_count >= 3 && score > 0.5f) {
             is_suspicious = true;
             LOG_INFO_FMT("Track {} triggered rule3: consecutive punch", tid);
         }
-        // 规则4：多人同时 fall = 群体冲突
-        else if (has_fall && total_fall_count >= 2) {
+        else if (has_fall && analysis.total_fall_count >= 2) {
             is_suspicious = true;
-            LOG_INFO_FMT("Track {} triggered rule4: multiple falls (total={})", tid, total_fall_count);
+            LOG_INFO_FMT("Track {} triggered rule4: multiple falls (total={})", tid, analysis.total_fall_count);
         }
-        // 规则5：单人多次 fall = 可能冲突（被反复击倒）
         else if (fall_count >= 2 && score > 0.3f) {
             is_suspicious = true;
             LOG_INFO_FMT("Track {} triggered rule5: multiple falls on same person", tid);
         }
-        // 规则6：高 score 直接触发（综合多种弱信号叠加）
         else if (score > 0.5f) {
             is_suspicious = true;
             LOG_INFO_FMT("Track {} triggered rule6: high score", tid);
         }
 
-        auto& count = fighting_tracks_[tid];
+        analysis.is_suspicious[tid] = is_suspicious;
         if (is_suspicious) {
-            count++;
-        } else {
-            count = std::max(0, count - 1);
+            analysis.suspicious_person_count++;
         }
-        new_fighting_counts[tid] = count;
+        analysis.total_score += score;
     }
 
-    // 4. 全局判定：要求至少两人同时达到阈值
+    return analysis;
+}
+
+// ========== 确定状态转换事件 ==========
+
+StateTransitionEvent FightingDetector::determineTransitionEvent(
+    const FrameAnalysis& analysis) {
+
+    // 计算满足阈值的可疑人数
     int fighting_person_count = 0;
-    float total_score = 0.0f;
-    for (const auto& [tid, count] : new_fighting_counts) {
-        LOG_INFO_FMT("Track {} fighting count: {},score: {:.2f}", tid, count, individual_scores[tid]);
-        if (count >= cfg_.fight_frames_threshold && 
-            individual_scores[tid] > cfg_.fight_score_threshold) {
+    for (const auto& [tid, is_suspicious] : analysis.is_suspicious) {
+        if (is_suspicious && analysis.individual_scores.at(tid) > cfg_.fight_score_threshold) {
             fighting_person_count++;
         }
-        total_score += individual_scores[tid];
     }
 
-    // 关键：打架需要至少两人参与
-    bool is_fighting = (fighting_person_count >= cfg_.min_involved_persons);
+    LOG_INFO_FMT("Transition analysis: suspicious_count={}, fighting_person_count={}, total_score={:.2f}",
+                 analysis.suspicious_person_count, fighting_person_count, analysis.total_score);
+
+    if (fighting_person_count >= cfg_.min_involved_persons) {
+        return StateTransitionEvent::CONFIRMED_FIGHTING;
+    }
+
+    if (analysis.suspicious_person_count >= cfg_.min_involved_persons) {
+        return StateTransitionEvent::MULTI_PERSON_SUSPICIOUS;
+    }
+
+    if (analysis.suspicious_person_count > 0) {
+        return StateTransitionEvent::INDIVIDUAL_SUSPICIOUS;
+    }
+
+    return StateTransitionEvent::NO_EVENT;
+}
+
+// ========== 构建结果 ==========
+
+FightingResult FightingDetector::buildResult(
+    const FrameAnalysis& analysis,
+    const std::vector<int>& active_ids) {
+
+    FightingResult result;
+    result.active_track_ids = active_ids;
 
     // 收集所有事件（interaction按参与人对去重）
     std::set<std::pair<int, int>> seen_interactions;
-    for (const auto& [tid, evts] : individual_events) {
+    for (const auto& [tid, evts] : analysis.individual_events) {
         for (const auto& evt : evts) {
             if (evt.type == "interaction" && evt.involved_track_ids.size() >= 2) {
                 int a = evt.involved_track_ids[0];
@@ -203,26 +480,17 @@ FightingResult FightingDetector::process(
     }
 
     // 全局分数
-    if (!individual_scores.empty()) {
-        result.fight_score = std::min(1.0f, total_score / individual_scores.size());
+    if (!analysis.individual_scores.empty()) {
+        result.fight_score = std::min(1.0f, analysis.total_score / analysis.individual_scores.size());
     } else {
         result.fight_score = 0.0f;
     }
 
-    result.is_fighting = is_fighting;
-    LOG_INFO_FMT("Fighting person count: {}, fight score: {:.2f},individual scores: {},is fighting: {}", 
-                 fighting_person_count, result.fight_score, individual_scores.size(),is_fighting);
-    // 历史平滑
-    fight_history_.push_back(is_fighting);
-    if (fight_history_.size() > MAX_HISTORY) fight_history_.pop_front();
-
-    // 清理不活跃
-    cleanupInactive(active_ids);
-
     return result;
 }
 
-// ========== Punch检测 ==========
+// ========== Punch检测（与最新版本一致）==========
+
 bool FightingDetector::detectPunch(
     const core::InferenceResultPacket::BBox& det, 
     TrackState& state, 
@@ -246,7 +514,7 @@ bool FightingDetector::detectPunch(
         return false;
     }
 
-    // === 姿态预筛选：躯干角度 ===
+    // 姿态预筛选：躯干角度
     float torso_angle = calculateTorsoAngle(kpts);
     if (std::abs(torso_angle) > cfg_.punch_torso_angle_max) {
         out_confidence = 0.0f;
@@ -266,7 +534,8 @@ bool FightingDetector::detectPunch(
         float dy = (other.y + other.h/2) - (det.y + det.h/2);
         float dist = std::sqrt(dx*dx + dy*dy);
 
-        if (dist < min_target_dist && dist < det.w * cfg_.punch_target_dist_max && dist > det.w * cfg_.punch_target_dist_min) {
+        if (dist < min_target_dist && dist < det.w * cfg_.punch_target_dist_max 
+            && dist > det.w * cfg_.punch_target_dist_min) {
             min_target_dist = dist;
             target_dir = cv::Point2f(dx, dy);
             has_target = true;
@@ -288,7 +557,6 @@ bool FightingDetector::detectPunch(
             float speed = calculateSpeed(state.left_wrist_history);
             float angle = calculateAngleChange(state.left_wrist_history);
 
-            // === 手臂伸展度检查 ===
             float arm_ext = calculateArmExtension(ls, le, lw);
             if (arm_ext < cfg_.punch_min_arm_extension) {
                 LOG_DEBUG_FMT("Track {} left arm extension {:.2f} too low", det.track_id, arm_ext);
@@ -298,12 +566,11 @@ bool FightingDetector::detectPunch(
                 if (speed > cfg_.punch_speed_threshold) {
                     conf = std::min(1.0f, speed / (cfg_.punch_speed_threshold * 2.0f));
 
-                    // 角度变化小（直线运动）增加置信度
                     if (angle < cfg_.punch_straight_angle_max) {
                         conf = std::min(1.0f, conf * 1.2f);
                     }
 
-                    // === 方向一致性检查（使用手腕运动速度方向）===
+                    // 方向一致性检查（使用手腕运动速度方向）
                     if (has_target && state.left_wrist_history.size() >= 2) {
                         const auto& prev = state.left_wrist_history[state.left_wrist_history.size() - 2];
                         const auto& back = state.left_wrist_history.back();
@@ -325,12 +592,12 @@ bool FightingDetector::detectPunch(
                         }
                     }
 
-                    // === 速度突变检测（收拳特征）===
+                    // 速度突变检测（收拳特征）
                     if (state.left_wrist_history.size() >= 5) {
                         float recent_speed = calculateSpeed(state.left_wrist_history, 3, 0);
                         float older_speed = calculateSpeed(state.left_wrist_history, 3, 2);
                         if (older_speed > 0 && recent_speed / older_speed < cfg_.punch_min_speed_drop_ratio) {
-                            conf *= 1.2f;  // 速度下降，可能是收拳，增加置信度
+                            conf *= 1.2f;
                         }
                     }
                 }
@@ -407,14 +674,14 @@ bool FightingDetector::detectPunch(
         }
     }
 
-    // === 双手互斥：双手同时高速运动 → 降低置信度（跑步/挥手）===
+    // 双手互斥
     if (left_valid && right_valid && state.left_wrist_history.size() >= 3 
         && state.right_wrist_history.size() >= 3) {
         float left_speed = calculateSpeed(state.left_wrist_history);
         float right_speed = calculateSpeed(state.right_wrist_history);
 
         if (left_speed > cfg_.punch_speed_threshold && right_speed > cfg_.punch_speed_threshold) {
-            best_conf *= 0.5f;  // 双手同时高速，大幅降低置信度
+            best_conf *= 0.5f;
             if (best_conf < 0.5f) {
                 is_punch = false;
             }
@@ -432,7 +699,8 @@ bool FightingDetector::detectPunch(
     return is_punch;
 }
 
-// ========== Fall检测（基于关键点姿态）==========
+// ========== Fall检测（与最新版本一致）==========
+
 bool FightingDetector::detectFall(
     const core::InferenceResultPacket::BBox& det, 
     TrackState& state) {
@@ -441,12 +709,12 @@ bool FightingDetector::detectFall(
 
     const auto& kpts = det.keypoints;
     bool is_fall = false;
+    bool has_head = false;
 
-    // === 方法1：基于关键点的高度分析 ===
+    // 方法1：基于关键点的高度分析
     float head_y = -1, ankle_y = -1;
-    bool has_head = false, has_ankle = false;
+    bool has_ankle = false;
 
-    // 取头部最高点（最小的y值，因为y轴向下）
     for (int idx : {Config::NOSE, Config::LEFT_EYE, Config::RIGHT_EYE, 
                     Config::LEFT_EAR, Config::RIGHT_EAR}) {
         if (isKeypointValid(kpts[idx])) {
@@ -457,7 +725,6 @@ bool FightingDetector::detectFall(
         }
     }
 
-    // 取脚踝最低点（最大的y值）
     for (int idx : {Config::LEFT_ANKLE, Config::RIGHT_ANKLE}) {
         if (isKeypointValid(kpts[idx])) {
             if (!has_ankle || kpts[idx].y > ankle_y) {
@@ -467,7 +734,6 @@ bool FightingDetector::detectFall(
         }
     }
 
-    // 关键点身体高度远小于检测框高度 → 身体横躺
     if (has_head && has_ankle) {
         float body_height = ankle_y - head_y;
         if (body_height > 0 && body_height < det.h * cfg_.fall_body_height_ratio) {
@@ -475,7 +741,7 @@ bool FightingDetector::detectFall(
         }
     }
 
-    // === 方法2：肩-臀连线角度 ===
+    // 方法2：肩-臀连线角度
     if (!is_fall) {
         const auto& ls = kpts[Config::LEFT_SHOULDER];
         const auto& rs = kpts[Config::RIGHT_SHOULDER];
@@ -493,10 +759,9 @@ bool FightingDetector::detectFall(
             float dx = std::abs(hip_x - shoulder_x);
             float dy = std::abs(hip_y - shoulder_y);
 
-            if (dx > 1.0f) {  // 避免除零
+            if (dx > 1.0f) {
                 float body_angle = std::atan2(dy, dx) * 180.0f / CV_PI;
 
-                // 身体接近水平（角度小）且臀部不低于肩部太多（不是弯腰）
                 if (body_angle < cfg_.fall_torso_angle_threshold && 
                     hip_y < shoulder_y + det.h * 0.3f) {
                     is_fall = true;
@@ -505,7 +770,7 @@ bool FightingDetector::detectFall(
         }
     }
 
-    // === 方法3：宽高比作为辅助（仅当缺少上半身关键点时）===
+    // 方法3：宽高比作为辅助
     if (!is_fall && det.w > 0 && det.h > 0) {
         float aspect = det.w / det.h;
         if (aspect > cfg_.fall_aspect_ratio_threshold && !has_head) {
@@ -523,7 +788,8 @@ bool FightingDetector::detectFall(
     }
 }
 
-// ========== Interaction检测 ==========
+// ========== Interaction检测（与最新版本一致）==========
+
 std::vector<FightingEvent> FightingDetector::detectInteractions(
     const std::vector<core::InferenceResultPacket::BBox>& detections) {
 
@@ -537,14 +803,12 @@ std::vector<FightingEvent> FightingDetector::detectInteractions(
             if (d1.track_id < 0 || d2.track_id < 0) continue;
             if (!d1.has_keypoints || !d2.has_keypoints) continue;
 
-            // 中心距离
             float center_dx = (d2.x + d2.w/2) - (d1.x + d1.w/2);
             float center_dy = (d2.y + d2.h/2) - (d1.y + d1.h/2);
             float center_dist = std::sqrt(center_dx*center_dx + center_dy*center_dy);
 
             if (center_dist > cfg_.interaction_distance_threshold * 2.0f) continue;
 
-            // 相对运动分析
             auto& s1 = tracks_[d1.track_id];
             auto& s2 = tracks_[d2.track_id];
 
@@ -553,21 +817,17 @@ std::vector<FightingEvent> FightingDetector::detectInteractions(
             cv::Point2f relative_v(v2.x - v1.x, v2.y - v1.y);
             float relative_speed = std::sqrt(relative_v.x*relative_v.x + relative_v.y*relative_v.y);
 
-            // 连线方向归一化
             float conn_len = std::sqrt(center_dx*center_dx + center_dy*center_dy);
             cv::Point2f connection(0, 0);
             if (conn_len > 0) {
                 connection = cv::Point2f(center_dx/conn_len, center_dy/conn_len);
             }
 
-            // 相向运动检测
             float dot_product = relative_v.x * connection.x + relative_v.y * connection.y;
             bool approaching = dot_product < cfg_.interaction_approach_dot_threshold;
 
-            // 面对面姿态
             bool facing = checkFacingEachOther(d1, d2);
 
-            // 动态距离阈值
             float effective_threshold = cfg_.interaction_distance_threshold;
             if (approaching && facing) {
                 effective_threshold *= cfg_.interaction_near_multiplier;
@@ -575,13 +835,11 @@ std::vector<FightingEvent> FightingDetector::detectInteractions(
                 effective_threshold *= cfg_.interaction_far_multiplier;
             }
 
-            // 关键点接触检测
             const auto& k1 = d1.keypoints;
             const auto& k2 = d2.keypoints;
             float min_dist = std::numeric_limits<float>::max();
             std::vector<std::string> contacts;
 
-            // 手腕距离
             const int wrist_pairs[4][2] = {
                 {Config::LEFT_WRIST, Config::LEFT_WRIST},
                 {Config::RIGHT_WRIST, Config::RIGHT_WRIST},
@@ -597,14 +855,12 @@ std::vector<FightingEvent> FightingDetector::detectInteractions(
                 }
             }
 
-            // 头部距离
             if (isKeypointValid(k1[Config::NOSE]) && isKeypointValid(k2[Config::NOSE])) {
                 float d = euclideanDistance(k1[Config::NOSE], k2[Config::NOSE]);
                 if (d < min_dist) min_dist = d;
                 if (d < effective_threshold) contacts.push_back("head");
             }
 
-            // 判定条件
             bool has_contact = (min_dist < effective_threshold);
             bool has_approach = approaching && relative_speed > cfg_.interaction_min_relative_speed;
 
@@ -616,6 +872,7 @@ std::vector<FightingEvent> FightingDetector::detectInteractions(
                 evt.confidence = (has_contact ? 0.5f : 0.0f) + 
                                 (has_approach ? 0.3f : 0.0f) + 
                                 (facing ? 0.2f : 0.0f);
+                evt.timestamp_ms = frame_counter_;
                 LOG_INFO_FMT("Interaction detected between track {} and {}, contact: {}, approach: {}, facing: {}, conf: {:.2f}", 
                              d1.track_id, d2.track_id, evt.contact_parts, has_approach, facing, evt.confidence);
                 events.push_back(evt);
@@ -626,6 +883,7 @@ std::vector<FightingEvent> FightingDetector::detectInteractions(
     return events;
 }
 
+// ========== 辅助函数（与最新版本一致）==========
 
 float FightingDetector::calculateSpeed(const std::deque<cv::Point2f>& history) {
     if (history.size() < 2) return 0.0f;
@@ -637,11 +895,12 @@ float FightingDetector::calculateSpeed(const std::deque<cv::Point2f>& history) {
         total_dist += std::sqrt(dx*dx + dy*dy);
     }
 
-return total_dist * cfg_.fps / static_cast<float>(history.size() - 1);
+    return total_dist * cfg_.fps / static_cast<float>(history.size() - 1);
 }
+
 float FightingDetector::calculateSpeed(const std::deque<cv::Point2f>& history, int recent_n, int offset) {
     if (history.size() < static_cast<size_t>(offset + recent_n)) return 0.0f;
-    
+
     size_t end = history.size() - offset;
     if (end <= static_cast<size_t>(recent_n)) return 0.0f;
     size_t start = end - recent_n;
@@ -653,7 +912,7 @@ float FightingDetector::calculateSpeed(const std::deque<cv::Point2f>& history, i
         total_dist += std::sqrt(dx*dx + dy*dy);
     }
 
-size_t count = end - start - 1;
+    size_t count = end - start - 1;
     return count > 0 ? total_dist * cfg_.fps / static_cast<float>(count) : 0.0f;
 }
 
@@ -693,8 +952,6 @@ bool FightingDetector::isKeypointValid(const core::InferenceResultPacket::KeyPoi
     return kp.visible && kp.confidence > 0.3f;
 }
 
-// ========== 新增辅助函数 ==========
-
 float FightingDetector::calculateArmExtension(
     const core::InferenceResultPacket::KeyPoint& shoulder,
     const core::InferenceResultPacket::KeyPoint& elbow,
@@ -706,13 +963,12 @@ float FightingDetector::calculateArmExtension(
 
     if (upper_arm + forearm < 1.0f) return 0.0f;
 
-    // 伸展度 = 实际肩-腕距离 / (上臂+前臂) 理论最大距离
     return full_arm / (upper_arm + forearm);
 }
 
 float FightingDetector::calculateTorsoAngle(
     const std::array<core::InferenceResultPacket::KeyPoint, 17>& kpts) {
-    
+
     const auto& ls = kpts[Config::LEFT_SHOULDER];
     const auto& rs = kpts[Config::RIGHT_SHOULDER];
     const auto& lh = kpts[Config::LEFT_HIP];
@@ -795,14 +1051,6 @@ void FightingDetector::cleanupInactive(const std::vector<int>& active_ids) {
     for (auto it = tracks_.begin(); it != tracks_.end();) {
         if (active_set.find(it->first) == active_set.end()) {
             it = tracks_.erase(it);
-        } else {
-            ++it;
-        }
-    }
-
-    for (auto it = fighting_tracks_.begin(); it != fighting_tracks_.end();) {
-        if (active_set.find(it->first) == active_set.end()) {
-            it = fighting_tracks_.erase(it);
         } else {
             ++it;
         }
