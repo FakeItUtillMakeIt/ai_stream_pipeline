@@ -48,6 +48,8 @@ namespace rules
         SLEEPING_ON_DUTY = 10,
         CLAMBING = 11,
         FIGHTING = 12,
+        UNLICENSED_VENDOR = 13,
+        PHOTOGRAPHER = 14
     };
 
     inline std::map<AlertType, std::string> alertTypeMap = {
@@ -63,7 +65,9 @@ namespace rules
         {AlertType::ABSENCE, "absence"},
         {AlertType::SLEEPING_ON_DUTY, "sleeping_on_duty"},
         {AlertType::CLAMBING, "climbing"},
-        {AlertType::FIGHTING, "fighting"}
+        {AlertType::FIGHTING, "fighting"},
+        {AlertType::UNLICENSED_VENDOR, "unlicensed_vendor"},
+        {AlertType::PHOTOGRAPHER, "photographer"}
     };
 
     inline std::map<AlertType, std::string> alertTypeChMap = {
@@ -79,7 +83,9 @@ namespace rules
         {AlertType::ABSENCE, "离岗"},
         {AlertType::SLEEPING_ON_DUTY, "睡岗"},
         {AlertType::CLAMBING, "攀爬"},
-        {AlertType::FIGHTING, "打架"}
+        {AlertType::FIGHTING, "打架"},
+        {AlertType::UNLICENSED_VENDOR, "无证摊贩"},
+        {AlertType::PHOTOGRAPHER, "揽拍"}
     };
 
     enum class AlertItemType : uint8_t
@@ -102,7 +108,9 @@ namespace rules
         {AlertType::ABSENCE, AlertItemType::ITEM_PERSON_BEHAVIOR},
         {AlertType::SLEEPING_ON_DUTY, AlertItemType::ITEM_PERSON_BEHAVIOR},
         {AlertType::CLAMBING, AlertItemType::ITEM_PERSON_BEHAVIOR},
-        {AlertType::FIGHTING, AlertItemType::ITEM_PERSON_BEHAVIOR}
+        {AlertType::FIGHTING, AlertItemType::ITEM_PERSON_BEHAVIOR},
+        {AlertType::UNLICENSED_VENDOR, AlertItemType::ITEM_PERSON_BEHAVIOR},
+        {AlertType::PHOTOGRAPHER, AlertItemType::ITEM_PERSON_BEHAVIOR}
     };
 
     enum class AlertStatus : uint8_t
