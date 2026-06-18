@@ -8,11 +8,10 @@ namespace ai_stream
     namespace rules
     {
 
-        UnlicensedVendorRule::UnlicensedVendorRule() 
+        UnlicensedVendorRule::UnlicensedVendorRule()
         {
             LOG_INFO("UnlicensedVendorRule::UnlicensedVendorRule()");
         }
-
 
         bool UnlicensedVendorRule::initialize(const nlohmann::json &config)
         {
@@ -147,24 +146,71 @@ namespace ai_stream
         {
             LOG_INFO_FMT("UnlicensedVendorRule::rule_logic()");
             std::vector<ai_stream::core::InferenceResultPacket::BBox> person_boxes;
+            std::vector<ai_stream::core::InferenceResultPacket::BBox> toy_boxes;
             std::vector<int> person_track_ids;
             for (const auto &detection : packet->detections)
             {
-                if (detection.class_name != "person")
-                {
-                    continue;
-                }
                 bool in_zone = zone_points.empty() ? true : ZoneValidator::pointInPolygon(PixelPoint(detection.x + detection.w / 2, detection.y + detection.h / 2), zone_points);
+
                 if (in_zone)
                 {
-                    person_boxes.push_back(detection);
+                    if (detection.class_name == "person")
+                    {
+                        person_boxes.push_back(detection);
+                    }
+                    if (detection.class_name == "toy")
+                    {
+                        toy_boxes.push_back(detection);
+                    }
                 }
             }
 
-            if (person_boxes.empty())
+            if (person_boxes.empty() || toy_boxes.empty())
                 return RuleStatus::RULE_STATUS_OK;
-            // todo: 完善无证摊贩逻辑
-            
+            bool is_person_toy_intersect = false;
+            // 当前只检测 人+玩具 （人腰围挎着一堆玩具）-> 人框和玩具框重叠IOU > 0.5
+            for (const auto &person_box : person_boxes)
+            {
+                for (const auto &toy_box : toy_boxes)
+                {
+                    if (ZoneValidator::iouExceedsThreshold(
+                            std::vector<PixelPoint>{PixelPoint(person_box.x, person_box.y), PixelPoint(person_box.x + person_box.w, person_box.y), PixelPoint(person_box.x + person_box.w, person_box.y + person_box.h), PixelPoint(person_box.x, person_box.y + person_box.h)},
+                            std::vector<PixelPoint>{PixelPoint(toy_box.x, toy_box.y), PixelPoint(toy_box.x + toy_box.w, toy_box.y), PixelPoint(toy_box.x + toy_box.w, toy_box.y + toy_box.h), PixelPoint(toy_box.x, toy_box.y + toy_box.h)},
+                            0.5f))
+                    {
+                        is_person_toy_intersect = true;
+                        person_track_ids.push_back(person_box.track_id);
+                        break;
+                    }
+                }
+                if (is_person_toy_intersect)
+                {
+                    break;
+                }
+            }
+            if (!is_person_toy_intersect)
+            {
+                return RuleStatus::RULE_STATUS_OK;
+            }
+            auto it = zone_alert_map_.find(zone_no);
+            if (it == zone_alert_map_.end())
+            {
+                auto alert_target = AlertEvent();
+                alert_target.detect_ms = packet->timestamp_ms;
+                alert_target.zone_no = zone_no;
+                alert_target.non_update_count = 0;
+                alert_target.duration_ms = 0;
+                alert_target.object_ids = person_track_ids;
+                zone_alert_map_.insert(std::make_pair(zone_no, alert_target));
+            }
+            else
+            {
+                auto &alert_target = it->second;
+                alert_target.non_update_count = 0;
+                alert_target.duration_ms = packet->timestamp_ms - alert_target.detect_ms;
+                alert_target.object_ids = person_track_ids; // todo 是否需要检查是否物品ID有变化
+            }
+
             return RuleStatus::RULE_STATUS_OK;
         }
 
