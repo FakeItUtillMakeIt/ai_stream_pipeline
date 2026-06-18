@@ -56,14 +56,11 @@ namespace ai_stream
                     continue;
                 }
                 valid_intrusion_zones_[det_zone.first] = det_zone.second;
-                min_gathering_thresh = std::min(min_gathering_thresh, gathering_thresh_map_[det_zone.first]);
             }
             // 如果所有区域都无效，则全域监测(不进行区域过滤)
             if (valid_intrusion_zones_.empty())
             {
                 LOG_INFO("ClimbingRule::process() all zones are invalid, global monitoring");
-                // 聚集人数阈值配置为所有区域中最小的一个
-                gathering_thresh_map_[global_zone_no_] = min_gathering_thresh;
             }
 
             return true;

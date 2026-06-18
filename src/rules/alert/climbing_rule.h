@@ -31,7 +31,6 @@ namespace ai_stream
 
         private:
             ClimbingDetector climbing_detector_;
-            std::map<uint8_t, int> gathering_thresh_map_; // 区域聚集人数阈值
         };
     }
 }
