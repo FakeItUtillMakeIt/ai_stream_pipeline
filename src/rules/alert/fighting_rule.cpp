@@ -146,6 +146,7 @@ namespace ai_stream
         {
             LOG_INFO_FMT("FightingRule::rule_logic()");
             int person_count = 0;
+            std::vector<ai_stream::core::InferenceResultPacket::BBox> person_boxes;
             std::vector<int> person_track_ids;
             for (const auto &detection : packet->detections)
             {
@@ -157,13 +158,14 @@ namespace ai_stream
                 if (in_zone)
                 {
                     person_count++;
+                    person_boxes.push_back(detection);
                 }
             }
             // 更新zone_alert_map_ 打架至少2人
             if (person_count < 2)
                 return RuleStatus::RULE_STATUS_OK;
             // 调用打架检测器
-            auto fight_result = fighting_detector_.process(packet->detections);
+            auto fight_result = fighting_detector_.process(person_boxes);
             if (fight_result.is_fighting)
             {
                 person_track_ids = fight_result.active_track_ids;

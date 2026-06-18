@@ -1,5 +1,5 @@
-// src/rules/alert/climbing_rule.cpp
-#include "climbing_rule.h"
+// src/rules/alert/unlicensed_verdor_rule.cpp
+#include "unlicensed_verdor_rule.h"
 #include "alert_rule_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 
@@ -8,17 +8,18 @@ namespace ai_stream
     namespace rules
     {
 
-        ClimbingRule::ClimbingRule() : climbing_detector_(ClimbingDetector::Config())
+        UnlicensedVendorRule::UnlicensedVendorRule() 
         {
-            LOG_INFO("ClimbingRule::ClimbingRule()");
+            LOG_INFO("UnlicensedVendorRule::UnlicensedVendorRule()");
         }
 
-        bool ClimbingRule::initialize(const nlohmann::json &config)
+
+        bool UnlicensedVendorRule::initialize(const nlohmann::json &config)
         {
-            LOG_INFO_FMT("ClimbingRule::initialize()");
+            LOG_INFO_FMT("UnlicensedVendorRule::initialize()");
             try
             {
-                LOG_INFO_FMT("ClimbingRule::initialize() config: {}", config.dump().c_str());
+                LOG_INFO_FMT("UnlicensedVendorRule::initialize() config: {}", config.dump().c_str());
                 if (config.contains("name") && config["name"].is_string())
                 {
                     setName(config.value("name", ""));
@@ -32,26 +33,24 @@ namespace ai_stream
                             LOG_INFO_FMT("Rule zone {} add point {}: [{}, {}]", int(i + 1), int(k + 1), config["rule_zones"][i][k][0].get<float>(), config["rule_zones"][i][k][1].get<float>());
                             intrusion_zones_[uint8_t(i + 1)].push_back(PixelPoint(config["rule_zones"][i][k][0].get<float>(), config["rule_zones"][i][k][1].get<float>()));
                         }
-                        
                     }
                 }
             }
             catch (const std::exception &e)
             {
-                LOG_WARN_FMT("ClimbingRule::initialize() exception: {}", e.what());
+                LOG_WARN_FMT("UnlicensedVendorRule::initialize() exception: {}", e.what());
                 return false;
             }
-            LOG_INFO_FMT("ClimbingRule::initialize() success");
+            LOG_INFO_FMT("UnlicensedVendorRule::initialize() success");
 
             // 判断区域是否有效/配置
             uint8_t invaild_zone_count = 0;
-            int min_gathering_thresh = std::numeric_limits<int>::max();
             for (const auto &det_zone : intrusion_zones_)
             {
                 bool zone_is_valid = ZoneValidator::zoneIsValid(det_zone.second);
                 if (!zone_is_valid)
                 {
-                    LOG_INFO_FMT("ClimbingRule::process() zone {} is invalid", det_zone.first);
+                    LOG_INFO_FMT("UnlicensedVendorRule::process() zone {} is invalid", det_zone.first);
                     invaild_zone_count++;
                     continue;
                 }
@@ -60,18 +59,18 @@ namespace ai_stream
             // 如果所有区域都无效，则全域监测(不进行区域过滤)
             if (valid_intrusion_zones_.empty())
             {
-                LOG_INFO("ClimbingRule::process() all zones are invalid, global monitoring");
+                LOG_INFO("UnlicensedVendorRule::process() all zones are invalid, global monitoring");
             }
 
             return true;
         }
 
-        RuleStatus ClimbingRule::process(
+        RuleStatus UnlicensedVendorRule::process(
             std::shared_ptr<core::InferenceResultPacket> packet,
             AlertResult &alert_result,
             int64_t current_time_ms)
         {
-            LOG_INFO_FMT("ClimbingRule::process()");
+            LOG_INFO_FMT("UnlicensedVendorRule::process()");
             std::lock_guard<std::mutex> lock(mutex_);
             if (!packet)
                 return RuleStatus::RULE_STATUS_FAIL;
@@ -120,6 +119,8 @@ namespace ai_stream
                 if (it->second.non_update_count == max_disappear_count_)
                 {
                     it->second.status = AlertStatus::ALERT_STATUS_END;
+                    it->second.alert_name = getName();
+                    it->second.alert_type = getType();
                 }
                 it->second.description = getName() + alert_status_map[it->second.status];
                 it++;
@@ -127,64 +128,46 @@ namespace ai_stream
             return RuleStatus::RULE_STATUS_OK;
         }
 
-        void ClimbingRule::reset()
+        void UnlicensedVendorRule::reset()
         {
-            LOG_INFO_FMT("ClimbingRule::reset()");
+            LOG_INFO_FMT("UnlicensedVendorRule::reset()");
             std::lock_guard<std::mutex> lock(mutex_);
             zone_alert_map_.clear();
         }
 
-        nlohmann::json ClimbingRule::getStatistics() const
+        nlohmann::json UnlicensedVendorRule::getStatistics() const
         {
-            LOG_INFO_FMT("ClimbingRule::getStatistics()");
+            LOG_INFO_FMT("UnlicensedVendorRule::getStatistics()");
             return nlohmann::json();
         }
 
-        RuleStatus ClimbingRule::rule_logic(
+        RuleStatus UnlicensedVendorRule::rule_logic(
             const std::shared_ptr<core::InferenceResultPacket> packet,
             uint8_t zone_no, ZonePoints zone_points)
         {
-            LOG_INFO_FMT("ClimbingRule::rule_logic()");
+            LOG_INFO_FMT("UnlicensedVendorRule::rule_logic()");
             std::vector<ai_stream::core::InferenceResultPacket::BBox> person_boxes;
+            std::vector<int> person_track_ids;
             for (const auto &detection : packet->detections)
             {
-                if (detection.class_name == "person")
+                if (detection.class_name != "person")
+                {
+                    continue;
+                }
+                bool in_zone = zone_points.empty() ? true : ZoneValidator::pointInPolygon(PixelPoint(detection.x + detection.w / 2, detection.y + detection.h / 2), zone_points);
+                if (in_zone)
                 {
                     person_boxes.push_back(detection);
                 }
             }
-            if (person_boxes.empty())
-            {
-                return RuleStatus::RULE_STATUS_OK;
-            }
 
-            std::vector<int> climbing_track_ids;
-            auto climb_result = climbing_detector_.process(person_boxes);
-            if(climb_result.is_climbing)
-            {
-                climbing_track_ids = climb_result.active_track_ids;
-                auto it = zone_alert_map_.find(zone_no);
-                if (it == zone_alert_map_.end())
-                {
-                    auto alert_target = AlertEvent();
-                    alert_target.detect_ms = packet->timestamp_ms;
-                    alert_target.zone_no = zone_no;
-                    alert_target.non_update_count = 0;
-                    alert_target.duration_ms = 0;
-                    alert_target.object_ids = climbing_track_ids;
-                    zone_alert_map_.insert(std::make_pair(zone_no, alert_target));
-                }
-                else
-                {
-                    auto &alert_target = it->second;
-                    alert_target.non_update_count = 0;
-                    alert_target.duration_ms = packet->timestamp_ms - alert_target.detect_ms;
-                    alert_target.object_ids = climbing_track_ids;
-                }
-            }
+            if (person_boxes.empty())
+                return RuleStatus::RULE_STATUS_OK;
+            // todo: 完善无证摊贩逻辑
+            
             return RuleStatus::RULE_STATUS_OK;
         }
 
-        REGISTER_ALERT_RULE("clambing", ClimbingRule)
+        REGISTER_ALERT_RULE("unlicensed_verdor", UnlicensedVendorRule)
     }
 }
