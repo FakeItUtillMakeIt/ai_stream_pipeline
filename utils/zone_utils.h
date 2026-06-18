@@ -218,7 +218,127 @@ public:
         return false;
     }
 
+    static bool iouExceedsThreshold(
+        const std::vector<PixelPoint> &poly1,
+        const std::vector<PixelPoint> &poly2,
+        float threshold)
+    {
+        // 快速排斥：若两多边形不相交，IOU 必为 0
+        if (!boxIsIntersect(poly1, poly2))
+        {
+            return false;
+        }
+
+        // 计算各自面积
+        float area1 = std::fabs(polygonArea(poly1));
+        float area2 = std::fabs(polygonArea(poly2));
+
+        constexpr float MIN_AREA = 1e-3f;
+        if (area1 < MIN_AREA || area2 < MIN_AREA)
+        {
+            return false;
+        }
+
+        // 计算交集多边形及其面积
+        std::vector<PixelPoint> intersection;
+        if (!clipPolygon(poly1, poly2, intersection))
+        {
+            return false;
+        }
+
+        float interArea = std::fabs(polygonArea(intersection));
+        float unionArea = area1 + area2 - interArea;
+
+        if (unionArea < MIN_AREA)
+        {
+            return false;
+        }
+
+        return (interArea / unionArea) > threshold;
+    }
 private:
+    // 计算两条线段（所在直线）的交点
+    static bool lineIntersection(
+        const PixelPoint &p1, const PixelPoint &p2,
+        const PixelPoint &p3, const PixelPoint &p4,
+        PixelPoint &out)
+    {
+        float d = (p4.y - p3.y) * (p2.x - p1.x) - (p4.x - p3.x) * (p2.y - p1.y);
+        if (std::fabs(d) < 1e-12f)
+            return false;
+
+        float ua = ((p4.x - p3.x) * (p1.y - p3.y) - (p4.y - p3.y) * (p1.x - p3.x)) / d;
+
+        out.x = p1.x + ua * (p2.x - p1.x);
+        out.y = p1.y + ua * (p2.y - p1.y);
+        return true;
+    }
+
+    // Sutherland-Hodgman 多边形裁剪
+    // 要求 clipper 为凸多边形（如矩形、凸包等），subject 可为任意简单多边形
+    static bool clipPolygon(
+        const std::vector<PixelPoint> &subject,
+        const std::vector<PixelPoint> &clipper,
+        std::vector<PixelPoint> &result)
+    {
+        result = subject;
+        int m = static_cast<int>(clipper.size());
+        if (m < 3)
+            return false;
+
+        // 根据有符号面积判断裁剪多边形方向（CCW 为正）
+        float clipperArea = polygonArea(clipper);
+        bool ccw = clipperArea > 0.0f;
+
+        for (int i = 0; i < m; ++i)
+        {
+            const PixelPoint &cp1 = clipper[i];
+            const PixelPoint &cp2 = clipper[(i + 1) % m];
+
+            std::vector<PixelPoint> input = result;
+            result.clear();
+            int n = static_cast<int>(input.size());
+            if (n == 0)
+                return false;
+
+            for (int j = 0; j < n; ++j)
+            {
+                const PixelPoint &curr = input[j];
+                const PixelPoint &prev = input[(j - 1 + n) % n];
+
+                float currSide = (cp2.x - cp1.x) * (curr.y - cp1.y) -
+                                 (cp2.y - cp1.y) * (curr.x - cp1.x);
+                float prevSide = (cp2.x - cp1.x) * (prev.y - cp1.y) -
+                                 (cp2.y - cp1.y) * (prev.x - cp1.x);
+
+                bool currIn = ccw ? (currSide >= -1e-6f) : (currSide <= 1e-6f);
+                bool prevIn = ccw ? (prevSide >= -1e-6f) : (prevSide <= 1e-6f);
+
+                if (currIn)
+                {
+                    if (!prevIn)
+                    {
+                        PixelPoint intersect;
+                        if (lineIntersection(cp1, cp2, prev, curr, intersect))
+                        {
+                            result.push_back(intersect);
+                        }
+                    }
+                    result.push_back(curr);
+                }
+                else if (prevIn)
+                {
+                    PixelPoint intersect;
+                    if (lineIntersection(cp1, cp2, prev, curr, intersect))
+                    {
+                        result.push_back(intersect);
+                    }
+                }
+            }
+        }
+
+        return result.size() >= 3;
+    }
     // =========================================================
     // 多边形面积
     // =========================================================
