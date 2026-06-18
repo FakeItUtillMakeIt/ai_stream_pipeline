@@ -8,7 +8,7 @@ namespace ai_stream
     namespace rules
     {
 
-        ClimbingRule::ClimbingRule()
+        ClimbingRule::ClimbingRule() : climbing_detector_(ClimbingDetector::Config())
         {
             LOG_INFO("ClimbingRule::ClimbingRule()");
         }
@@ -160,42 +160,30 @@ namespace ai_stream
             {
                 return RuleStatus::RULE_STATUS_OK;
             }
-            int climbing_count = 0;
+
             std::vector<int> climbing_track_ids;
-            std::vector<int> active_track_ids;
-            for (const auto &person_box : person_boxes)
+            auto climb_result = climbing_detector_.process(packet->detections);
+            if(climb_result.is_climbing)
             {
-                bool is_climbing = climbing_detector_.updateDetection(person_box.track_id, person_box, packet->frame_id);
-                if (is_climbing)
+                climbing_track_ids = climb_result.active_track_ids;
+                auto it = zone_alert_map_.find(zone_no);
+                if (it == zone_alert_map_.end())
                 {
-                    climbing_count++;
-                    climbing_track_ids.push_back(person_box.track_id);
+                    auto alert_target = AlertEvent();
+                    alert_target.detect_ms = packet->timestamp_ms;
+                    alert_target.zone_no = zone_no;
+                    alert_target.non_update_count = 0;
+                    alert_target.duration_ms = 0;
+                    alert_target.object_ids = climbing_track_ids;
+                    zone_alert_map_.insert(std::make_pair(zone_no, alert_target));
                 }
-                active_track_ids.push_back(person_box.track_id);
-            }
-            // 清理不活跃的轨迹
-            climbing_detector_.cleanupOldTracks(active_track_ids);
-            if (climbing_count <= 0)
-            {
-                return RuleStatus::RULE_STATUS_OK;
-            }
-            auto it = zone_alert_map_.find(zone_no);
-            if (it == zone_alert_map_.end())
-            {
-                auto alert_target = AlertEvent();
-                alert_target.detect_ms = packet->timestamp_ms;
-                alert_target.zone_no = zone_no;
-                alert_target.non_update_count = 0;
-                alert_target.duration_ms = 0;
-                alert_target.object_ids = climbing_track_ids;
-                zone_alert_map_.insert(std::make_pair(zone_no, alert_target));
-            }
-            else
-            {
-                auto &alert_target = it->second;
-                alert_target.non_update_count = 0;
-                alert_target.duration_ms = packet->timestamp_ms - alert_target.detect_ms;
-                alert_target.object_ids = climbing_track_ids;
+                else
+                {
+                    auto &alert_target = it->second;
+                    alert_target.non_update_count = 0;
+                    alert_target.duration_ms = packet->timestamp_ms - alert_target.detect_ms;
+                    alert_target.object_ids = climbing_track_ids;
+                }
             }
             return RuleStatus::RULE_STATUS_OK;
         }
