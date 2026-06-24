@@ -43,3 +43,5 @@
 /[Bb]uild
 
 [Rr]uns/
+
+__pycache__/
