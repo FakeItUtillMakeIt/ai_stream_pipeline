@@ -27,8 +27,8 @@
         "id": "preprocess1",
         "type": "cuda_resize_normalize",
         "params": {
-          "output_width": 640,
-          "output_height": 640
+          "output_width": 1280,
+          "output_height": 1280
         }
       },
       {
@@ -37,10 +37,10 @@
         "params": {
           "detector_type": "yolov8",
           "detector_config": {
-            "model_path": "/home/sevnce/project/ai_stream_pipeline/models/sevncevision/20260624_sevnce_18cls_nms_640.engine",
+            "model_path": "/home/sevnce/project/ai_stream_pipeline/models/sevncevision/20260624_sevnce_18cls_nms_1280.engine",
             "conf_threshold": 0.5,
             "nms_threshold": 0.4,
-            "input_size": { "width": 640, "height": 640 },
+            "input_size": { "width": 1280, "height": 1280 },
             "batch_size": 1
           }
         }

@@ -155,6 +155,18 @@ namespace ai_stream
                             if(params.contains("detector_config"))
                             {
                                 nlohmann::json detector_config = params["detector_config"];
+                                if (detector_config.contains("input_size"))
+                                {
+                                    auto input_size = detector_config["input_size"];
+                                    if (input_size.contains("width") && input_size.contains("height"))
+                                    {
+                                        infer_node->setInputSize(input_size["width"].get<int>(), input_size["height"].get<int>());
+                                    }
+                                    else
+                                    {
+                                        infer_node->setInputSize(640, 640);
+                                    }
+                                }
                                 if(detector_config.contains("batch_size"))
                                 {
                                     infer_node->setBatchSize(detector_config["batch_size"].get<int>());
@@ -168,18 +180,7 @@ namespace ai_stream
                                         return false;
                                     }
                                 }
-                                if (detector_config.contains("input_size"))
-                                {
-                                    auto input_size = detector_config["input_size"];
-                                    if (input_size.contains("width") && input_size.contains("height"))
-                                    {
-                                        infer_node->setInputSize(input_size["width"].get<int>(), input_size["height"].get<int>());
-                                    }
-                                    else
-                                    {
-                                        infer_node->setInputSize(640, 640);
-                                    }
-                                }
+                                
                             }
 
                         }

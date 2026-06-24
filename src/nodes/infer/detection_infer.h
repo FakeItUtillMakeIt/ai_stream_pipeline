@@ -130,7 +130,7 @@ private:
     bool cuda_graph_ready_ = false;
 
     // 常量
-    static constexpr int MAX_DETS = 20;
+    static constexpr int MAX_DETS = 200;
 
     size_t input_size_ = 0;
     size_t out_boxes_size_ = 0;
