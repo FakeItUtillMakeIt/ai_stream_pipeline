@@ -31,6 +31,7 @@ public:
     bool loadModel(const std::string& model_path) override;
     void setPrecision(const std::string& precision) override;
     void setBatchSize(int batch_size) override;
+    void setInputSize(int width, int height) override { input_width_ = width; input_height_ = height;}
     std::pair<int, int> getInputSize() const override;
     std::vector<std::string> getClassNames() const override;
 

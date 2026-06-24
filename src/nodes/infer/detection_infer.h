@@ -32,6 +32,7 @@ public:
     bool loadModel(const std::string& model_path) override;
     void setPrecision(const std::string& precision) override;
     void setBatchSize(int batch_size) override;
+    void setInputSize(int width, int height) override { input_width_ = width; input_height_ = height; }
     std::pair<int, int> getInputSize() const override;
     std::vector<std::string> getClassNames() const override;
 
@@ -129,8 +130,6 @@ private:
     bool cuda_graph_ready_ = false;
 
     // 常量
-    static constexpr int INPUT_H = 640;
-    static constexpr int INPUT_W = 640;
     static constexpr int MAX_DETS = 20;
 
     size_t input_size_ = 0;

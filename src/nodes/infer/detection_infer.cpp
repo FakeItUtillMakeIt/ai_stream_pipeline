@@ -222,14 +222,14 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
         for (int b = 0; b < actual_batch; ++b) {
             // 计算缩放比例
             if (frames[b]->source_mat && !frames[b]->source_mat->empty()) {
-                scale_x[b] = static_cast<float>(frames[b]->source_mat->cols) / INPUT_W;
-                scale_y[b] = static_cast<float>(frames[b]->source_mat->rows) / INPUT_H;
+                scale_x[b] = static_cast<float>(frames[b]->source_mat->cols) / input_width_;
+                scale_y[b] = static_cast<float>(frames[b]->source_mat->rows) / input_height_;
             } else if (frames[b]->mat && !frames[b]->mat->empty()) {
-                scale_x[b] = static_cast<float>(frames[b]->mat->cols) / INPUT_W;
-                scale_y[b] = static_cast<float>(frames[b]->mat->rows) / INPUT_H;
+                scale_x[b] = static_cast<float>(frames[b]->mat->cols) / input_width_;
+                scale_y[b] = static_cast<float>(frames[b]->mat->rows) / input_height_;
             } else {
-                scale_x[b] = frames[b]->width / static_cast<float>(INPUT_W);
-                scale_y[b] = frames[b]->height / static_cast<float>(INPUT_H);
+                scale_x[b] = frames[b]->width / static_cast<float>(input_width_);
+                scale_y[b] = frames[b]->height / static_cast<float>(input_height_);
             }
 
             // 判断数据来源
@@ -256,7 +256,7 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
         }
 
         // 设置动态输入形状
-        nvinfer1::Dims4 input_dims(valid_batch, 3, INPUT_H, INPUT_W);
+        nvinfer1::Dims4 input_dims(valid_batch, 3, input_height_, input_width_);
         if (!context_->setInputShape(input_name_.c_str(), input_dims)) {
             LOG_ERROR_FMT("[DetectionInfer] setInputShape failed for batch={}", valid_batch);
             return results;
@@ -269,11 +269,11 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
             LOG_DEBUG_FMT("[DetectionInfer] GPU path: {} frames", gpu_batch);
 
             for (int i = 0; i < gpu_batch; ++i) {
-                size_t offset = i * 3 * INPUT_H * INPUT_W * sizeof(float);
+                size_t offset = i * 3 * input_height_ * input_width_ * sizeof(float);
                 // 【加速】使用 transfer_stream_ 异步 D2D 拷贝
                 cudaMemcpyAsync(static_cast<char*>(d_input_) + offset,
                                 d_ptrs[i],
-                                3 * INPUT_H * INPUT_W * sizeof(float),
+                                3 * input_height_ * input_width_ * sizeof(float),
                                 cudaMemcpyDeviceToDevice, transfer_stream_);
             }
         }
@@ -284,7 +284,7 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
         if (cpu_batch > 0) {
             LOG_DEBUG_FMT("[DetectionInfer] CPU path: {} frames (pinned memory)", cpu_batch);
 
-            int hw = INPUT_H * INPUT_W;
+            int hw = input_height_ * input_width_;
             int batch_stride = 3 * hw;
 
             // 【加速】使用 pinned memory 代替 std::vector<float>
@@ -299,10 +299,10 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
                 float* batch_ptr = host_input + i * batch_stride;
 
                 // HWC → NCHW
-                for (int h = 0; h < INPUT_H; ++h) {
-                    for (int w = 0; w < INPUT_W; ++w) {
-                        int src_idx = (h * INPUT_W + w) * 3;
-                        int dst_idx = h * INPUT_W + w;
+                for (int h = 0; h < input_height_; ++h) {
+                    for (int w = 0; w < input_width_; ++w) {
+                        int src_idx = (h * input_width_ + w) * 3;
+                        int dst_idx = h * input_width_ + w;
                         batch_ptr[0 * hw + dst_idx] = img_ptr[src_idx + 2]; // R
                         batch_ptr[1 * hw + dst_idx] = img_ptr[src_idx + 1]; // G
                         batch_ptr[2 * hw + dst_idx] = img_ptr[src_idx + 0]; // B
@@ -454,7 +454,7 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
 // ============================================================
 void DetectionInferNode::preprocessBatchCpu(const std::vector<cv::Mat*>& images,
                                              float* gpu_buffer, int batch_size) {
-    int hw = INPUT_H * INPUT_W;
+    int hw = input_height_ * input_width_;
     int batch_stride = 3 * hw;
 
     float* host_input = h_pinned_input_
@@ -466,10 +466,10 @@ void DetectionInferNode::preprocessBatchCpu(const std::vector<cv::Mat*>& images,
         const float* img_ptr = image.ptr<float>();
         float* batch_ptr = host_input + b * batch_stride;
 
-        for (int h = 0; h < INPUT_H; ++h) {
-            for (int w = 0; w < INPUT_W; ++w) {
-                int src_idx = (h * INPUT_W + w) * 3;
-                int dst_idx = h * INPUT_W + w;
+        for (int h = 0; h < input_height_; ++h) {
+            for (int w = 0; w < input_width_; ++w) {
+                int src_idx = (h * input_width_ + w) * 3;
+                int dst_idx = h * input_width_ + w;
                 batch_ptr[0 * hw + dst_idx] = img_ptr[src_idx + 2]; // R
                 batch_ptr[1 * hw + dst_idx] = img_ptr[src_idx + 1]; // G
                 batch_ptr[2 * hw + dst_idx] = img_ptr[src_idx + 0]; // B
@@ -538,7 +538,7 @@ bool DetectionInferNode::captureCudaGraph(int batch_size) {
 
     try {
         // 设置输入形状
-        nvinfer1::Dims4 input_dims(batch_size, 3, INPUT_H, INPUT_W);
+        nvinfer1::Dims4 input_dims(batch_size, 3, input_height_, input_width_);
         if (!context_->setInputShape(input_name_.c_str(), input_dims)) {
             LOG_ERROR_FMT("[DetectionInfer] CUDA Graph: setInputShape failed");
             return false;
@@ -619,7 +619,7 @@ void DetectionInferNode::destroyCudaGraph() {
 // ============================================================
 bool DetectionInferNode::allocatePinnedMemory() {
     int max_batch = max_batch_size_.load();
-    int hw = INPUT_H * INPUT_W;
+    int hw = input_height_ * input_width_;
     int batch_stride = 3 * hw;
 
     size_t input_bytes = static_cast<size_t>(max_batch) * batch_stride * sizeof(float);
@@ -742,7 +742,7 @@ bool DetectionInferNode::initEngine(const std::string& engine_path) {
         }
 
         int max_batch = max_batch_size_.load();
-        input_size_ = static_cast<size_t>(max_batch) * 3 * INPUT_H * INPUT_W * sizeof(float);
+        input_size_ = static_cast<size_t>(max_batch) * 3 * input_height_ * input_width_ * sizeof(float);
         out_boxes_size_ = static_cast<size_t>(max_batch) * MAX_DETS * 4 * sizeof(float);
         out_scores_size_ = static_cast<size_t>(max_batch) * MAX_DETS * sizeof(float);
         out_classes_size_ = static_cast<size_t>(max_batch) * MAX_DETS * sizeof(int64_t);

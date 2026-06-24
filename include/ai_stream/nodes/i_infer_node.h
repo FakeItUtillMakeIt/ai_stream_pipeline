@@ -49,6 +49,13 @@ public:
     virtual void setBatchSize(int batch_size) = 0;
 
     /**
+     * @brief 设置模型输入尺寸要求 [宽, 高]
+     * @param width 输入宽度
+     * @param height 输入高度
+     */
+    virtual void setInputSize(int width, int height) = 0;
+
+    /**
      * @brief 获取当前模型输入尺寸要求 [宽, 高]
      */
     virtual std::pair<int, int> getInputSize() const = 0;

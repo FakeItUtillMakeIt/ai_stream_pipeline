@@ -113,7 +113,14 @@ namespace ai_stream
                         // std::vector<float> mean = {0.485f, 0.456f, 0.406f};
                         // preprocess_node->setStd(std);
                         // preprocess_node->setMean(mean);
-                        preprocess_node->setTargetSize(640, 640);
+                        if (params.contains("output_width") && params.contains("output_height"))
+                        {
+                            preprocess_node->setTargetSize(params["output_width"].get<int>(), params["output_height"].get<int>());
+                        }
+                        else
+                        {
+                            preprocess_node->setTargetSize(640, 640);
+                        }
                     }
 
                     if (type.find("infer") != std::string::npos)
@@ -159,6 +166,18 @@ namespace ai_stream
                                     {
                                         LOG_ERROR_FMT("[Pipeline {}] Failed to load model: {}", id_, model_path);
                                         return false;
+                                    }
+                                }
+                                if (detector_config.contains("input_size"))
+                                {
+                                    auto input_size = detector_config["input_size"];
+                                    if (input_size.contains("width") && input_size.contains("height"))
+                                    {
+                                        infer_node->setInputSize(input_size["width"].get<int>(), input_size["height"].get<int>());
+                                    }
+                                    else
+                                    {
+                                        infer_node->setInputSize(640, 640);
                                     }
                                 }
                             }

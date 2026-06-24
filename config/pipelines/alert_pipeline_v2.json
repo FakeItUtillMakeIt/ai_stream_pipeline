@@ -27,7 +27,8 @@
         "id": "preprocess1",
         "type": "cuda_resize_normalize",
         "params": {
-          
+          "output_width": 640,
+          "output_height": 640
         }
       },
       {
@@ -36,7 +37,7 @@
         "params": {
           "detector_type": "yolov8",
           "detector_config": {
-            "model_path": "/home/sevnce/project/ai_stream_pipeline/models/sevncevision/20260509_sevnce_14_cls_nms.engine",
+            "model_path": "/home/sevnce/project/ai_stream_pipeline/models/sevncevision/20260624_sevnce_18cls_nms_640.engine",
             "conf_threshold": 0.5,
             "nms_threshold": 0.4,
             "input_size": { "width": 640, "height": 640 },
@@ -73,9 +74,9 @@
           "process_type": "parallel",
           "rules": [
             {
-              "type": "person_intrusion",
+              "type": "fighting",
               "params": {
-                "name": "person_intrusion1",
+                "name": "fighting1",
                 "rule_zones":[
                 ]
               }
@@ -85,7 +86,7 @@
       },
       {
         "id": "draw1",
-        "type": "gpu_osd_draw",
+        "type": "osd_draw",
         "params": {
           "snapshot": {
             "enabled": true,
