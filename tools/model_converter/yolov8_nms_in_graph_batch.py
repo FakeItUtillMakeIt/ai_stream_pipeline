@@ -229,7 +229,7 @@ def add_nms_to_yolov8(onnx_path, output_path, num_classes=14,
 
 # ========================== 2. 推理代码（支持 Batch）==========================
 
-def preprocess(images, input_size=640):
+def preprocess(images, input_size= 1280):
     """
     支持单张(str)或多张(list)图片输入，返回 batch 张量和原始尺寸列表
     """
@@ -267,8 +267,9 @@ def inference_with_nms(session, images, input_size=None):
     input_name = session.get_inputs()[0].name
     if input_size is None:
         input_shape = session.get_inputs()[0].shape
-        input_size = input_shape[2] if isinstance(input_shape[2], int) else 640
+        input_size = input_shape[2] if isinstance(input_shape[2], int) else  1280
     input_tensor, orig_sizes = preprocess(images, input_size)
+    actual_size = input_tensor.shape[-1]
     batch_size = input_tensor.shape[0]
 
     outputs = session.run(None, {input_name: input_tensor})
@@ -290,8 +291,8 @@ def inference_with_nms(session, images, input_size=None):
             cx, cy, w, h = det_boxes[i]
             x1 = max(0, cx - w / 2)
             y1 = max(0, cy - h / 2)
-            x2 = min(input_size, cx + w / 2)
-            y2 = min(input_size, cy + h / 2)
+            x2 = min(actual_size, cx + w / 2)
+            y2 = min(actual_size, cy + h / 2)
 
             cls_id = int(det_classes[i][0]) if det_classes.ndim > 1 else int(det_classes[i])
 
@@ -299,7 +300,7 @@ def inference_with_nms(session, images, input_size=None):
                 float(x1), float(y1), float(x2), float(y2),
                 float(det_scores[i]), cls_id
             ])
-        return results, orig_sizes
+        return results, orig_sizes, actual_size
 
     # 兼容旧单 batch 模型
     else:
@@ -311,17 +312,17 @@ def inference_with_nms(session, images, input_size=None):
             cx, cy, w, h = det_boxes[i]
             x1 = max(0, cx - w / 2)
             y1 = max(0, cy - h / 2)
-            x2 = min(input_size, cx + w / 2)
-            y2 = min(input_size, cy + h / 2)
+            x2 = min(actual_size, cx + w / 2)
+            y2 = min(actual_size, cy + h / 2)
             cls_id = int(det_classes[i][0]) if det_classes.ndim > 1 else int(det_classes[i])
             results[0].append([
                 float(x1), float(y1), float(x2), float(y2),
                 float(det_scores[i]), cls_id
             ])
-        return results, orig_sizes
+        return results, orig_sizes, actual_size
 
 
-def postprocess_yolov8_single(predictions, conf_threshold=0.25, nms_threshold=0.45, img_size=640):
+def postprocess_yolov8_single(predictions, conf_threshold=0.25, nms_threshold=0.45, img_size= 1280):
     """单张图片后处理（适配 (18, 8400) 格式）"""
     predictions = predictions.transpose(1, 0)  # (8400, 18)
 
@@ -377,7 +378,7 @@ def postprocess_yolov8_single(predictions, conf_threshold=0.25, nms_threshold=0.
     return detections
 
 
-def postprocess_yolov8(outputs, conf_threshold=0.25, nms_threshold=0.45, img_size=640):
+def postprocess_yolov8(outputs, conf_threshold=0.25, nms_threshold=0.45, img_size= 1280):
     """Batch 后处理（适配 (batch, 18, 8400) 格式）"""
     batch_size = outputs.shape[0]
     all_detections = []
@@ -400,7 +401,7 @@ def inference_without_nms(session, images, conf_threshold=0.25, nms_threshold=0.
 
     input_name = session.get_inputs()[0].name
     input_shape = session.get_inputs()[0].shape
-    input_size = input_shape[2] if isinstance(input_shape[2], int) else 640
+    input_size = input_shape[2] if isinstance(input_shape[2], int) else  1280
     input_tensor, orig_sizes = preprocess(images, input_size)
 
     outputs = session.run(None, {input_name: input_tensor})
@@ -415,7 +416,7 @@ def inference_without_nms(session, images, conf_threshold=0.25, nms_threshold=0.
     return detections, orig_sizes
 
 
-def draw_detections(image_path, detections, class_names=None, output_path="result.jpg", input_size=640):
+def draw_detections(image_path, detections, class_names=None, output_path="result.jpg", input_size= 1280):
     """单张图片绘制检测结果"""
     img = cv2.imread(image_path)
     if img is None:
@@ -464,7 +465,7 @@ def draw_detections(image_path, detections, class_names=None, output_path="resul
     return img
 
 
-def draw_detections_batch(image_paths, all_detections, class_names=None, output_dir=".", prefix="result", input_size=640):
+def draw_detections_batch(image_paths, all_detections, class_names=None, output_dir=".", prefix="result", input_size= 1280):
     """批量绘制检测结果"""
     if isinstance(image_paths, str):
         image_paths = [image_paths]
@@ -519,38 +520,24 @@ def main():
     session = ort.InferenceSession(args.model_path, providers=['CPUExecutionProvider'])
 
     input_shape = session.get_inputs()[0].shape
-    input_size = input_shape[2] if isinstance(input_shape[2], int) else 640
+    input_size = input_shape[2] if isinstance(input_shape[2], int) else  1280
     print(f"🔍 模型输入尺寸: {input_size}x{input_size}，{input_shape}")
 
     print(f"🔍 输入图片: {args.image_path} (共 {len(args.image_path)} 张)")
 
     if is_nms_model(session):
         print("🔍 检测到模型已内置NMS，直接输出过滤结果")
-        all_detections, orig_sizes = inference_with_nms(session, args.image_path, input_size=input_size)
+        all_detections, orig_sizes, actual_size = inference_with_nms(session, args.image_path, input_size=input_size)
     else:
         print("🔍 检测到原始模型，使用Python后处理")
+        input_shape = session.get_inputs()[0].shape
+        input_size = input_shape[2] if isinstance(input_shape[2], int) else  1280
+        actual_size = input_size
         all_detections, orig_sizes = inference_without_nms(
             session, args.image_path,
             conf_threshold=args.conf,
-            nms_threshold=args.nms
-        )
-
-    class_names = ['person', 'head', 'helmet', 'class3', 'class4', 'class5',
-                   'class6', 'class7', 'class8', 'class9', 'class10',
-                   'class11', 'class12', 'class13', 'class14']
-
-    for idx, (img_path, detections) in enumerate(zip(args.image_path, all_detections)):
-        print(f"\n图片 [{idx+1}/{len(args.image_path)}]: {img_path}")
-        print(f"  检测到 {len(detections)} 个目标:")
-
-    if any(len(d) > 0 for d in all_detections):
-        draw_detections_batch(
-            args.image_path, 
-            all_detections, 
-            class_names, 
-            output_dir=args.output_dir,
-            prefix=args.output_prefix,
-            input_size=input_size
+            nms_threshold=args.nms,
+            input_size=actual_size
         )
 
     class_names = ['person', 'head', 'helmet', 'class3', 'class4', 'class5',
