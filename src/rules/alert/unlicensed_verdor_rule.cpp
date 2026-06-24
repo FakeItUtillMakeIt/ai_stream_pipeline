@@ -43,14 +43,14 @@ namespace ai_stream
             LOG_INFO_FMT("UnlicensedVendorRule::initialize() success");
 
             // 判断区域是否有效/配置
-            uint8_t invaild_zone_count = 0;
+            uint8_t  invalid_zone_count = 0;
             for (const auto &det_zone : intrusion_zones_)
             {
                 bool zone_is_valid = ZoneValidator::zoneIsValid(det_zone.second);
                 if (!zone_is_valid)
                 {
-                    LOG_INFO_FMT("UnlicensedVendorRule::process() zone {} is invalid", det_zone.first);
-                    invaild_zone_count++;
+                    LOG_INFO_FMT("UnlicensedVendorRule::initialize() zone {} is invalid", det_zone.first);
+                     invalid_zone_count++;
                     continue;
                 }
                 valid_intrusion_zones_[det_zone.first] = det_zone.second;
@@ -58,7 +58,7 @@ namespace ai_stream
             // 如果所有区域都无效，则全域监测(不进行区域过滤)
             if (valid_intrusion_zones_.empty())
             {
-                LOG_INFO("UnlicensedVendorRule::process() all zones are invalid, global monitoring");
+                LOG_INFO("UnlicensedVendorRule::initialize() all zones are invalid, global monitoring");
             }
 
             return true;
@@ -183,10 +183,6 @@ namespace ai_stream
                         break;
                     }
                 }
-                if (is_person_toy_intersect)
-                {
-                    break;
-                }
             }
             if (!is_person_toy_intersect)
             {
@@ -205,10 +201,11 @@ namespace ai_stream
             }
             else
             {
+                // todo 查看记录的person id及toy id是否一致
                 auto &alert_target = it->second;
                 alert_target.non_update_count = 0;
                 alert_target.duration_ms = packet->timestamp_ms - alert_target.detect_ms;
-                alert_target.object_ids = person_track_ids; // todo 是否需要检查是否物品ID有变化
+                alert_target.object_ids = person_track_ids; 
             }
 
             return RuleStatus::RULE_STATUS_OK;
