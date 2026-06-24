@@ -65,13 +65,33 @@ def add_nms_to_yolov8(onnx_path, output_path, num_classes=14,
         name=next_name('slice_scores'),
     )
 
-    # ---------- 4. Sigmoid ----------
-    sigmoid_scores = helper.make_node(
-        'Sigmoid',
-        inputs=['scores_raw'],
-        outputs=['scores'],
-        name=next_name('sigmoid'),
-    )
+    # ---------- 4. 检测模型是否已包含 Sigmoid ----------
+    # 检查模型输出路径中是否有 Sigmoid 节点（模型可能已内置 sigmoid）
+    model_has_sigmoid = False
+    output_tensor_name = graph.output[0].name
+    for node in graph.node:
+        if output_tensor_name in node.output:
+            # 找到输出节点，检查其输入中是否有 Sigmoid
+            for inp in node.input:
+                for prev_node in graph.node:
+                    if inp in prev_node.output and prev_node.op_type == 'Sigmoid':
+                        model_has_sigmoid = True
+                        break
+                if model_has_sigmoid:
+                    break
+            break
+
+    if model_has_sigmoid:
+        print("⚠️ 检测到模型已包含 Sigmoid，跳过重复 Sigmoid")
+        scores_name = 'scores_raw'
+    else:
+        sigmoid_scores = helper.make_node(
+            'Sigmoid',
+            inputs=['scores_raw'],
+            outputs=['scores'],
+            name=next_name('sigmoid'),
+        )
+        scores_name = 'scores'
 
     # ---------- 5. NMS ----------
     max_out = const('max_out', TensorProto.INT64, [1], [max_detections])
@@ -80,7 +100,7 @@ def add_nms_to_yolov8(onnx_path, output_path, num_classes=14,
 
     nms_node = helper.make_node(
         'NonMaxSuppression',
-        inputs=['boxes_raw', 'scores', 'max_out', 'iou_thres', 'score_thres'],
+        inputs=['boxes_raw', scores_name, 'max_out', 'iou_thres', 'score_thres'],
         outputs=['selected_indices'],
         center_point_box=1,
         name=next_name('nms'),
@@ -123,7 +143,7 @@ def add_nms_to_yolov8(onnx_path, output_path, num_classes=14,
     )
     gather_scores = helper.make_node(
         'GatherND',
-        inputs=['scores', 'selected_indices'],
+        inputs=[scores_name, 'selected_indices'],
         outputs=['det_scores'],
         name=next_name('gather_scores'),
     )
@@ -181,13 +201,18 @@ def add_nms_to_yolov8(onnx_path, output_path, num_classes=14,
     graph.initializer.extend(init_list)
 
     # ---------- 11. 节点 ----------
-    graph.node.extend([
-        slice_boxes, transpose_boxes, slice_scores, sigmoid_scores,
+    new_nodes = [
+        slice_boxes, transpose_boxes, slice_scores,
+    ]
+    if not model_has_sigmoid:
+        new_nodes.append(sigmoid_scores)
+    new_nodes.extend([
         nms_node,
         slice_batch, slice_class, slice_box, concat_indices,
         gather_boxes, gather_scores,
         shape_indices, gather_num_dets, squeeze_num_dets,
     ])
+    graph.node.extend(new_nodes)
 
     # ---------- 12. 保存 ----------
     try:
@@ -231,7 +256,7 @@ def is_nms_model(session):
     return 'det_boxes' in names and 'det_scores' in names
 
 
-def inference_with_nms(session, images, input_size=640):
+def inference_with_nms(session, images, input_size=None):
     """
     支持 batch 推理的 NMS 模型
     返回: list of detections per image, list of orig_sizes
@@ -240,6 +265,9 @@ def inference_with_nms(session, images, input_size=640):
         images = [images]
 
     input_name = session.get_inputs()[0].name
+    if input_size is None:
+        input_shape = session.get_inputs()[0].shape
+        input_size = input_shape[2] if isinstance(input_shape[2], int) else 640
     input_tensor, orig_sizes = preprocess(images, input_size)
     batch_size = input_tensor.shape[0]
 
@@ -371,7 +399,9 @@ def inference_without_nms(session, images, conf_threshold=0.25, nms_threshold=0.
         images = [images]
 
     input_name = session.get_inputs()[0].name
-    input_tensor, orig_sizes = preprocess(images)
+    input_shape = session.get_inputs()[0].shape
+    input_size = input_shape[2] if isinstance(input_shape[2], int) else 640
+    input_tensor, orig_sizes = preprocess(images, input_size)
 
     outputs = session.run(None, {input_name: input_tensor})
     output = outputs[0]  # [batch, 18, 8400]
@@ -380,12 +410,12 @@ def inference_without_nms(session, images, conf_threshold=0.25, nms_threshold=0.
         output,
         conf_threshold=conf_threshold,
         nms_threshold=nms_threshold,
-        img_size=640
+        img_size=input_size
     )
     return detections, orig_sizes
 
 
-def draw_detections(image_path, detections, class_names=None, output_path="result.jpg"):
+def draw_detections(image_path, detections, class_names=None, output_path="result.jpg", input_size=640):
     """单张图片绘制检测结果"""
     img = cv2.imread(image_path)
     if img is None:
@@ -393,7 +423,7 @@ def draw_detections(image_path, detections, class_names=None, output_path="resul
         return None
 
     img_h, img_w = img.shape[:2]
-    scale_x, scale_y = img_w / 640, img_h / 640
+    scale_x, scale_y = img_w / input_size, img_h / input_size
 
     colors = [
         (255,0,0),(0,255,0),(0,0,255),(255,255,0),(255,0,255),
@@ -434,7 +464,7 @@ def draw_detections(image_path, detections, class_names=None, output_path="resul
     return img
 
 
-def draw_detections_batch(image_paths, all_detections, class_names=None, output_dir=".", prefix="result"):
+def draw_detections_batch(image_paths, all_detections, class_names=None, output_dir=".", prefix="result", input_size=640):
     """批量绘制检测结果"""
     if isinstance(image_paths, str):
         image_paths = [image_paths]
@@ -445,7 +475,7 @@ def draw_detections_batch(image_paths, all_detections, class_names=None, output_
     for idx, (img_path, dets) in enumerate(zip(image_paths, all_detections)):
         base_name = os.path.splitext(os.path.basename(img_path))[0]
         out_path = os.path.join(output_dir, f"{prefix}_{base_name}.jpg")
-        img = draw_detections(img_path, dets, class_names, out_path)
+        img = draw_detections(img_path, dets, class_names, out_path, input_size=input_size)
         results.append(img)
 
     return results
@@ -488,17 +518,39 @@ def main():
     print(f"加载模型: {args.model_path}")
     session = ort.InferenceSession(args.model_path, providers=['CPUExecutionProvider'])
 
+    input_shape = session.get_inputs()[0].shape
+    input_size = input_shape[2] if isinstance(input_shape[2], int) else 640
+    print(f"🔍 模型输入尺寸: {input_size}x{input_size}，{input_shape}")
+
     print(f"🔍 输入图片: {args.image_path} (共 {len(args.image_path)} 张)")
 
     if is_nms_model(session):
         print("🔍 检测到模型已内置NMS，直接输出过滤结果")
-        all_detections, orig_sizes = inference_with_nms(session, args.image_path)
+        all_detections, orig_sizes = inference_with_nms(session, args.image_path, input_size=input_size)
     else:
         print("🔍 检测到原始模型，使用Python后处理")
         all_detections, orig_sizes = inference_without_nms(
             session, args.image_path,
             conf_threshold=args.conf,
             nms_threshold=args.nms
+        )
+
+    class_names = ['person', 'head', 'helmet', 'class3', 'class4', 'class5',
+                   'class6', 'class7', 'class8', 'class9', 'class10',
+                   'class11', 'class12', 'class13', 'class14']
+
+    for idx, (img_path, detections) in enumerate(zip(args.image_path, all_detections)):
+        print(f"\n图片 [{idx+1}/{len(args.image_path)}]: {img_path}")
+        print(f"  检测到 {len(detections)} 个目标:")
+
+    if any(len(d) > 0 for d in all_detections):
+        draw_detections_batch(
+            args.image_path, 
+            all_detections, 
+            class_names, 
+            output_dir=args.output_dir,
+            prefix=args.output_prefix,
+            input_size=input_size
         )
 
     class_names = ['person', 'head', 'helmet', 'class3', 'class4', 'class5',
