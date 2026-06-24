@@ -229,26 +229,108 @@ def add_nms_to_yolov8(onnx_path, output_path, num_classes=14,
 
 # ========================== 2. 推理代码（支持 Batch）==========================
 
-def preprocess(images, input_size= 1280):
+def letterbox_resize(img_np, new_shape=1280, color=(114, 114, 114)):
     """
-    支持单张(str)或多张(list)图片输入，返回 batch 张量和原始尺寸列表
+    将图片按照YOLO的letterbox方式进行缩放，保持长宽比，短边用灰色填充。
+    与 ultralytics.utils.augmentations.LetterBox 行为一致。
+    :param img_np: np.ndarray, BGR格式, (H, W, 3)
+    :param new_shape: int or tuple, 目标尺寸，默认为1280 (int)
+    :param color: 填充颜色 (B, G, R)，默认灰色(114, 114, 114)
+    :return:
+        padded_img: np.ndarray, (new_h, new_w, 3), float32
+        ratio: float, 缩放比例
+        pad_left: int, 左填充像素数
+        pad_top: int, 上填充像素数
+    """
+    shape = img_np.shape[:2]  # current shape [height, width]
+    if isinstance(new_shape, int):
+        new_shape = (new_shape, new_shape)
+
+    # Scale ratio (new / old)
+    r = min(new_shape[0] / shape[0], new_shape[1] / shape[1])
+    
+    # Compute unpadded dimensions
+    new_unpad_w = int(round(shape[1] * r))
+    new_unpad_h = int(round(shape[0] * r))
+    
+    # Compute padding
+    dw = new_shape[1] - new_unpad_w
+    dh = new_shape[0] - new_unpad_h
+    
+    # Split padding evenly (center the image)
+    pad_left = dw // 2
+    pad_top = dh // 2
+    pad_right = dw - pad_left
+    pad_bottom = dh - pad_top
+
+    if (new_unpad_w, new_unpad_h) != (shape[1], shape[0]):  # resize if needed
+        img_np = cv2.resize(img_np, (new_unpad_w, new_unpad_h), interpolation=cv2.INTER_LINEAR)
+
+    # Add padding
+    padded_img = cv2.copyMakeBorder(img_np, pad_top, pad_bottom, pad_left, pad_right, cv2.BORDER_CONSTANT, value=color)
+
+    return padded_img, r, pad_left, pad_top
+
+
+def preprocess(images, input_size=1280):
+    """
+    支持单张(str)或多张(list)图片输入，返回 batch 张量、原始尺寸列表和padding信息列表
+    使用YOLO标准letterbox预处理，与Ultralytics保持一致
     """
     if isinstance(images, str):
         images = [images]
 
     batch = []
     orig_sizes = []
+    pad_infos = []  # 存储每张图的 (pad_left, pad_top, ratio)
+    
     for image_path in images:
-        original_image = Image.open(image_path).convert('RGB')
-        orig_w, orig_h = original_image.size
-        img = original_image.resize((input_size, input_size), Image.Resampling.LANCZOS)
-        arr = np.array(img).astype(np.float32) / 255.0
-        arr = arr.transpose(2, 0, 1)
-        batch.append(arr)
+        # 使用cv2读取，与PT端保持一致 (BGR格式)
+        img = cv2.imread(image_path)
+        if img is None:
+            raise FileNotFoundError(f"无法读取图像: {image_path}")
+
+        orig_h, orig_w = img.shape[:2]
         orig_sizes.append((orig_w, orig_h))
 
+        # Letterbox resize, 保持长宽比
+        img_resized, ratio, pad_left, pad_top = letterbox_resize(img, new_shape=input_size)
+        pad_infos.append((pad_left, pad_top, ratio))
+
+        # BGR to RGB
+        img_rgb = cv2.cvtColor(img_resized, cv2.COLOR_BGR2RGB)
+
+        # Normalize: /255.0
+        img_arr = img_rgb.astype(np.float32) / 255.0
+
+        # HWC to CHW
+        img_arr = img_arr.transpose(2, 0, 1)
+
+        batch.append(img_arr)
+
     tensor = np.stack(batch, axis=0)  # [batch, 3, H, W]
-    return tensor, orig_sizes
+    return tensor, orig_sizes, pad_infos
+
+
+def scale_coords(coords, pad_left, pad_top, ratio):
+    """
+    将letterbox空间中的坐标映射回原始图像坐标
+    
+    :param coords: list or np.array, [x1, y1, x2, y2] in letterbox space (0~1280)
+    :param pad_left: int, 左填充像素
+    :param pad_top: int, 上填充像素
+    :param ratio: float, 缩放比例
+    :return: list, [x1, y1, x2, y2] in original image space
+    """
+    x1, y1, x2, y2 = coords
+    
+    # 减去padding，除以缩放比例，得到原始图像坐标
+    x1_orig = (x1 - pad_left) / ratio
+    y1_orig = (y1 - pad_top) / ratio
+    x2_orig = (x2 - pad_left) / ratio
+    y2_orig = (y2 - pad_top) / ratio
+    
+    return [x1_orig, y1_orig, x2_orig, y2_orig]
 
 
 def is_nms_model(session):
@@ -268,7 +350,7 @@ def inference_with_nms(session, images, input_size=None):
     if input_size is None:
         input_shape = session.get_inputs()[0].shape
         input_size = input_shape[2] if isinstance(input_shape[2], int) else  1280
-    input_tensor, orig_sizes = preprocess(images, input_size)
+    input_tensor, orig_sizes, pad_infos = preprocess(images, input_size)
     actual_size = input_tensor.shape[-1]
     batch_size = input_tensor.shape[0]
 
@@ -277,7 +359,7 @@ def inference_with_nms(session, images, input_size=None):
 
     # 新模型: det_boxes, det_scores, det_classes, det_batch_ids, det_num_dets
     if 'det_batch_ids' in output_names:
-        det_boxes, det_scores, det_classes, det_batch_ids, det_num_dets = outputs
+        det_boxes, det_scores_arg, det_classes, det_batch_ids, det_num_dets = outputs
 
         # 按 batch_id 分组
         results = [[] for _ in range(batch_size)]
@@ -288,36 +370,66 @@ def inference_with_nms(session, images, input_size=None):
             if batch_id >= batch_size:
                 continue
 
+            # 获取当前图像的padding信息
+            pad_left, pad_top, ratio = pad_infos[batch_id]
+            img_w, img_h = orig_sizes[batch_id]
+            
             cx, cy, w, h = det_boxes[i]
             x1 = max(0, cx - w / 2)
             y1 = max(0, cy - h / 2)
             x2 = min(actual_size, cx + w / 2)
             y2 = min(actual_size, cy + h / 2)
 
+            # 映射回原始图像坐标
+            x1_orig, y1_orig, x2_orig, y2_orig = scale_coords([x1, y1, x2, y2], pad_left, pad_top, ratio)
+            
+            # 裁剪到原始图像边界
+            x1_orig = max(0, min(x1_orig, img_w))
+            y1_orig = max(0, min(y1_orig, img_h))
+            x2_orig = max(0, min(x2_orig, img_w))
+            y2_orig = max(0, min(y2_orig, img_h))
+
             cls_id = int(det_classes[i][0]) if det_classes.ndim > 1 else int(det_classes[i])
 
             results[batch_id].append([
-                float(x1), float(y1), float(x2), float(y2),
-                float(det_scores[i]), cls_id
+                float(x1_orig), float(y1_orig), float(x2_orig), float(y2_orig),
+                float(det_scores_arg[i]), cls_id
             ])
         return results, orig_sizes, actual_size
 
     # 兼容旧单 batch 模型
     else:
-        det_boxes, det_scores, det_classes, det_num_dets = outputs
+        det_boxes, det_scores_arg, det_classes, det_num_dets = outputs
         num_dets = int(det_num_dets)
         results = [[] for _ in range(batch_size)]
 
         for i in range(num_dets):
+            # 获取当前图像的padding信息
+            if batch_size > 0:
+                pad_left, pad_top, ratio = pad_infos[0]
+                img_w, img_h = orig_sizes[0]
+            else:
+                continue
+
             cx, cy, w, h = det_boxes[i]
             x1 = max(0, cx - w / 2)
             y1 = max(0, cy - h / 2)
             x2 = min(actual_size, cx + w / 2)
             y2 = min(actual_size, cy + h / 2)
+            
+            # 映射回原始图像坐标
+            x1_orig, y1_orig, x2_orig, y2_orig = scale_coords([x1, y1, x2, y2], pad_left, pad_top, ratio)
+            
+            # 裁剪到原始图像边界
+            x1_orig = max(0, min(x1_orig, img_w))
+            y1_orig = max(0, min(y1_orig, img_h))
+            x2_orig = max(0, min(x2_orig, img_w))
+            y2_orig = max(0, min(y2_orig, img_h))
+            
             cls_id = int(det_classes[i][0]) if det_classes.ndim > 1 else int(det_classes[i])
             results[0].append([
-                float(x1), float(y1), float(x2), float(y2),
-                float(det_scores[i]), cls_id
+                float(x1_orig), float(y1_orig), float(x2_orig), float(y2_orig),
+                float(det_scores_arg[i]), cls_id
             ])
         return results, orig_sizes, actual_size
 
@@ -402,7 +514,7 @@ def inference_without_nms(session, images, conf_threshold=0.25, nms_threshold=0.
     input_name = session.get_inputs()[0].name
     input_shape = session.get_inputs()[0].shape
     input_size = input_shape[2] if isinstance(input_shape[2], int) else  1280
-    input_tensor, orig_sizes = preprocess(images, input_size)
+    input_tensor, orig_sizes, pad_infos = preprocess(images, input_size)
 
     outputs = session.run(None, {input_name: input_tensor})
     output = outputs[0]  # [batch, 18, 8400]
@@ -416,15 +528,14 @@ def inference_without_nms(session, images, conf_threshold=0.25, nms_threshold=0.
     return detections, orig_sizes
 
 
-def draw_detections(image_path, detections, class_names=None, output_path="result.jpg", input_size= 1280):
-    """单张图片绘制检测结果"""
+def draw_detections(image_path, detections, class_names=None, output_path="result.jpg"):
+    """单张图片绘制检测结果（坐标已经是原始图像坐标，无需缩放）"""
     img = cv2.imread(image_path)
     if img is None:
         print(f"错误：无法读取图像 {image_path}")
         return None
 
     img_h, img_w = img.shape[:2]
-    scale_x, scale_y = img_w / input_size, img_h / input_size
 
     colors = [
         (255,0,0),(0,255,0),(0,0,255),(255,255,0),(255,0,255),
@@ -436,11 +547,12 @@ def draw_detections(image_path, detections, class_names=None, output_path="resul
         class_names = [f'class_{i}' for i in range(15)]
 
     for det in detections:
-        x1_m, y1_m, x2_m, y2_m, conf, cls_id = det
-        x1 = int(x1_m * scale_x)
-        y1 = int(y1_m * scale_y)
-        x2 = int(x2_m * scale_x)
-        y2 = int(y2_m * scale_y)
+        x1, y1, x2, y2, conf, cls_id = det
+        # 直接取整，因为坐标已经是原始图像坐标
+        x1 = int(x1)
+        y1 = int(y1)
+        x2 = int(x2)
+        y2 = int(y2)
 
         if x1 >= x2 or y1 >= y2:
             continue
@@ -465,7 +577,7 @@ def draw_detections(image_path, detections, class_names=None, output_path="resul
     return img
 
 
-def draw_detections_batch(image_paths, all_detections, class_names=None, output_dir=".", prefix="result", input_size= 1280):
+def draw_detections_batch(image_paths, all_detections, class_names=None, output_dir=".", prefix="result"):
     """批量绘制检测结果"""
     if isinstance(image_paths, str):
         image_paths = [image_paths]
@@ -476,7 +588,7 @@ def draw_detections_batch(image_paths, all_detections, class_names=None, output_
     for idx, (img_path, dets) in enumerate(zip(image_paths, all_detections)):
         base_name = os.path.splitext(os.path.basename(img_path))[0]
         out_path = os.path.join(output_dir, f"{prefix}_{base_name}.jpg")
-        img = draw_detections(img_path, dets, class_names, out_path, input_size=input_size)
+        img = draw_detections(img_path, dets, class_names, out_path)
         results.append(img)
 
     return results
@@ -491,8 +603,8 @@ def main():
     parser.add_argument('--convert', action='store_true', help='将原始模型转换为带NMS的模型')
     parser.add_argument('--output-model', default='model_nms.onnx', help='转换后模型保存路径')
     parser.add_argument('--num-classes', type=int, default=14, help='类别数量（默认14）')
-    parser.add_argument('--max-dets', type=int, default=3, help='每类最大检测数（默认300）')
-    parser.add_argument('--conf', type=float, default=0.25, help='置信度阈值')
+    parser.add_argument('--max-dets', type=int, default=300, help='每类最大检测数（默认300）')
+    parser.add_argument('--conf', type=float, default=0.2, help='置信度阈值')
     parser.add_argument('--nms', type=float, default=0.45, help='NMS阈值（仅对原始模型有效）')
     parser.add_argument('--output-dir', default='.', help='输出图像保存目录')
     parser.add_argument('--output-prefix', default='result', help='输出图像前缀')
