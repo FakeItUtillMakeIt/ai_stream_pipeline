@@ -7,7 +7,7 @@
         "type": "rtsp_source",
         "params": {
           "url": "rtsp://localhost:8554/stream1",
-          "skip_frames": 5
+          "skip_frames": 1
         }
       },
       {
@@ -76,17 +76,9 @@
           "process_type": "parallel",
           "rules": [
             {
-              "type": "photographer",
+              "type": "clambing",
               "params": {
-                "name": "photographer1",
-                "rule_zones":[
-                ]
-              }
-            },
-            {
-              "type": "unlicensed_verdor",
-              "params": {
-                "name": "unlicensed_verdor1",
+                "name": "clambing1",
                 "rule_zones":[
                 ]
               }
