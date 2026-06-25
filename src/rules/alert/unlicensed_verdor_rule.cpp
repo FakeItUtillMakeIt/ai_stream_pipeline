@@ -152,16 +152,17 @@ namespace ai_stream
             {
                 bool in_zone = zone_points.empty() ? true : ZoneValidator::pointInPolygon(PixelPoint(detection.x + detection.w / 2, detection.y + detection.h / 2), zone_points);
 
-                if (in_zone)
+                if (!in_zone)
                 {
-                    if (detection.class_name == "person")
-                    {
-                        person_boxes.push_back(detection);
-                    }
-                    if (detection.class_name == "toy")
-                    {
-                        toy_boxes.push_back(detection);
-                    }
+                    continue;
+                }
+                if (detection.class_name == "person")
+                {
+                    person_boxes.push_back(detection);
+                }
+                if (detection.class_name == "toy")
+                {
+                    toy_boxes.push_back(detection);
                 }
             }
 

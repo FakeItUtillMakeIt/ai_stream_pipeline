@@ -50,7 +50,7 @@ namespace ai_stream
                 bool zone_is_valid = ZoneValidator::zoneIsValid(det_zone.second);
                 if (!zone_is_valid)
                 {
-                    LOG_INFO_FMT("PhotographerRule::process() zone {} is invalid", det_zone.first);
+                    LOG_INFO_FMT("PhotographerRule::initialize() zone {} is invalid", det_zone.first);
                     invaild_zone_count++;
                     continue;
                 }
@@ -59,7 +59,7 @@ namespace ai_stream
             // 如果所有区域都无效，则全域监测(不进行区域过滤)
             if (valid_intrusion_zones_.empty())
             {
-                LOG_INFO("PhotographerRule::process() all zones are invalid, global monitoring");
+                LOG_INFO("PhotographerRule::initialize() all zones are invalid, global monitoring");
             }
 
             return true;
@@ -147,24 +147,88 @@ namespace ai_stream
         {
             LOG_INFO_FMT("PhotographerRule::rule_logic()");
             std::vector<ai_stream::core::InferenceResultPacket::BBox> person_boxes;
+            std::vector<ai_stream::core::InferenceResultPacket::BBox> camera_boxes;
+            std::vector<ai_stream::core::InferenceResultPacket::BBox> pad_boxes;
             std::vector<int> person_track_ids;
             for (const auto &detection : packet->detections)
             {
-                if (detection.class_name != "person")
+                bool in_zone = zone_points.empty() ? true : ZoneValidator::pointInPolygon(PixelPoint(detection.x + detection.w / 2, detection.y + detection.h / 2), zone_points);
+                if (!in_zone)
                 {
                     continue;
                 }
-                bool in_zone = zone_points.empty() ? true : ZoneValidator::pointInPolygon(PixelPoint(detection.x + detection.w / 2, detection.y + detection.h / 2), zone_points);
-                if (in_zone)
+                if (detection.class_name == "person")
                 {
                     person_boxes.push_back(detection);
                 }
+                if (detection.class_name == "camera")
+                {
+                    camera_boxes.push_back(detection);
+                }
+                if (detection.class_name == "pad")
+                {
+                    pad_boxes.push_back(detection);
+                }
             }
 
-            if (person_boxes.empty())
+            if (person_boxes.empty() || camera_boxes.empty() || pad_boxes.empty())
                 return RuleStatus::RULE_STATUS_OK;
             // todo: 完善揽拍逻辑
-            
+            bool is_photographer = false;
+            for (const auto &person_box : person_boxes)
+            { 
+                // 查看pad框和camera框是否都与同一个person框相交
+                bool is_person_camera_intersect = false;
+                bool is_person_pad_intersect = false;
+                for (const auto &camera_box : camera_boxes)
+                {
+                    if (ZoneValidator::boxIsIntersect(
+                        std::vector<PixelPoint>{PixelPoint(person_box.x, person_box.y), PixelPoint(person_box.x + person_box.w, person_box.y), PixelPoint(person_box.x + person_box.w, person_box.y + person_box.h), PixelPoint(person_box.x, person_box.y + person_box.h)},
+                        std::vector<PixelPoint>{PixelPoint(camera_box.x, camera_box.y), PixelPoint(camera_box.x + camera_box.w, camera_box.y), PixelPoint(camera_box.x + camera_box.w, camera_box.y + camera_box.h), PixelPoint(camera_box.x, camera_box.y + camera_box.h)}
+                    ))
+                    {
+                        is_person_camera_intersect = true;
+                    }
+                }
+                for (const auto &pad_box : pad_boxes)
+                {
+                    if (ZoneValidator::boxIsIntersect(
+                        std::vector<PixelPoint>{PixelPoint(person_box.x, person_box.y), PixelPoint(person_box.x + person_box.w, person_box.y), PixelPoint(person_box.x + person_box.w, person_box.y + person_box.h), PixelPoint(person_box.x, person_box.y + person_box.h)},
+                        std::vector<PixelPoint>{PixelPoint(pad_box.x, pad_box.y), PixelPoint(pad_box.x + pad_box.w, pad_box.y), PixelPoint(pad_box.x + pad_box.w, pad_box.y + pad_box.h), PixelPoint(pad_box.x, pad_box.y + pad_box.h)}
+                    ))
+                    {
+                        is_person_pad_intersect = true;
+                    }
+                }
+                if (is_person_camera_intersect && is_person_pad_intersect)
+                {
+                    person_track_ids.push_back(person_box.track_id);
+                    is_photographer = true;
+                    //break;
+                }
+            }
+            if (!is_photographer)
+            { 
+                return RuleStatus::RULE_STATUS_OK;
+            }
+            auto it = zone_alert_map_.find(zone_no);
+            if (it == zone_alert_map_.end())
+            { 
+                auto alert_target = AlertEvent();
+                alert_target.detect_ms = packet->timestamp_ms;
+                alert_target.zone_no = zone_no;
+                alert_target.non_update_count = 0;
+                alert_target.duration_ms = 0;
+                alert_target.object_ids = person_track_ids;
+                zone_alert_map_.insert(std::make_pair(zone_no, alert_target));
+            }
+            else
+            {
+                auto &alert_target = it->second;
+                alert_target.non_update_count = 0;
+                alert_target.duration_ms = packet->timestamp_ms - alert_target.detect_ms;
+                alert_target.object_ids = person_track_ids; 
+            }
             return RuleStatus::RULE_STATUS_OK;
         }
 
