@@ -6,7 +6,8 @@
         "id": "src1",
         "type": "rtsp_source",
         "params": {
-          "url": "rtsp://localhost:8554/stream1"
+          "url": "rtsp://localhost:8554/stream1",
+          "skip_frames": 5
         }
       },
       {
@@ -28,7 +29,8 @@
         "type": "cuda_resize_normalize",
         "params": {
           "output_width": 1280,
-          "output_height": 1280
+          "output_height": 1280,
+          "keep_aspect_ratio": false
         }
       },
       {
@@ -55,7 +57,7 @@
             "conf_threshold": 0.5,
             "nms_threshold": 0.4,
             "input_size": { "width": 640, "height":640},
-            "batch_size": 4
+            "batch_size": 16
           }
         }
       },
@@ -74,9 +76,17 @@
           "process_type": "parallel",
           "rules": [
             {
-              "type": "fighting",
+              "type": "photographer",
               "params": {
-                "name": "fighting1",
+                "name": "photographer1",
+                "rule_zones":[
+                ]
+              }
+            },
+            {
+              "type": "unlicensed_verdor",
+              "params": {
+                "name": "unlicensed_verdor1",
                 "rule_zones":[
                 ]
               }
