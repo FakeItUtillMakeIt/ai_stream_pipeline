@@ -204,7 +204,6 @@ namespace ai_stream
                 {
                     person_track_ids.push_back(person_box.track_id);
                     is_photographer = true;
-                    //break;
                 }
             }
             if (!is_photographer)

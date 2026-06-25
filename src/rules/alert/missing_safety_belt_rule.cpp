@@ -50,7 +50,7 @@ namespace ai_stream
                 bool zone_is_valid = ZoneValidator::zoneIsValid(det_zone.second);
                 if (!zone_is_valid)
                 {
-                    LOG_INFO_FMT("MissingSafetyBeltRule::process() zone {} is invalid", det_zone.first);
+                    LOG_INFO_FMT("MissingSafetyBeltRule::initialize() zone {} is invalid", det_zone.first);
                     invaild_zone_count++;
                     continue;
                 }
@@ -59,7 +59,7 @@ namespace ai_stream
             // 如果所有区域都无效，则全域监测(不进行区域过滤)
             if (valid_intrusion_zones_.empty())
             {
-                LOG_INFO("MissingSafetyBeltRule::process() all zones are invalid, global monitoring");
+                LOG_INFO("MissingSafetyBeltRule::initialize() all zones are invalid, global monitoring");
             }
 
             return true;
