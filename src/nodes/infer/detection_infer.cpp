@@ -415,20 +415,38 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
         // 构建 scale 数组
         std::vector<float> valid_scale_x(valid_batch);
         std::vector<float> valid_scale_y(valid_batch);
+        // Letterbox 参数数组
+        std::vector<float> valid_letter_scale(valid_batch, 1.0f);
+        std::vector<int> valid_letter_pad_x(valid_batch, 0);
+        std::vector<int> valid_letter_pad_y(valid_batch, 0);
+        std::vector<int> valid_letterbox_used(valid_batch, 0);
+
         int idx = 0;
         for (int i : gpu_indices) {
             valid_scale_x[idx] = scale_x[i];
             valid_scale_y[idx] = scale_y[i];
+            valid_letter_scale[idx] = frames[i]->letter_scale;
+            valid_letter_pad_x[idx] = frames[i]->letter_pad_x;
+            valid_letter_pad_y[idx] = frames[i]->letter_pad_y;
+            valid_letterbox_used[idx] = frames[i]->letterbox_used ? 1 : 0;
             idx++;
         }
         for (int i : cpu_indices) {
             valid_scale_x[idx] = scale_x[i];
             valid_scale_y[idx] = scale_y[i];
+            valid_letter_scale[idx] = frames[i]->letter_scale;
+            valid_letter_pad_x[idx] = frames[i]->letter_pad_x;
+            valid_letter_pad_y[idx] = frames[i]->letter_pad_y;
+            valid_letterbox_used[idx] = frames[i]->letterbox_used ? 1 : 0;
             idx++;
         }
 
         auto all_detections = postprocessBatch(valid_batch, total_dets,
-                                                valid_scale_x.data(), valid_scale_y.data(), 0.25f);
+                                                valid_scale_x.data(), valid_scale_y.data(), 0.25f,
+                                                valid_letter_scale.data(),
+                                                valid_letter_pad_x.data(),
+                                                valid_letter_pad_y.data(),
+                                                valid_letterbox_used.data());
 
         // 映射回原始帧索引
         idx = 0;
@@ -487,10 +505,15 @@ void DetectionInferNode::preprocessBatchCpu(const std::vector<cv::Mat*>& images,
 }
 
 // ============================================================
-// 后处理
+// 后处理 - 支持 letterbox 反变换
 // ============================================================
 std::vector<std::vector<core::InferenceResultPacket::BBox>> DetectionInferNode::postprocessBatch(
-    int batch_size, int total_dets, const float scale_x[], const float scale_y[], float conf_thresh) {
+    int batch_size, int total_dets,
+    const float scale_x[], const float scale_y[], float conf_thresh,
+    const float letter_scale[],
+    const int letter_pad_x[],
+    const int letter_pad_y[],
+    const int letterbox_used[]) {
 
     std::vector<std::vector<core::InferenceResultPacket::BBox>> all_detections(batch_size);
 
@@ -510,10 +533,37 @@ std::vector<std::vector<core::InferenceResultPacket::BBox>> DetectionInferNode::
         float h  = h_boxes_[i * 4 + 3];
 
         core::InferenceResultPacket::BBox box;
-        box.x = static_cast<int>((cx - w / 2.0f) * scale_x[batch_id]);
-        box.y = static_cast<int>((cy - h / 2.0f) * scale_y[batch_id]);
-        box.w = static_cast<int>(w * scale_x[batch_id]);
-        box.h = static_cast<int>(h * scale_y[batch_id]);
+
+        // Letterbox 反变换：将坐标从 letterbox 画布空间映射回原图空间
+        if (letterbox_used && letterbox_used[batch_id] && letter_scale) {
+            float inv_scale = 1.0f / letter_scale[batch_id];
+            float pad_x = static_cast<float>(letter_pad_x[batch_id]);
+            float pad_y = static_cast<float>(letter_pad_y[batch_id]);
+
+            // 模型输出坐标是在 target 空间（含 padding）中的
+            // 映射回原图：
+            //   1. 先减去 padding 偏移
+            //   2. 再除以缩放比例
+            float orig_cx = (cx - pad_x) * inv_scale;
+            float orig_cy = (cy - pad_y) * inv_scale;
+            float orig_w  = w * inv_scale;
+            float orig_h  = h * inv_scale;
+
+            box.x = static_cast<int>(orig_cx - orig_w / 2.0f);
+            box.y = static_cast<int>(orig_cy - orig_h / 2.0f);
+            box.w = static_cast<int>(orig_w);
+            box.h = static_cast<int>(orig_h);
+
+            LOG_DEBUG_FMT("[DetectionInfer] Letterbox reverse: batch={} cx={:.1f} cy={:.1f} -> orig_cx={:.1f} orig_cy={:.1f}",
+                          batch_id, cx, cy, orig_cx, orig_cy);
+        } else {
+            // 直接 resize 模式：使用原有的 scale_x/scale_y
+            box.x = static_cast<int>((cx - w / 2.0f) * scale_x[batch_id]);
+            box.y = static_cast<int>((cy - h / 2.0f) * scale_y[batch_id]);
+            box.w = static_cast<int>(w * scale_x[batch_id]);
+            box.h = static_cast<int>(h * scale_y[batch_id]);
+        }
+
         box.confidence = score;
         box.class_id = static_cast<int>(h_classes_[i]);
 

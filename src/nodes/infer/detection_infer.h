@@ -64,7 +64,12 @@ private:
                             float* gpu_buffer, int batch_size);
 
     std::vector<std::vector<core::InferenceResultPacket::BBox>> postprocessBatch(
-        int batch_size, int total_dets, const float scale_x[], const float scale_y[], float conf_thresh);
+        int batch_size, int total_dets,
+        const float scale_x[], const float scale_y[], float conf_thresh,
+        const float letter_scale[] = nullptr,
+        const int letter_pad_x[] = nullptr,
+        const int letter_pad_y[] = nullptr,
+        const int letterbox_used[] = nullptr);
 
     // 【加速优化】CUDA Graph 相关
     bool captureCudaGraph(int batch_size);

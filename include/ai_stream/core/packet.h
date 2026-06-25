@@ -268,6 +268,12 @@ struct VideoFramePacket : public BasePacket {
     int d_bgr_pitch = 0;
     int d_bgr_height = 0;
     int d_bgr_width = 0;
+
+    // Letterbox 参数（用于坐标反变换）
+    bool letterbox_used = false;  // 是否使用了 letterbox resize
+    float letter_scale = 1.0f;    // letterbox 缩放比例 (letter_w / source_w)
+    int letter_pad_x = 0;         // 水平 padding
+    int letter_pad_y = 0;         // 垂直 padding
 };
 
 /**
