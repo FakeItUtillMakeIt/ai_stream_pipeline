@@ -19,6 +19,7 @@ public:
 
     void setUrl(const std::string& url) override;
     void setSourceId(const std::string& id) override;
+    void setSkipFrames(int skip_frames) override;
     std::string getUrl() const override;
 
     bool start() override;
@@ -44,6 +45,7 @@ private:
     
     // 统计信息
     int64_t total_frames_ = 0;
+    uint8_t skip_frames_ = 2;
 };
 
 } // namespace nodes

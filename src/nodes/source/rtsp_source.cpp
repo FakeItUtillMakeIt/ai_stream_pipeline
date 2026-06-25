@@ -44,6 +44,10 @@ void RTSPSourceNode::setSourceId(const std::string& id) {
     source_id_ = id;
 }
 
+void RTSPSourceNode::setSkipFrames(int skip_frames) {
+    skip_frames_ = skip_frames;
+}
+
 std::string RTSPSourceNode::getUrl() const {
     return url_;
 }
@@ -311,7 +315,9 @@ void RTSPSourceNode::workerFunc() {
         // 只处理视频流
         if (pkt->stream_index == video_stream_index_) {
             frame_count++;
-            
+            // 抽帧
+            if (frame_count % skip_frames_ != 0)
+                continue;
             // 每 100 帧打印一次日志
             if (frame_count % 100 == 0) {
                 LOG_INFO_FMT("[RTSPSource] Received {} frames (stream_id={})", frame_count, my_stream_id_);

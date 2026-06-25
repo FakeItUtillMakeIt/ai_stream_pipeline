@@ -15,6 +15,8 @@ public:
 
     virtual void setSourceId(const std::string& id) = 0;
     
+    virtual void setSkipFrames(int skip_frames) = 0;
+    
     // 获取当前 URL
     virtual std::string getUrl() const = 0;
 };
