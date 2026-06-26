@@ -182,6 +182,27 @@ void GPUResizeNormalizeNode::pushData(std::shared_ptr<core::BasePacket> packet) 
 
     // 使用 NPP 进行 BGR 到 RGB 的转换和缩放
     // 注意：实际应用中需要根据 NPP 的 API 进行正确的格式转换
+#if CUDART_VERSION >= 12000
+    NppStreamContext nppStreamCtx = {};
+    nppStreamCtx.hStream = stream_;
+    cudaGetDevice(&nppStreamCtx.nCudaDeviceId);
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, nppStreamCtx.nCudaDeviceId);
+    nppStreamCtx.nMultiProcessorCount = prop.multiProcessorCount;
+    nppStreamCtx.nMaxThreadsPerMultiProcessor = prop.maxThreadsPerMultiProcessor;
+    nppStreamCtx.nMaxThreadsPerBlock = prop.maxThreadsPerBlock;
+    nppStreamCtx.nSharedMemPerBlock = prop.sharedMemPerBlock;
+    nppStreamCtx.nCudaDevAttrComputeCapabilityMajor = prop.major;
+    nppStreamCtx.nCudaDevAttrComputeCapabilityMinor = prop.minor;
+
+    NppStatus status = nppiResize_8u_C3R_Ctx(
+        static_cast<const Npp8u*>(input_gpu_ptr_), src_size_npp.width * 3,
+        src_size_npp, src_roi,
+        static_cast<Npp8u*>(input_gpu_ptr_), dst_size_npp.width * 3,
+        dst_size_npp, dst_roi,
+        NPPI_INTER_LINEAR, nppStreamCtx
+    );
+#else
     NppStatus status = nppiResize_8u_C3R(
         static_cast<const Npp8u*>(input_gpu_ptr_), src_size_npp.width * 3,
         src_size_npp, src_roi,
@@ -189,6 +210,7 @@ void GPUResizeNormalizeNode::pushData(std::shared_ptr<core::BasePacket> packet) 
         dst_size_npp, dst_roi,
         NPPI_INTER_LINEAR
     );
+#endif
 
     if (status != NPP_SUCCESS) {
         LOG_ERROR_FMT("[GPUResizeNormalize] NPP resize failed: %d", int(status));

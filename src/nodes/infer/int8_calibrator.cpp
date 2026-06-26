@@ -1,5 +1,8 @@
 // src/nodes/infer/int8_calibrator.cpp
 #include "int8_calibrator.h"
+
+#if NV_TENSORRT_MAJOR < 11
+
 #include "3rd_party/log_mgr/log_mgr.h"
 #include "utils/cuda_check.h"
 
@@ -232,3 +235,5 @@ void Int8EntropyCalibrator::loadCalibrationImages(const std::string& image_dir) 
 
 } // namespace nodes
 } // namespace ai_stream
+
+#endif // NV_TENSORRT_MAJOR < 11

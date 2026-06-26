@@ -10,6 +10,8 @@
 #include <memory>
 #include <atomic>
 
+#if NV_TENSORRT_MAJOR < 11
+
 namespace ai_stream {
 namespace nodes {
 
@@ -18,21 +20,13 @@ namespace nodes {
  *
  * Implements INT8 calibration for TensorRT model quantization.
  * Supports both Legacy calibrator and Entropy calibrator.
+ * Only available for TensorRT < 11 (removed in TRT 11 Enterprise).
  */
 class Int8EntropyCalibrator : public nvinfer1::IInt8EntropyCalibrator2 {
 public:
     Int8EntropyCalibrator();
     ~Int8EntropyCalibrator() override;
 
-    /**
-     * @brief Initialize calibrator with calibration data
-     * @param calibration_images List of image paths for calibration
-     * @param batch_size Batch size for calibration
-     * @param input_height Input image height
-     * @param input_width Input image width
-     * @param input_name Name of the input tensor
-     * @param cache_file Path to calibration cache file
-     */
     bool initialize(const std::vector<std::string>& calibration_images,
                    int batch_size,
                    int input_height,
@@ -40,7 +34,6 @@ public:
                    const std::string& input_name,
                    const std::string& cache_file);
 
-    // IInt8Calibrator interface
     int getBatchSize() const noexcept override;
     bool getBatch(void* bindings[], const char* names[], int nbBindings) noexcept override;
     const void* readCalibrationCache(size_t& length) noexcept override;
@@ -70,3 +63,5 @@ private:
 
 } // namespace nodes
 } // namespace ai_stream
+
+#endif // NV_TENSORRT_MAJOR < 11
