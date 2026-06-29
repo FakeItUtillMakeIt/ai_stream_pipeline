@@ -162,12 +162,21 @@ def add_nms_to_yolov8(onnx_path, output_path, num_classes=14,
         axis=0,
         name=next_name('gather_num_dets')
     )
-    squeeze_num_dets = helper.make_node(
-        'Squeeze',
-        inputs=['num_dets_1d', 'axes_sq'],
-        outputs=['det_num_dets'],
-        name=next_name('squeeze_num_dets')
-    )
+    if opset_version < 13:
+        squeeze_num_dets = helper.make_node(
+            'Squeeze',
+            inputs=['num_dets_1d'],
+            outputs=['det_num_dets'],
+            axes=[0],
+            name=next_name('squeeze_num_dets')
+        )
+    else:
+        squeeze_num_dets = helper.make_node(
+            'Squeeze',
+            inputs=['num_dets_1d', 'axes_sq'],
+            outputs=['det_num_dets'],
+            name=next_name('squeeze_num_dets')
+        )
 
     # ---------- 9. 更新输出（增加 det_batch_ids 用于 batch 分组）----------
     graph.output.clear()
@@ -196,8 +205,9 @@ def add_nms_to_yolov8(onnx_path, output_path, num_classes=14,
         const('ends_3_', TensorProto.INT64, [1], [3]),
         const('axis_1_', TensorProto.INT64, [1], [1]),
         const('dim_0', TensorProto.INT64, [1], [0]),
-        const('axes_sq', TensorProto.INT64, [1], [0]),
     ]
+    if opset_version >= 13:
+        init_list.append(const('axes_sq', TensorProto.INT64, [1], [0]))
     graph.initializer.extend(init_list)
 
     # ---------- 11. 节点 ----------
