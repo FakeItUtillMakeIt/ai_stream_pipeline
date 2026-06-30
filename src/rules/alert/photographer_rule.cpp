@@ -116,7 +116,7 @@ namespace ai_stream
                     it->second.alert_name = getName();
                     it->second.alert_type = getType();
                 }
-                if (it->second.non_update_count == max_disappear_count_)
+                if (it->second.status != AlertStatus::ALERT_STATUS_DEFAULT && it->second.non_update_count == max_disappear_count_)
                 {
                     it->second.status = AlertStatus::ALERT_STATUS_END;
                     it->second.alert_name = getName();

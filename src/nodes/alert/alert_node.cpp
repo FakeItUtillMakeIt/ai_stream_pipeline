@@ -63,7 +63,7 @@ void AlertNode::pushData(std::shared_ptr<core::BasePacket> packet) {
     if (packet->type != core::PacketType::META_DATA) return;
 
     auto infer_packet = std::dynamic_pointer_cast<core::InferenceResultPacket>(packet);
-    auto all_alert_results =process_all_alerts_parallel(infer_packet);
+    auto all_alert_results =process_all_alerts_sequence(infer_packet);
     for (auto& r : all_alert_results) {
         if (r.alert_events.empty()) continue;
         for (auto& e : r.alert_events) {

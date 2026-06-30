@@ -87,7 +87,7 @@ public:
         // 状态机参数
         int suspicious_enter_threshold = 3;     // 进入SUSPICIOUS所需连续可疑帧数
         int suspicious_exit_threshold = 5;      // 退出SUSPICIOUS所需连续正常帧数
-        int climbing_enter_threshold = 3;       // 进入CLIMBING所需连续确认帧数
+        int climbing_enter_threshold = 1;       // 进入CLIMBING所需连续确认帧数
         int climbing_exit_threshold = 5;          // 退出CLIMBING所需连续正常帧数
         int cooldown_frames = 30;                 // 冷却帧数
 
