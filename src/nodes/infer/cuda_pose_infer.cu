@@ -104,6 +104,96 @@ __global__ void cropResizeNormalizeKernel(
 } // anonymous namespace
 
 // ============================================================
+// CUDA Kernel：Letterbox 裁剪 + 等比缩放 + 灰色Padding + Normalize + HWC→NCHW
+// ============================================================
+namespace {
+
+__global__ void cropResizeNormalizeLetterboxKernel(
+    const unsigned char* __restrict__ src,
+    int src_w, int src_h, size_t src_pitch,
+    float* __restrict__ dst,
+    const float* __restrict__ boxes,
+    int num_persons,
+    int dst_w, int dst_h,
+    float mean_b, float mean_g, float mean_r,
+    float std_b, float std_g, float std_r,
+    float pad_val)
+{
+    int pw = blockIdx.x * blockDim.x + threadIdx.x;
+    int ph = blockIdx.y * blockDim.y + threadIdx.y;
+    int p  = blockIdx.z;
+
+    if (p >= num_persons || pw >= dst_w || ph >= dst_h) {
+        return;
+    }
+
+    float box_x1 = boxes[p * 7 + 0];
+    float box_y1 = boxes[p * 7 + 1];
+    float box_x2 = boxes[p * 7 + 2];
+    float box_y2 = boxes[p * 7 + 3];
+    float scale  = boxes[p * 7 + 4];
+    float pad_x  = boxes[p * 7 + 5];
+    float pad_y  = boxes[p * 7 + 6];
+
+    float content_x_f = pw - pad_x;
+    float content_y_f = ph - pad_y;
+
+    float content_w_f = dst_w - 2.0f * pad_x;
+    float content_h_f = dst_h - 2.0f * pad_y;
+
+    float b, g, r;
+
+    if (content_x_f < 0.0f || content_x_f >= content_w_f ||
+        content_y_f < 0.0f || content_y_f >= content_h_f) {
+        b = pad_val;
+        g = pad_val;
+        r = pad_val;
+    } else {
+        float src_x = box_x1 + (content_x_f + 0.5f) * scale - 0.5f;
+        float src_y = box_y1 + (content_y_f + 0.5f) * scale - 0.5f;
+
+        src_x = fmaxf(0.0f, fminf(src_x, src_w - 1.0f));
+        src_y = fmaxf(0.0f, fminf(src_y, src_h - 1.0f));
+
+        int x0 = static_cast<int>(floorf(src_x));
+        int y0 = static_cast<int>(floorf(src_y));
+        int x0p1 = x0 + 1;
+        int y0p1 = y0 + 1;
+        int x1_i = (x0p1 < src_w) ? x0p1 : (src_w - 1);
+        int y1_i = (y0p1 < src_h) ? y0p1 : (src_h - 1);
+
+        float dx = src_x - x0;
+        float dy = src_y - y0;
+        float w00 = (1.0f - dx) * (1.0f - dy);
+        float w01 = dx * (1.0f - dy);
+        float w10 = (1.0f - dx) * dy;
+        float w11 = dx * dy;
+
+        const unsigned char* row0 = src + y0 * src_pitch;
+        const unsigned char* row1 = src + y1_i * src_pitch;
+
+        b = w00 * row0[x0 * 3 + 0] + w01 * row0[x1_i * 3 + 0]
+          + w10 * row1[x0 * 3 + 0] + w11 * row1[x1_i * 3 + 0];
+        g = w00 * row0[x0 * 3 + 1] + w01 * row0[x1_i * 3 + 1]
+          + w10 * row1[x0 * 3 + 1] + w11 * row1[x1_i * 3 + 1];
+        r = w00 * row0[x0 * 3 + 2] + w01 * row0[x1_i * 3 + 2]
+          + w10 * row1[x0 * 3 + 2] + w11 * row1[x1_i * 3 + 2];
+    }
+
+    b = (b / 255.0f - mean_b) / std_b;
+    g = (g / 255.0f - mean_g) / std_g;
+    r = (r / 255.0f - mean_r) / std_r;
+
+    int hw = dst_w * dst_h;
+    int base = p * 3 * hw + ph * dst_w + pw;
+    dst[base + 0 * hw] = b;
+    dst[base + 1 * hw] = g;
+    dst[base + 2 * hw] = r;
+}
+
+} // anonymous namespace
+
+// ============================================================
 // CudaPoseInferNode
 // ============================================================
 
@@ -282,17 +372,35 @@ void CudaPoseInferNode::processFrame(std::shared_ptr<core::InferenceResultPacket
             cudaMemcpyHostToDevice, stream_));
     }
 
-    // 4. 上传检测框坐标到 GPU
-    std::vector<float> h_boxes(static_cast<size_t>(num_persons) * 4);
+    // 4. 计算letterbox参数并上传到GPU
+    //    boxes格式: [x1, y1, x2, y2, scale, pad_x, pad_y] x num_persons
+    std::vector<float> h_boxes(static_cast<size_t>(num_persons) * 7);
+    h_letterbox_params_.resize(static_cast<size_t>(num_persons) * 3);
     for (int i = 0; i < num_persons; ++i) {
         const auto& det = packet->detections[person_indices[i]];
-        h_boxes[i * 4 + 0] = det.x;
-        h_boxes[i * 4 + 1] = det.y;
-        h_boxes[i * 4 + 2] = det.x + det.w;
-        h_boxes[i * 4 + 3] = det.y + det.h;
+        float crop_w = det.w;
+        float crop_h = det.h;
+
+        float scale = fminf(INPUT_W / crop_w, INPUT_H / crop_h);
+        float scaled_w = crop_w * scale;
+        float scaled_h = crop_h * scale;
+        float pad_x = (INPUT_W - scaled_w) / 2.0f;
+        float pad_y = (INPUT_H - scaled_h) / 2.0f;
+
+        h_boxes[i * 7 + 0] = det.x;
+        h_boxes[i * 7 + 1] = det.y;
+        h_boxes[i * 7 + 2] = det.x + det.w;
+        h_boxes[i * 7 + 3] = det.y + det.h;
+        h_boxes[i * 7 + 4] = scale;
+        h_boxes[i * 7 + 5] = pad_x;
+        h_boxes[i * 7 + 6] = pad_y;
+
+        h_letterbox_params_[i * 3 + 0] = scale;
+        h_letterbox_params_[i * 3 + 1] = pad_x;
+        h_letterbox_params_[i * 3 + 2] = pad_y;
     }
     CUDA_CHECK(cudaMemcpyAsync(d_boxes_, h_boxes.data(),
-                               num_persons * 4 * sizeof(float),
+                               num_persons * 7 * sizeof(float),
                                cudaMemcpyHostToDevice, stream_));
 
     // 5. 设置动态 batch
@@ -308,14 +416,15 @@ void CudaPoseInferNode::processFrame(std::shared_ptr<core::InferenceResultPacket
                    (INPUT_H + block_size.y - 1) / block_size.y,
                    num_persons);
 
-    cropResizeNormalizeKernel<<<grid_size, block_size, 0, stream_>>>(
+    cropResizeNormalizeLetterboxKernel<<<grid_size, block_size, 0, stream_>>>(
         static_cast<const unsigned char*>(d_source_img_),
         src_w, src_h, src_pitch,
         static_cast<float*>(d_input_),
         d_boxes_, num_persons,
         INPUT_W, INPUT_H,
-        0.0f, 0.0f, 0.0f,   // mean BGR (默认仅 /255)
-        1.0f, 1.0f, 1.0f    // std BGR
+        0.0f, 0.0f, 0.0f,
+        1.0f, 1.0f, 1.0f,
+        114.0f / 255.0f
     );
 
     cudaError_t kernel_err = cudaGetLastError();
@@ -348,7 +457,7 @@ void CudaPoseInferNode::processFrame(std::shared_ptr<core::InferenceResultPacket
     cudaStreamSynchronize(stream_);
 
     // 9. 后处理：解码关键点
-    postprocessFrame(packet, person_indices, num_persons, h_output_.data());
+    postprocessFrame(packet, person_indices, num_persons, h_output_.data(), h_letterbox_params_);
 }
 
 // ============================================================
@@ -371,7 +480,8 @@ void CudaPoseInferNode::postprocessFrame(
     std::shared_ptr<core::InferenceResultPacket> packet,
     const std::vector<int>& person_indices,
     int num_persons,
-    float* output_host) {
+    float* output_host,
+    const std::vector<float>& letterbox_params) {
 
     packet->pose_results.clear();
     packet->pose_results.reserve(num_persons);
@@ -380,9 +490,12 @@ void CudaPoseInferNode::postprocessFrame(
         int det_idx = person_indices[p];
         auto& det = packet->detections[det_idx];
 
+        float scale = letterbox_params[p * 3 + 0];
+        float pad_x = letterbox_params[p * 3 + 1];
+        float pad_y = letterbox_params[p * 3 + 2];
+
         float* person_output = output_host + p * NUM_CANDIDATES * POSE_DIM;
 
-        // 遍历 8400 候选，找 person score 最高的
         float best_score = -1.0f;
         int best_idx = 0;
 
@@ -407,9 +520,6 @@ void CudaPoseInferNode::postprocessFrame(
         pose.person_score = best_score;
         pose.matched_det_idx = det_idx;
 
-        float scale_x = det.w / static_cast<float>(INPUT_W);
-        float scale_y = det.h / static_cast<float>(INPUT_H);
-
         for (int k = 0; k < NUM_KEYPOINTS; ++k) {
             float kx = best_pred[5 + k * 3 + 0];
             float ky = best_pred[5 + k * 3 + 1];
@@ -417,8 +527,8 @@ void CudaPoseInferNode::postprocessFrame(
 
             kconf = 1.0f / (1.0f + std::exp(-kconf));
 
-            float orig_kx = kx * scale_x + det.x;
-            float orig_ky = ky * scale_y + det.y;
+            float orig_kx = (kx - pad_x) / scale + det.x;
+            float orig_ky = (ky - pad_y) / scale + det.y;
 
             pose.keypoints[k] = {
                 orig_kx,
@@ -435,10 +545,11 @@ void CudaPoseInferNode::postprocessFrame(
         pose.person_box = cv::Rect2f(det.x, det.y, det.w, det.h);
         packet->pose_results.push_back(pose);
 
-        LOG_INFO_FMT("[CudaPoseInfer] Person {}: score={:.3f}, kpts_visible={}/17",
+        LOG_INFO_FMT("[CudaPoseInfer] Person {}: score={:.3f}, kpts_visible={}/17, scale={:.3f}, pad=({:.1f},{:.1f})",
                       det_idx, best_score,
                       std::count_if(pose.keypoints.begin(), pose.keypoints.end(),
-                                    [](const auto& k){ return k.visible; }));
+                                    [](const auto& k){ return k.visible; }),
+                      scale, pad_x, pad_y);
     }
 }
 
@@ -505,7 +616,7 @@ bool CudaPoseInferNode::initEngine(const std::string& engine_path) {
 
         cudaMalloc(&d_input_, input_size_);
         cudaMalloc(&d_output_, output_size_);
-        cudaMalloc(&d_boxes_, max_batch * 4 * sizeof(float));
+        cudaMalloc(&d_boxes_, max_batch * 7 * sizeof(float));
 
         h_output_.resize(static_cast<size_t>(max_batch) * NUM_CANDIDATES * POSE_DIM);
 

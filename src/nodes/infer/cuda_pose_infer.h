@@ -58,7 +58,8 @@ private:
         std::shared_ptr<core::InferenceResultPacket> packet,
         const std::vector<int>& person_indices,
         int num_persons,
-        float* output_host);
+        float* output_host,
+        const std::vector<float>& letterbox_params);
 
     // TensorRT 资源
     std::unique_ptr<nvinfer1::IRuntime, void(*)(nvinfer1::IRuntime*)> runtime_{
@@ -81,6 +82,7 @@ private:
 
     // CPU 缓冲区
     std::vector<float> h_output_;  // [max_batch, 8400, 56]
+    std::vector<float> h_letterbox_params_; // [num_persons, 3] (scale, pad_x, pad_y)
 
     // 缓冲区大小跟踪
     size_t source_buffer_size_ = 0;
