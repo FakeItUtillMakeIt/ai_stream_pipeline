@@ -50,19 +50,23 @@ private:
     // 处理单帧 InferenceResultPacket
     void processFrame(std::shared_ptr<core::InferenceResultPacket> packet);
 
-    // 从 source_mat 按检测框 crop + resize + normalize
+    // 从 source_mat 按检测框 crop + letterbox resize + normalize
     bool cropAndPreprocess(
         const cv::Mat& source_mat,
         const core::InferenceResultPacket::BBox& det,
         float* host_buffer,
-        int slot_idx);
+        int slot_idx,
+        float& out_scale,
+        float& out_pad_x,
+        float& out_pad_y);
 
     // 单帧内多人 batch 后处理
     void postprocessFrame(
         std::shared_ptr<core::InferenceResultPacket> packet,
         const std::vector<int>& person_indices,
         int num_persons,
-        float* output_host);
+        float* output_host,
+        const std::vector<float>& letterbox_params);
 
     // TensorRT 资源
     std::unique_ptr<nvinfer1::IRuntime, void(*)(nvinfer1::IRuntime*)> runtime_{
@@ -83,6 +87,7 @@ private:
 
     // CPU 缓冲区
     std::vector<float> h_output_;  // [max_batch, 8400, 56]
+    std::vector<float> h_letterbox_params_; // [num_persons, 3] (scale, pad_x, pad_y)
 
     // 常量
     static constexpr int INPUT_H = 640;

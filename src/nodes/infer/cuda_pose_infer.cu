@@ -149,8 +149,8 @@ __global__ void cropResizeNormalizeLetterboxKernel(
         g = pad_val;
         r = pad_val;
     } else {
-        float src_x = box_x1 + (content_x_f + 0.5f) * scale - 0.5f;
-        float src_y = box_y1 + (content_y_f + 0.5f) * scale - 0.5f;
+        float src_x = box_x1 + (content_x_f + 0.5f) / scale - 0.5f;
+        float src_y = box_y1 + (content_y_f + 0.5f) / scale - 0.5f;
 
         src_x = fmaxf(0.0f, fminf(src_x, src_w - 1.0f));
         src_y = fmaxf(0.0f, fminf(src_y, src_h - 1.0f));

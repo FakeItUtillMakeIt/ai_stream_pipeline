@@ -177,14 +177,19 @@ void PoseInferNode::processFrame(std::shared_ptr<core::InferenceResultPacket> pa
     alignas(64) static thread_local std::vector<float> host_input;
     host_input.resize(static_cast<size_t>(num_persons) * person_stride);
 
-    // 4. 逐人 crop + preprocess
+    // 4. 逐人 crop + letterbox preprocess
+    h_letterbox_params_.resize(static_cast<size_t>(num_persons) * 3);
     for (int i = 0; i < num_persons; ++i) {
         int det_idx = person_indices[i];
         const auto& det = packet->detections[det_idx];
 
-        if (!cropAndPreprocess(source_mat, det, host_input.data(), i)) {
+        float scale, pad_x, pad_y;
+        if (!cropAndPreprocess(source_mat, det, host_input.data(), i, scale, pad_x, pad_y)) {
             LOG_WARN_FMT("[PoseInfer] Failed to crop person {}", det_idx);
         }
+        h_letterbox_params_[i * 3 + 0] = scale;
+        h_letterbox_params_[i * 3 + 1] = pad_x;
+        h_letterbox_params_[i * 3 + 2] = pad_y;
     }
 
     // 5. 设置动态 batch 并拷贝到 GPU
@@ -224,25 +229,26 @@ void PoseInferNode::processFrame(std::shared_ptr<core::InferenceResultPacket> pa
     cudaStreamSynchronize(stream_);
 
     // 10. 后处理：解码关键点
-    postprocessFrame(packet, person_indices, num_persons, h_output_.data());
+    postprocessFrame(packet, person_indices, num_persons, h_output_.data(), h_letterbox_params_);
 }
 
 // ============================================================
-// Crop + Preprocess：从原图按检测框 crop，resize 640，normalize
+// Crop + Letterbox Preprocess：从原图按检测框 crop，等比缩放+灰色padding，normalize
 // ============================================================
 bool PoseInferNode::cropAndPreprocess(
     const cv::Mat& source_mat,
     const core::InferenceResultPacket::BBox& det,
     float* host_buffer,
-    int slot_idx) {
+    int slot_idx,
+    float& out_scale,
+    float& out_pad_x,
+    float& out_pad_y) {
 
-    // 检测框转 cv::Rect（float 精度）
     float x1 = det.x;
     float y1 = det.y;
     float x2 = det.x + det.w;
     float y2 = det.y + det.h;
 
-    // 边界检查
     int img_w = source_mat.cols;
     int img_h = source_mat.rows;
     int ix1 = std::max(0, static_cast<int>(x1));
@@ -256,19 +262,29 @@ bool PoseInferNode::cropAndPreprocess(
         return false;
     }
 
-    // Crop
     cv::Rect roi(ix1, iy1, ix2 - ix1, iy2 - iy1);
     cv::Mat cropped = source_mat(roi).clone();
 
-    // Resize to 640x640
+    float crop_w = static_cast<float>(cropped.cols);
+    float crop_h = static_cast<float>(cropped.rows);
+
+    out_scale = std::min(static_cast<float>(INPUT_W) / crop_w,
+                          static_cast<float>(INPUT_H) / crop_h);
+    float scaled_w = crop_w * out_scale;
+    float scaled_h = crop_h * out_scale;
+    out_pad_x = (INPUT_W - scaled_w) / 2.0f;
+    out_pad_y = (INPUT_H - scaled_h) / 2.0f;
+
     cv::Mat resized;
-    cv::resize(cropped, resized, cv::Size(INPUT_W, INPUT_H));
+    cv::resize(cropped, resized, cv::Size(static_cast<int>(scaled_w), static_cast<int>(scaled_h)));
 
-    // Convert to float32 and normalize [0,1]
+    cv::Mat letterbox(INPUT_H, INPUT_W, CV_8UC3, cv::Scalar(114, 114, 114));
+    resized.copyTo(letterbox(cv::Rect(static_cast<int>(out_pad_x), static_cast<int>(out_pad_y),
+                                      resized.cols, resized.rows)));
+
     cv::Mat float_img;
-    resized.convertTo(float_img, CV_32FC3, 1.0 / 255.0);
+    letterbox.convertTo(float_img, CV_32FC3, 1.0 / 255.0);
 
-    // 分离通道并拷贝到 host_buffer
     int hw = INPUT_H * INPUT_W;
     int batch_stride = 3 * hw;
     float* batch_ptr = host_buffer + slot_idx * batch_stride;
@@ -290,7 +306,8 @@ void PoseInferNode::postprocessFrame(
     std::shared_ptr<core::InferenceResultPacket> packet,
     const std::vector<int>& person_indices,
     int num_persons,
-    float* output_host) {
+    float* output_host,
+    const std::vector<float>& letterbox_params) {
 
     packet->pose_results.clear();
     packet->pose_results.reserve(num_persons);
@@ -298,6 +315,10 @@ void PoseInferNode::postprocessFrame(
     for (int p = 0; p < num_persons; ++p) {
         int det_idx = person_indices[p];
         auto& det = packet->detections[det_idx];
+
+        float scale = letterbox_params[p * 3 + 0];
+        float pad_x = letterbox_params[p * 3 + 1];
+        float pad_y = letterbox_params[p * 3 + 2];
 
         // 该人的输出起始地址: [p, 0, 0]
         float* person_output = output_host + p * NUM_CANDIDATES * POSE_DIM;
@@ -307,9 +328,7 @@ void PoseInferNode::postprocessFrame(
         int best_idx = 0;
 
         for (int i = 0; i < NUM_CANDIDATES; ++i) {
-            float score = person_output[i * POSE_DIM + 4];  // 第 5 维是 person score
-            // decoded 模式下 score 可能已经是 sigmoid 后的，也可能不是
-            // 这里统一做 sigmoid（如果已经是 sigmoid，二次 sigmoid 影响极小）
+            float score = person_output[i * POSE_DIM + 4];
             score = 1.0f / (1.0f + std::exp(-score));
             if (score > best_score) {
                 best_score = score;
@@ -323,35 +342,21 @@ void PoseInferNode::postprocessFrame(
             continue;
         }
 
-        // 取最优候选的 56 维数据
         float* best_pred = person_output + best_idx * POSE_DIM;
 
-        // 解码 bbox (cx, cy, w, h) —— decoded 模式，已是 0~640 像素坐标
-        float cx = best_pred[0];
-        float cy = best_pred[1];
-        float w = best_pred[2];
-        float h = best_pred[3];
-
-        // 解码关键点 [51] -> [17, 3]
         core::InferenceResultPacket::PoseResult pose;
         pose.person_score = best_score;
         pose.matched_det_idx = det_idx;
-
-        // 关键点映射比例：检测框尺寸 / 640
-        float scale_x = det.w / static_cast<float>(INPUT_W);
-        float scale_y = det.h / static_cast<float>(INPUT_H);
 
         for (int k = 0; k < NUM_KEYPOINTS; ++k) {
             float kx = best_pred[5 + k * 3 + 0];
             float ky = best_pred[5 + k * 3 + 1];
             float kconf = best_pred[5 + k * 3 + 2];
 
-            // visibility sigmoid
             kconf = 1.0f / (1.0f + std::exp(-kconf));
 
-            // 映射到原图坐标
-            float orig_kx = kx * scale_x + det.x;
-            float orig_ky = ky * scale_y + det.y;
+            float orig_kx = (kx - pad_x) / scale + det.x;
+            float orig_ky = (ky - pad_y) / scale + det.y;
 
             pose.keypoints[k] = {
                 orig_kx,
@@ -359,21 +364,20 @@ void PoseInferNode::postprocessFrame(
                 kconf,
                 kconf > kpt_conf_thresh_
             };
-            // 放到bbox结果中
             det.has_keypoints = true;
-            det.keypoints[k]= pose.keypoints[k];
+            det.keypoints[k] = pose.keypoints[k];
             det.keypoints_conf = kconf;
         }
 
-        // person_box 使用检测框（原图坐标）
         pose.person_box = cv::Rect2f(det.x, det.y, det.w, det.h);
 
         packet->pose_results.push_back(pose);
 
-        LOG_INFO_FMT("[PoseInfer] Person {}: score={:.3f}, kpts_visible={}/17",
+        LOG_INFO_FMT("[PoseInfer] Person {}: score={:.3f}, kpts_visible={}/17, scale={:.3f}, pad=({:.1f},{:.1f})",
                       det_idx, best_score,
                       std::count_if(pose.keypoints.begin(), pose.keypoints.end(),
-                                    [](const auto& k){ return k.visible; }));
+                                    [](const auto& k){ return k.visible; }),
+                      scale, pad_x, pad_y);
     }
 }
 
