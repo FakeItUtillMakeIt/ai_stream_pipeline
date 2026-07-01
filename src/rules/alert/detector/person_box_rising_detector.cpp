@@ -16,6 +16,7 @@ PersonBoxRisingDetector::PersonBoxRisingDetector(const std::string& video_path)
     , min_height_ratio_(0.8)         // 人体框高度缩小到80%以下不判定为上升
     , max_oscillation_range_(30.0)   // Y轴振荡范围超过30像素认为是周期性动作
     , min_sustain_ratio_(0.6)        // 至少60%的帧需要在上升状态
+    , min_camera_shake_tracks_(2)    // 至少2人同时上升判定为镜头晃动
 {
     LOG_INFO_FMT("PersonBoxRisingDetector initialized with video_path: {}", video_path_);
 }
@@ -111,6 +112,7 @@ RisingResult PersonBoxRisingDetector::process(const std::vector<core::InferenceR
         }
     }
     
+    std::vector<int> potential_rising_tracks;
     for (const auto& det : detections) {
         if (det.track_id < 0) continue;
         
@@ -118,7 +120,26 @@ RisingResult PersonBoxRisingDetector::process(const std::vector<core::InferenceR
         result.track_rising_states[det.track_id] = is_rising;
         
         if (is_rising) {
+            potential_rising_tracks.push_back(det.track_id);
+        }
+    }
+    
+    bool is_camera_shake = (static_cast<int>(potential_rising_tracks.size()) >= min_camera_shake_tracks_);
+    
+    if (is_camera_shake) {
+        for (int track_id : potential_rising_tracks) {
+            result.track_rising_states[track_id] = false;
+        }
+        result.is_rising = false;
+        
+        std::ostringstream oss;
+        oss << "video_path:" << video_path_ 
+            << ": 检测到镜头晃动 (同时上升人数=" << potential_rising_tracks.size() << ")";
+        LOG_INFO_FMT("{}",oss.str());
+    } else {
+        for (int track_id : potential_rising_tracks) {
             result.is_rising = true;
+            break;
         }
     }
     

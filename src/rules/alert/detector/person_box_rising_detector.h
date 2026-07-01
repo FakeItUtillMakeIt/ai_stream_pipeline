@@ -56,6 +56,7 @@ private:
     double min_height_ratio_;            // 最小高度比例（框变小太多则不判定为上升）
     double max_oscillation_range_;       // 最大振荡范围（超过则认为是跳舞等动作）
     double min_sustain_ratio_;           // 最小持续上升比例（上升帧数/总帧数）
+    int min_camera_shake_tracks_;        // 最少多少人同时上升才判定为镜头晃动
     
     bool update_track(int track_id, const core::InferenceResultPacket::BBox& bbox);
     
