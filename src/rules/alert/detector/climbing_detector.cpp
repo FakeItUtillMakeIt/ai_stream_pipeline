@@ -4,8 +4,9 @@
 #include "climbing_detector.h"
 #include <iostream>
 #include <unordered_set>
+#include <numeric>
 
-// ========== StateMachine实现 ==========
+// ========== StateMachine ==========
 
 void ClimbingDetector::StateMachine::reset() {
     current_state = ClimbingState::IDLE;
@@ -131,7 +132,7 @@ void ClimbingDetector::StateMachine::update(StateTransitionEvent event, const Co
     }
 }
 
-// ========== TrackState实现 ==========
+// ========== TrackState ==========
 
 void ClimbingDetector::TrackState::reset() {
     center_history.clear();
@@ -139,30 +140,28 @@ void ClimbingDetector::TrackState::reset() {
     right_wrist_y_history.clear();
     left_ankle_y_history.clear();
     right_ankle_y_history.clear();
+    avg_center_y = -1.0f;
     posture_frame_count = 0;
     ascent_frame_count = 0;
     last_bbox = cv::Rect2f();
 }
 
-// ========== FrameAnalysis实现 ==========
+// ========== FrameAnalysis ==========
 
 void ClimbingDetector::FrameAnalysis::clear() {
     individual_scores.clear();
     individual_events.clear();
     is_suspicious.clear();
     suspicious_person_count = 0;
-    total_climbing_person_count = 0;
     total_score = 0.0f;
     has_ascent = false;
 }
 
-// ========== ClimbingDetector构造函数 ==========
+// ========== 构造 ==========
 
 ClimbingDetector::ClimbingDetector(const Config& cfg) : cfg_(cfg), frame_counter_(0) {
     climb_history_.clear();
 }
-
-// ========== 重置 ==========
 
 void ClimbingDetector::reset() {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -172,7 +171,7 @@ void ClimbingDetector::reset() {
     frame_counter_ = 0;
 }
 
-// ========== 状态查询接口 ==========
+// ========== 状态查询 ==========
 
 ClimbingState ClimbingDetector::getCurrentState() const {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -194,7 +193,7 @@ int ClimbingDetector::getTotalClimbingFrames() const {
     return state_machine_.total_climbing_frames;
 }
 
-// ========== 状态行为函数 ==========
+// ========== 状态回调 ==========
 
 void ClimbingDetector::onEnterIdle() {
     if (state_machine_.previous_state != ClimbingState::IDLE) {
@@ -203,7 +202,7 @@ void ClimbingDetector::onEnterIdle() {
 }
 
 void ClimbingDetector::onEnterSuspicious() {
-    LOG_INFO("[Climb] Entered SUSPICIOUS state - potential climbing detected");
+    LOG_INFO("[Climb] Entered SUSPICIOUS state");
 }
 
 void ClimbingDetector::onEnterClimbing() {
@@ -211,14 +210,14 @@ void ClimbingDetector::onEnterClimbing() {
 }
 
 void ClimbingDetector::onEnterCooldown() {
-    LOG_INFO("[Climb] Entered COOLDOWN state - climbing ended, monitoring for re-trigger");
+    LOG_INFO("[Climb] Entered COOLDOWN state");
 }
 
 void ClimbingDetector::onStateTick(ClimbingState state) {
     (void)state;
 }
 
-// ========== 主处理函数（状态机驱动）==========
+// ========== 主处理 ==========
 
 ClimbingResult ClimbingDetector::process(
     const std::vector<core::InferenceResultPacket::BBox>& detections) {
@@ -228,7 +227,6 @@ ClimbingResult ClimbingDetector::process(
 
     ClimbingResult result;
 
-    // 收集活跃track_id
     std::vector<int> active_ids;
     for (const auto& det : detections) {
         if (det.track_id >= 0) {
@@ -252,16 +250,10 @@ ClimbingResult ClimbingDetector::process(
         return result;
     }
 
-    // === 阶段1：帧级分析（行为层）===
     FrameAnalysis analysis = analyzeFrame(detections);
-
-    // === 阶段2：确定状态转换事件 ===
     StateTransitionEvent transition_event = determineTransitionEvent(analysis);
-
-    // === 阶段3：驱动状态机 ===
     state_machine_.update(transition_event, cfg_);
 
-    // === 阶段4：状态进入钩子 ===
     if (state_machine_.previous_state != state_machine_.current_state) {
         switch (state_machine_.current_state) {
             case ClimbingState::IDLE:       onEnterIdle(); break;
@@ -271,25 +263,22 @@ ClimbingResult ClimbingDetector::process(
         }
     }
 
-    // === 阶段5：构建结果 ===
     result = buildResult(analysis, active_ids);
     result.current_state = state_machine_.getStateString();
     result.climbing_duration_frames = state_machine_.state_duration;
     result.total_climbing_frames = state_machine_.total_climbing_frames;
     result.is_climbing = (state_machine_.current_state == ClimbingState::CLIMBING);
 
-    // === 阶段6：历史平滑与清理 ===
     climb_history_.push_back(result.is_climbing);
     if (climb_history_.size() > MAX_HISTORY) climb_history_.pop_front();
 
     cleanupInactive(active_ids);
     onStateTick(state_machine_.current_state);
 
-    LOG_INFO_FMT("[Climb] Frame {}: State={}, Duration={}, TotalClimbFrames={}, Event={}, Climbing={}",
+    LOG_INFO_FMT("[Climb] Frame {}: State={}, Duration={}, Event={}, Climbing={}",
                  frame_counter_,
                  state_machine_.getStateString(),
                  state_machine_.state_duration,
-                 state_machine_.total_climbing_frames,
                  static_cast<int>(transition_event),
                  result.is_climbing);
 
@@ -303,7 +292,6 @@ ClimbingDetector::FrameAnalysis ClimbingDetector::analyzeFrame(
 
     FrameAnalysis analysis;
 
-    // 逐人检测攀爬特征
     for (const auto& det : detections) {
         if (det.track_id < 0) continue;
         if (!det.has_keypoints) continue;
@@ -311,158 +299,145 @@ ClimbingDetector::FrameAnalysis ClimbingDetector::analyzeFrame(
         auto& state = tracks_[det.track_id];
         state.last_bbox = cv::Rect2f(det.x, det.y, det.w, det.h);
 
-        // 更新中心点历史
-        cv::Point2f center(det.x + det.w/2, det.y + det.h/2);
+        cv::Point2f center(det.x + det.w / 2, det.y + det.h / 2);
         state.center_history.push_back(center);
         while (state.center_history.size() > static_cast<size_t>(cfg_.history_frames)) {
             state.center_history.pop_front();
         }
 
-        // 更新手腕/脚踝Y坐标历史
         const auto& kpts = det.keypoints;
         if (isKeypointValid(kpts[Config::LEFT_WRIST])) {
             state.left_wrist_y_history.push_back(kpts[Config::LEFT_WRIST].y);
-            while (state.left_wrist_y_history.size() > static_cast<size_t>(cfg_.history_frames)) {
+            while (state.left_wrist_y_history.size() > static_cast<size_t>(cfg_.history_frames))
                 state.left_wrist_y_history.pop_front();
-            }
         }
         if (isKeypointValid(kpts[Config::RIGHT_WRIST])) {
             state.right_wrist_y_history.push_back(kpts[Config::RIGHT_WRIST].y);
-            while (state.right_wrist_y_history.size() > static_cast<size_t>(cfg_.history_frames)) {
+            while (state.right_wrist_y_history.size() > static_cast<size_t>(cfg_.history_frames))
                 state.right_wrist_y_history.pop_front();
-            }
         }
         if (isKeypointValid(kpts[Config::LEFT_ANKLE])) {
             state.left_ankle_y_history.push_back(kpts[Config::LEFT_ANKLE].y);
-            while (state.left_ankle_y_history.size() > static_cast<size_t>(cfg_.history_frames)) {
+            while (state.left_ankle_y_history.size() > static_cast<size_t>(cfg_.history_frames))
                 state.left_ankle_y_history.pop_front();
-            }
         }
         if (isKeypointValid(kpts[Config::RIGHT_ANKLE])) {
             state.right_ankle_y_history.push_back(kpts[Config::RIGHT_ANKLE].y);
-            while (state.right_ankle_y_history.size() > static_cast<size_t>(cfg_.history_frames)) {
+            while (state.right_ankle_y_history.size() > static_cast<size_t>(cfg_.history_frames))
                 state.right_ankle_y_history.pop_front();
-            }
         }
 
-        // 1. 姿态检测
-        float posture_conf = 0.0f;
-        bool is_posture = detectClimbingPosture(det, state, posture_conf);
-        if (is_posture) {
-            ClimbingEvent evt;
-            evt.type = "posture";
-            evt.track_id = det.track_id;
-            evt.confidence = posture_conf;
-            evt.timestamp_ms = frame_counter_;
-            evt.detail = "abnormal climbing posture detected";
-            analysis.individual_events[det.track_id].push_back(evt);
-            analysis.individual_scores[det.track_id] += posture_conf * 0.5f;
-            LOG_INFO_FMT("[Climb] Track {} posture detected, conf: {:.2f}, score: {:.2f}",
-                         det.track_id, posture_conf, analysis.individual_scores[det.track_id]);
+        float score = 0.0f;
+
+        // ===== 静态特征（单帧） =====
+        float conf = 0.0f;
+
+        if (detectHandAboveShoulder(det, conf)) {
+            score += conf * 0.20f;
+            analysis.individual_events[det.track_id].push_back(
+                {"hand_above_shoulder", det.track_id, conf, {}, "hand above shoulder", frame_counter_});
+            LOG_INFO_FMT("[Climb] Track {} hand_above_shoulder conf={:.2f} score={:.2f}",
+                         det.track_id, conf, score);
         }
 
-        // 2. 垂直上升检测
+        if (detectArmBend(det, conf)) {
+            score += conf * 0.20f;
+            analysis.individual_events[det.track_id].push_back(
+                {"arm_bend", det.track_id, conf, {}, "arm bent", frame_counter_});
+            LOG_INFO_FMT("[Climb] Track {} arm_bend conf={:.2f} score={:.2f}",
+                         det.track_id, conf, score);
+        }
+
+        if (detectKneeRaise(det, conf)) {
+            score += conf * 0.20f;
+            analysis.individual_events[det.track_id].push_back(
+                {"knee_raise", det.track_id, conf, {}, "knee raised", frame_counter_});
+            LOG_INFO_FMT("[Climb] Track {} knee_raise conf={:.2f} score={:.2f}",
+                         det.track_id, conf, score);
+        }
+
+        if (detectCenterRaise(det, state, conf)) {
+            score += conf * 0.15f;
+            analysis.individual_events[det.track_id].push_back(
+                {"center_raise", det.track_id, conf, {}, "center raised or compressed", frame_counter_});
+            LOG_INFO_FMT("[Climb] Track {} center_raise conf={:.2f} score={:.2f}",
+                         det.track_id, conf, score);
+        }
+
+        if (detectBodyTilt(det, conf)) {
+            score += conf * 0.15f;
+            analysis.individual_events[det.track_id].push_back(
+                {"body_tilt", det.track_id, conf, {}, "body tilted", frame_counter_});
+            LOG_INFO_FMT("[Climb] Track {} body_tilt conf={:.2f} score={:.2f}",
+                         det.track_id, conf, score);
+        }
+
+        if (detectLimbSpan(det, conf)) {
+            score += conf * 0.10f;
+            analysis.individual_events[det.track_id].push_back(
+                {"limb_span", det.track_id, conf, {}, "limbs spread", frame_counter_});
+            LOG_INFO_FMT("[Climb] Track {} limb_span conf={:.2f} score={:.2f}",
+                         det.track_id, conf, score);
+        }
+
+        // ===== 动态特征（多帧） =====
+        float dyn_conf = 0.0f;
+
+        bool has_alternation = detectAlternatingLimb(det, state, dyn_conf);
+        bool has_ascent = detectOverallAscent(det, state, dyn_conf);
+
+        float dynamic_score = 0.0f;
+        if (has_alternation) {
+            float alt_conf = 0.0f;
+            detectAlternatingLimb(det, state, alt_conf);
+            dynamic_score += alt_conf * 0.50f;
+            analysis.individual_events[det.track_id].push_back(
+                {"alternating_limb", det.track_id, alt_conf, {}, "alternating limb movement", frame_counter_});
+            LOG_INFO_FMT("[Climb] Track {} alternating_limb conf={:.2f}", det.track_id, alt_conf);
+        }
+
         float ascent_conf = 0.0f;
-        bool is_ascent = detectVerticalAscent(det, state, ascent_conf);
-        if (is_ascent) {
-            ClimbingEvent evt;
-            evt.type = "ascent";
-            evt.track_id = det.track_id;
-            evt.confidence = ascent_conf;
-            evt.timestamp_ms = frame_counter_;
-            evt.detail = "vertical ascent detected";
-            analysis.individual_events[det.track_id].push_back(evt);
-            analysis.individual_scores[det.track_id] += ascent_conf * 0.4f;
+        has_ascent = detectOverallAscent(det, state, ascent_conf);
+        if (has_ascent) {
+            dynamic_score += ascent_conf * 0.50f;
+            analysis.individual_events[det.track_id].push_back(
+                {"overall_ascent", det.track_id, ascent_conf, {}, "overall upward movement", frame_counter_});
             analysis.has_ascent = true;
-            LOG_INFO_FMT("[Climb] Track {} ascent detected, conf: {:.2f}, score: {:.2f}",
-                         det.track_id, ascent_conf, analysis.individual_scores[det.track_id]);
+            LOG_INFO_FMT("[Climb] Track {} overall_ascent conf={:.2f}", det.track_id, ascent_conf);
         }
 
-        // 3. 肢体不对称检测
-        float asym_conf = 0.0f;
-        bool is_asym = detectLimbAsymmetry(det, state, asym_conf);
-        if (is_asym) {
-            ClimbingEvent evt;
-            evt.type = "limb_asymmetry";
-            evt.track_id = det.track_id;
-            evt.confidence = asym_conf;
-            evt.timestamp_ms = frame_counter_;
-            evt.detail = "alternating limb movement detected";
-            analysis.individual_events[det.track_id].push_back(evt);
-            analysis.individual_scores[det.track_id] += asym_conf * 0.3f;
-            LOG_INFO_FMT("[Climb] Track {} asymmetry detected, conf: {:.2f}, score: {:.2f}",
-                         det.track_id, asym_conf, analysis.individual_scores[det.track_id]);
+        // ===== 综合得分 =====
+        float raw_score = score * 0.40f + dynamic_score * 0.60f;
+
+        float penalty = filterByOscillation(state)
+                      * filterByLateralMovement(state)
+                      * filterByMovementBurst(state);
+
+        float final_score = raw_score * penalty;
+
+        // 硬性约束：必须有持续上升
+        if (!has_ascent) {
+            final_score = 0.0f;
         }
 
-        // 4. 脚部离地检测
-        float foot_conf = 0.0f;
-        bool is_foot_off = detectFootOffGround(det, foot_conf);
-        if (is_foot_off) {
-            ClimbingEvent evt;
-            evt.type = "foot_off_ground";
-            evt.track_id = det.track_id;
-            evt.confidence = foot_conf;
-            evt.timestamp_ms = frame_counter_;
-            evt.detail = "feet off ground detected";
-            analysis.individual_events[det.track_id].push_back(evt);
-            analysis.individual_scores[det.track_id] += foot_conf * 0.2f;
-            LOG_INFO_FMT("[Climb] Track {} foot off ground detected, conf: {:.2f}, score: {:.2f}",
-                         det.track_id, foot_conf, analysis.individual_scores[det.track_id]);
-        }
+        analysis.individual_scores[det.track_id] = final_score;
+        analysis.total_score += final_score;
+
+        LOG_INFO_FMT("[Climb] Track {} static={:.2f} dynamic={:.2f} raw={:.2f} penalty={:.2f} final={:.2f} ascent={}",
+                     det.track_id, score, dynamic_score, raw_score, penalty, final_score, has_ascent);
     }
 
     // 个体综合判定
     for (const auto& det : detections) {
         if (det.track_id < 0) continue;
 
-        int tid = det.track_id;
-        float score = analysis.individual_scores[tid];
-        const auto& evts = analysis.individual_events[tid];
+        float final_score = analysis.individual_scores[det.track_id];
+        bool is_suspicious = (final_score > cfg_.climb_score_threshold);
 
-        bool has_posture = false, has_ascent = false, has_asym = false, has_foot_off = false;
-        for (const auto& evt : evts) {
-            if (evt.type == "posture") has_posture = true;
-            if (evt.type == "ascent") has_ascent = true;
-            if (evt.type == "limb_asymmetry") has_asym = true;
-            if (evt.type == "foot_off_ground") has_foot_off = true;
-        }
-
-        LOG_INFO_FMT("[Climb] Track {} has posture: {}, ascent: {}, asymmetry: {}, foot_off: {}",
-                     tid, has_posture, has_ascent, has_asym, has_foot_off);
-
-        // 组合规则判定
-        bool is_suspicious = false;
-
-        if (has_ascent && has_posture && score > 0.5f) {
-            is_suspicious = true;
-            LOG_INFO_FMT("[Climb] Track {} triggered rule1: ascent + posture", tid);
-        }
-        else if (has_ascent && has_foot_off && score > 0.4f) {
-            is_suspicious = true;
-            LOG_INFO_FMT("[Climb] Track {} triggered rule2: ascent + foot_off_ground", tid);
-        }
-        else if (has_posture && has_asym && score > 0.4f) {
-            is_suspicious = true;
-            LOG_INFO_FMT("[Climb] Track {} triggered rule3: posture + asymmetry", tid);
-        }
-        else if (has_ascent && has_asym && has_foot_off && score > 0.5f) {
-            is_suspicious = true;
-            LOG_INFO_FMT("[Climb] Track {} triggered rule4: ascent + asymmetry + foot_off", tid);
-        }
-        else if (has_posture && tracks_[tid].posture_frame_count >= 3 && score > 0.4f) {
-            is_suspicious = true;
-            LOG_INFO_FMT("[Climb] Track {} triggered rule5: sustained abnormal posture", tid);
-        }
-        else if (score > 0.6f) {
-            is_suspicious = true;
-            LOG_INFO_FMT("[Climb] Track {} triggered rule6: high score", tid);
-        }
-
-        analysis.is_suspicious[tid] = is_suspicious;
+        analysis.is_suspicious[det.track_id] = is_suspicious;
         if (is_suspicious) {
             analysis.suspicious_person_count++;
         }
-        analysis.total_score += score;
     }
 
     return analysis;
@@ -479,9 +454,6 @@ StateTransitionEvent ClimbingDetector::determineTransitionEvent(
             climbing_person_count++;
         }
     }
-
-    LOG_INFO_FMT("[Climb] Transition analysis: suspicious_count={}, climbing_person_count={}, total_score={:.2f}",
-                 analysis.suspicious_person_count, climbing_person_count, analysis.total_score);
 
     if (climbing_person_count >= cfg_.min_involved_persons) {
         return StateTransitionEvent::CONFIRMED_CLIMBING;
@@ -522,266 +494,76 @@ ClimbingResult ClimbingDetector::buildResult(
     return result;
 }
 
-// ========== 姿态检测 ==========
+// ================================================================
+// 辅助函数
+// ================================================================
 
-bool ClimbingDetector::detectClimbingPosture(
-    const core::InferenceResultPacket::BBox& det,
-    TrackState& state,
-    float& out_confidence) {
+float ClimbingDetector::calculateAngle(
+    const core::InferenceResultPacket::KeyPoint& a,
+    const core::InferenceResultPacket::KeyPoint& b,
+    const core::InferenceResultPacket::KeyPoint& c) {
 
-    if (!det.has_keypoints) return false;
-
-    const auto& kpts = det.keypoints;
-    float conf = 0.0f;
-    int feature_count = 0;
-
-    // 1. 躯干角度（偏离垂直方向）
-    float torso_angle = calculateTorsoAngle(kpts);
-    float torso_deviation = std::abs(std::abs(torso_angle) - 90.0f);
-    LOG_INFO_FMT("[Climb] Track {} torso_angle={:.1f}, deviation={:.1f}", det.track_id, torso_angle, torso_deviation);
-
-    if (torso_deviation > cfg_.torso_angle_climb_min && torso_deviation < cfg_.torso_angle_climb_max) {
-        conf += std::min(1.0f, torso_deviation / 90.0f) * 0.3f;
-        feature_count++;
-        LOG_INFO_FMT("[Climb] Track {} torso tilt feature matched", det.track_id);
-    }
-
-    // 2. 手臂上举（手腕高于肩膀）
-    const auto& ls = kpts[Config::LEFT_SHOULDER];
-    const auto& rs = kpts[Config::RIGHT_SHOULDER];
-    const auto& lw = kpts[Config::LEFT_WRIST];
-    const auto& rw = kpts[Config::RIGHT_WRIST];
-
-    bool left_arm_up = isKeypointValid(ls) && isKeypointValid(lw) && (ls.y - lw.y) > cfg_.arm_raise_threshold;
-    bool right_arm_up = isKeypointValid(rs) && isKeypointValid(rw) && (rs.y - rw.y) > cfg_.arm_raise_threshold;
-
-    if (left_arm_up || right_arm_up) {
-        conf += 0.25f;
-        feature_count++;
-        LOG_INFO_FMT("[Climb] Track {} arm raise: left={}, right={}", det.track_id, left_arm_up, right_arm_up);
-    }
-
-    // 3. 腿部抬起（脚踝高于膝盖）
-    const auto& lk = kpts[Config::LEFT_KNEE];
-    const auto& rk = kpts[Config::RIGHT_KNEE];
-    const auto& la = kpts[Config::LEFT_ANKLE];
-    const auto& ra = kpts[Config::RIGHT_ANKLE];
-
-    bool left_leg_up = isKeypointValid(lk) && isKeypointValid(la) && (lk.y - la.y) > cfg_.leg_raise_threshold;
-    bool right_leg_up = isKeypointValid(rk) && isKeypointValid(ra) && (rk.y - ra.y) > cfg_.leg_raise_threshold;
-
-    if (left_leg_up || right_leg_up) {
-        conf += 0.25f;
-        feature_count++;
-        LOG_INFO_FMT("[Climb] Track {} leg raise: left={}, right={}", det.track_id, left_leg_up, right_leg_up);
-    }
-
-    // 4. 身体拉伸/压缩（头-踝距离 vs bbox高度）
-    float head_y = -1, ankle_y = -1;
-    bool has_head = false, has_ankle = false;
-
-    for (int idx : {Config::NOSE, Config::LEFT_EYE, Config::RIGHT_EYE}) {
-        if (isKeypointValid(kpts[idx])) {
-            if (!has_head || kpts[idx].y < head_y) {
-                head_y = kpts[idx].y;
-                has_head = true;
-            }
-        }
-    }
-
-    for (int idx : {Config::LEFT_ANKLE, Config::RIGHT_ANKLE}) {
-        if (isKeypointValid(kpts[idx])) {
-            if (!has_ankle || kpts[idx].y > ankle_y) {
-                ankle_y = kpts[idx].y;
-                has_ankle = true;
-            }
-        }
-    }
-
-    if (has_head && has_ankle && det.h > 0) {
-        float body_length = ankle_y - head_y;
-        float stretch_ratio = body_length / det.h;
-
-        if (stretch_ratio > cfg_.body_stretch_ratio) {
-            conf += 0.2f;
-            feature_count++;
-            LOG_INFO_FMT("[Climb] Track {} body stretch ratio: {:.2f}", det.track_id, stretch_ratio);
-        } else if (stretch_ratio < cfg_.body_compress_ratio) {
-            conf += 0.15f;
-            feature_count++;
-            LOG_INFO_FMT("[Climb] Track {} body compress ratio: {:.2f}", det.track_id, stretch_ratio);
-        }
-    }
-
-    // 5. 宽高比（水平姿态/翻越栏杆）
-    if (det.w > 0 && det.h > 0) {
-        float aspect = det.w / det.h;
-        if (aspect > cfg_.aspect_ratio_threshold) {
-            conf += 0.15f;
-            feature_count++;
-            LOG_INFO_FMT("[Climb] Track {} aspect ratio: {:.2f}", det.track_id, aspect);
-        }
-    }
-
-    // 时序一致性
-    if (feature_count >= 2) {
-        state.posture_frame_count++;
-        if (state.posture_frame_count >= 2) {
-            out_confidence = std::min(1.0f, conf);
-            return true;
-        }
-    } else {
-        state.posture_frame_count = std::max(0, state.posture_frame_count - 1);
-    }
-
-    out_confidence = 0.0f;
-    return false;
+    float angle1 = std::atan2(a.y - b.y, a.x - b.x);
+    float angle2 = std::atan2(c.y - b.y, c.x - b.x);
+    float diff = std::abs(angle1 - angle2) * 180.0f / CV_PI;
+    if (diff > 180.0f) diff = 360.0f - diff;
+    return diff;
 }
 
-// ========== 垂直上升检测 ==========
+float ClimbingDetector::calculateOscillation(const std::deque<float>& y_history) {
+    if (y_history.size() < 3) return 0.0f;
 
-bool ClimbingDetector::detectVerticalAscent(
-    const core::InferenceResultPacket::BBox& det,
-    TrackState& state,
-    float& out_confidence) {
-
-    if (state.center_history.size() < static_cast<size_t>(cfg_.ascent_min_frames)) {
-        out_confidence = 0.0f;
-        return false;
-    }
-
-    // 计算Y轴速度（向上为负，故速度 < -threshold 表示上升）
-    float speed_y = calculateSpeedY(state.center_history);
-    LOG_INFO_FMT("[Climb] Track {} vertical speed_y={:.2f}", det.track_id, speed_y);
-
-    if (speed_y < -cfg_.ascent_speed_threshold) {
-        // 检查总上升距离
-        float total_ascent = 0.0f;
-        for (size_t i = 1; i < state.center_history.size(); ++i) {
-            float dy = state.center_history[i-1].y - state.center_history[i].y; // 向上为正
-            if (dy > 0) total_ascent += dy;
-        }
-
-        LOG_INFO_FMT("[Climb] Track {} total ascent={:.1f} pixels", det.track_id, total_ascent);
-
-        if (total_ascent > cfg_.ascent_min_distance) {
-            state.ascent_frame_count++;
-            if (state.ascent_frame_count >= 2) {
-                out_confidence = std::min(1.0f, total_ascent / (cfg_.ascent_min_distance * 3.0f));
-                return true;
-            }
-        }
-    } else {
-        state.ascent_frame_count = std::max(0, state.ascent_frame_count - 1);
-    }
-
-    out_confidence = 0.0f;
-    return false;
-}
-
-// ========== 肢体不对称检测 ==========
-
-bool ClimbingDetector::detectLimbAsymmetry(
-    const core::InferenceResultPacket::BBox& det,
-    TrackState& state,
-    float& out_confidence) {
-
-    if (!det.has_keypoints) return false;
-
-    const auto& kpts = det.keypoints;
-
-    // 检查左右手腕高度差
-    bool has_lw = isKeypointValid(kpts[Config::LEFT_WRIST]);
-    bool has_rw = isKeypointValid(kpts[Config::RIGHT_WRIST]);
-    bool has_la = isKeypointValid(kpts[Config::LEFT_ANKLE]);
-    bool has_ra = isKeypointValid(kpts[Config::RIGHT_ANKLE]);
-
-    float max_diff = 0.0f;
-
-    if (has_lw && has_rw) {
-        float wrist_diff = std::abs(kpts[Config::LEFT_WRIST].y - kpts[Config::RIGHT_WRIST].y);
-        max_diff = std::max(max_diff, wrist_diff);
-    }
-
-    if (has_la && has_ra) {
-        float ankle_diff = std::abs(kpts[Config::LEFT_ANKLE].y - kpts[Config::RIGHT_ANKLE].y);
-        max_diff = std::max(max_diff, ankle_diff);
-    }
-
-    if (det.h > 0) {
-        float diff_ratio = max_diff / det.h;
-        LOG_INFO_FMT("[Climb] Track {} limb asymmetry ratio: {:.3f}", det.track_id, diff_ratio);
-
-        if (diff_ratio > cfg_.limb_asymmetry_threshold) {
-            out_confidence = std::min(1.0f, diff_ratio / (cfg_.limb_asymmetry_threshold * 3.0f));
-            return true;
+    int direction_changes = 0;
+    for (size_t i = 2; i < y_history.size(); i++) {
+        float diff1 = y_history[i - 1] - y_history[i - 2];
+        float diff2 = y_history[i] - y_history[i - 1];
+        if ((diff1 > 0 && diff2 < 0) || (diff1 < 0 && diff2 > 0)) {
+            direction_changes++;
         }
     }
-
-    out_confidence = 0.0f;
-    return false;
+    LOG_INFO_FMT("[Climb] oscillation direction_changes={}, size={}", direction_changes, y_history.size());
+    return static_cast<float>(direction_changes) / static_cast<float>(y_history.size() - 2);
 }
 
-// ========== 脚部离地检测 ==========
+float ClimbingDetector::calculateLateralMovement(const std::deque<cv::Point2f>& center_history) {
+    if (center_history.size() < 2) return 0.0f;
 
-bool ClimbingDetector::detectFootOffGround(
-    const core::InferenceResultPacket::BBox& det,
-    float& out_confidence) {
-
-    if (!det.has_keypoints) return false;
-
-    const auto& kpts = det.keypoints;
-    float bbox_top = det.y;
-    float bbox_bottom = det.y + det.h;
-    float bbox_mid = bbox_top + det.h * cfg_.foot_off_ground_ratio;
-
-    bool left_off = isKeypointValid(kpts[Config::LEFT_ANKLE]) && kpts[Config::LEFT_ANKLE].y < bbox_mid;
-    bool right_off = isKeypointValid(kpts[Config::RIGHT_ANKLE]) && kpts[Config::RIGHT_ANKLE].y < bbox_mid;
-
-    LOG_INFO_FMT("[Climb] Track {} foot off ground: left={}, right={}, mid_y={:.1f}",
-                 det.track_id, left_off, right_off, bbox_mid);
-
-    if (left_off || right_off) {
-        out_confidence = (left_off && right_off) ? 1.0f : 0.6f;
-        return true;
+    float total_x = 0.0f;
+    float total_y = 0.0f;
+    for (size_t i = 1; i < center_history.size(); i++) {
+        total_x += std::abs(center_history[i].x - center_history[i - 1].x);
+        total_y += std::abs(center_history[i].y - center_history[i - 1].y);
     }
 
-    out_confidence = 0.0f;
-    return false;
+    // 两者都几乎不动 → 不是横移
+    if (total_x < 1.0f && total_y < 1.0f) return 0.0f;
+    // 有横向位移但几乎没纵向位移 → 纯横移
+    if (total_y < 1.0f) return 1.0f;
+
+    float ratio = total_x / total_y;
+    return std::min(1.0f, ratio);
 }
 
-// ========== 辅助函数 ==========
+float ClimbingDetector::calculateMovementBurst(const std::deque<cv::Point2f>& center_history) {
+    if (center_history.size() < 3) return 0.0f;
 
-float ClimbingDetector::calculateSpeedY(const std::deque<cv::Point2f>& history) {
-    if (history.size() < 2) return 0.0f;
-
-    float total_dy = 0.0f;
-    for (size_t i = 1; i < history.size(); ++i) {
-        total_dy += history[i].y - history[i-1].y; // Y轴向下为正
+    std::vector<float> speeds;
+    for (size_t i = 1; i < center_history.size(); i++) {
+        float dx = center_history[i].x - center_history[i - 1].x;
+        float dy = center_history[i].y - center_history[i - 1].y;
+        speeds.push_back(std::sqrt(dx * dx + dy * dy));
     }
 
-    return total_dy / static_cast<float>(history.size() - 1);
-}
-
-float ClimbingDetector::calculateTorsoAngle(
-    const std::array<core::InferenceResultPacket::KeyPoint, 17>& kpts) {
-
-    const auto& ls = kpts[Config::LEFT_SHOULDER];
-    const auto& rs = kpts[Config::RIGHT_SHOULDER];
-    const auto& lh = kpts[Config::LEFT_HIP];
-    const auto& rh = kpts[Config::RIGHT_HIP];
-
-    if (!isKeypointValid(ls) || !isKeypointValid(rs) ||
-        !isKeypointValid(lh) || !isKeypointValid(rh)) {
-        return 0.0f;
+    float mean = std::accumulate(speeds.begin(), speeds.end(), 0.0f) / speeds.size();
+    float variance = 0.0f;
+    for (float s : speeds) {
+        variance += (s - mean) * (s - mean);
     }
+    variance /= speeds.size();
 
-    float shoulder_x = (ls.x + rs.x) / 2.0f;
-    float shoulder_y = (ls.y + rs.y) / 2.0f;
-    float hip_x = (lh.x + rh.x) / 2.0f;
-    float hip_y = (lh.y + rh.y) / 2.0f;
-
-    return std::atan2(hip_y - shoulder_y, hip_x - shoulder_x) * 180.0f / CV_PI;
+    float cv = (mean > 1e-3f) ? std::sqrt(variance) / mean : 0.0f;
+    LOG_INFO_FMT("[Climb] movement_burst mean:{},variance:{},cv={:.2f}", mean,variance,cv);
+    return std::min(1.0f, cv / 2.0f);
 }
 
 bool ClimbingDetector::isKeypointValid(const core::InferenceResultPacket::KeyPoint& kp) {
@@ -791,22 +573,19 @@ bool ClimbingDetector::isKeypointValid(const core::InferenceResultPacket::KeyPoi
 float ClimbingDetector::euclideanDistance(
     const core::InferenceResultPacket::KeyPoint& a,
     const core::InferenceResultPacket::KeyPoint& b) {
-
     float dx = a.x - b.x;
     float dy = a.y - b.y;
-    return std::sqrt(dx*dx + dy*dy);
+    return std::sqrt(dx * dx + dy * dy);
 }
 
-float ClimbingDetector::normalizeAngle(float angle) {
-    angle = std::fmod(angle, 360.0f);
-    if (angle > 180.0f) angle -= 360.0f;
-    else if (angle < -180.0f) angle += 360.0f;
-    return angle;
+float ClimbingDetector::euclideanDistance(const cv::Point2f& a, const cv::Point2f& b) {
+    float dx = a.x - b.x;
+    float dy = a.y - b.y;
+    return std::sqrt(dx * dx + dy * dy);
 }
 
 void ClimbingDetector::cleanupInactive(const std::vector<int>& active_ids) {
     std::unordered_set<int> active_set(active_ids.begin(), active_ids.end());
-
     for (auto it = tracks_.begin(); it != tracks_.end();) {
         if (active_set.find(it->first) == active_set.end()) {
             it = tracks_.erase(it);
@@ -814,4 +593,377 @@ void ClimbingDetector::cleanupInactive(const std::vector<int>& active_ids) {
             ++it;
         }
     }
+}
+
+// ================================================================
+// 静态特征检测
+// ================================================================
+
+bool ClimbingDetector::detectHandAboveShoulder(
+    const core::InferenceResultPacket::BBox& det,
+    float& out_conf) {
+
+    if (!det.has_keypoints) { out_conf = 0.0f; return false; }
+
+    const auto& kpts = det.keypoints;
+    bool left_up = isKeypointValid(kpts[Config::LEFT_WRIST]) &&
+                   isKeypointValid(kpts[Config::LEFT_SHOULDER]) &&
+                   kpts[Config::LEFT_WRIST].y < kpts[Config::LEFT_SHOULDER].y - cfg_.arm_raise_offset;
+
+    bool right_up = isKeypointValid(kpts[Config::RIGHT_WRIST]) &&
+                    isKeypointValid(kpts[Config::RIGHT_SHOULDER]) &&
+                    kpts[Config::RIGHT_WRIST].y < kpts[Config::RIGHT_SHOULDER].y - cfg_.arm_raise_offset;
+
+    if (left_up || right_up) {
+        out_conf = (left_up && right_up) ? 1.0f : 0.7f;
+        return true;
+    }
+
+    out_conf = 0.0f;
+    return false;
+}
+
+bool ClimbingDetector::detectArmBend(
+    const core::InferenceResultPacket::BBox& det,
+    float& out_conf) {
+
+    if (!det.has_keypoints) { out_conf = 0.0f; return false; }
+
+    const auto& kpts = det.keypoints;
+    float best_conf = 0.0f;
+    bool found = false;
+
+    // 左臂
+    if (isKeypointValid(kpts[Config::LEFT_SHOULDER]) &&
+        isKeypointValid(kpts[Config::LEFT_ELBOW]) &&
+        isKeypointValid(kpts[Config::LEFT_WRIST])) {
+        float angle = calculateAngle(kpts[Config::LEFT_SHOULDER],
+                                     kpts[Config::LEFT_ELBOW],
+                                     kpts[Config::LEFT_WRIST]);
+        if (angle >= cfg_.arm_bend_min && angle <= cfg_.arm_bend_max) {
+            float conf = 1.0f - std::abs(angle - 90.0f) / 90.0f;
+            best_conf = std::max(best_conf, conf);
+            found = true;
+        }
+    }
+
+    // 右臂
+    if (isKeypointValid(kpts[Config::RIGHT_SHOULDER]) &&
+        isKeypointValid(kpts[Config::RIGHT_ELBOW]) &&
+        isKeypointValid(kpts[Config::RIGHT_WRIST])) {
+        float angle = calculateAngle(kpts[Config::RIGHT_SHOULDER],
+                                     kpts[Config::RIGHT_ELBOW],
+                                     kpts[Config::RIGHT_WRIST]);
+        if (angle >= cfg_.arm_bend_min && angle <= cfg_.arm_bend_max) {
+            float conf = 1.0f - std::abs(angle - 90.0f) / 90.0f;
+            best_conf = std::max(best_conf, conf);
+            found = true;
+        }
+    }
+
+    out_conf = found ? best_conf : 0.0f;
+    return found;
+}
+
+bool ClimbingDetector::detectKneeRaise(
+    const core::InferenceResultPacket::BBox& det,
+    float& out_conf) {
+
+    if (!det.has_keypoints) { out_conf = 0.0f; return false; }
+
+    const auto& kpts = det.keypoints;
+    float best_conf = 0.0f;
+    bool found = false;
+
+    // 左腿
+    if (isKeypointValid(kpts[Config::LEFT_HIP]) &&
+        isKeypointValid(kpts[Config::LEFT_KNEE]) &&
+        isKeypointValid(kpts[Config::LEFT_ANKLE])) {
+        float angle = calculateAngle(kpts[Config::LEFT_HIP],
+                                     kpts[Config::LEFT_KNEE],
+                                     kpts[Config::LEFT_ANKLE]);
+        if (angle >= cfg_.knee_bend_min && angle <= cfg_.knee_bend_max) {
+            float conf = 1.0f - std::abs(angle - 90.0f) / 90.0f;
+            best_conf = std::max(best_conf, conf);
+            found = true;
+        }
+    }
+
+    // 右腿
+    if (isKeypointValid(kpts[Config::RIGHT_HIP]) &&
+        isKeypointValid(kpts[Config::RIGHT_KNEE]) &&
+        isKeypointValid(kpts[Config::RIGHT_ANKLE])) {
+        float angle = calculateAngle(kpts[Config::RIGHT_HIP],
+                                     kpts[Config::RIGHT_KNEE],
+                                     kpts[Config::RIGHT_ANKLE]);
+        if (angle >= cfg_.knee_bend_min && angle <= cfg_.knee_bend_max) {
+            float conf = 1.0f - std::abs(angle - 90.0f) / 90.0f;
+            best_conf = std::max(best_conf, conf);
+            found = true;
+        }
+    }
+
+    out_conf = found ? best_conf : 0.0f;
+    return found;
+}
+
+bool ClimbingDetector::detectCenterRaise(
+    const core::InferenceResultPacket::BBox& det,
+    TrackState& state,
+    float& out_conf) {
+
+    if (!det.has_keypoints) { out_conf = 0.0f; return false; }
+
+    const auto& kpts = det.keypoints;
+    float sum_y = 0.0f;
+    int count = 0;
+
+    for (int i = 0; i < 17; i++) {
+        if (isKeypointValid(kpts[i])) {
+            sum_y += kpts[i].y;
+            count++;
+        }
+    }
+
+    if (count < 3) { out_conf = 0.0f; return false; }
+
+    float center_y = sum_y / count;
+
+    // 蜷缩检测
+    float head_y = -1, ankle_y = -1;
+    for (int idx : {Config::NOSE, Config::LEFT_EYE, Config::RIGHT_EYE}) {
+        if (isKeypointValid(kpts[idx])) {
+            if (head_y < 0 || kpts[idx].y < head_y) head_y = kpts[idx].y;
+        }
+    }
+    for (int idx : {Config::LEFT_ANKLE, Config::RIGHT_ANKLE}) {
+        if (isKeypointValid(kpts[idx])) {
+            if (ankle_y < 0 || kpts[idx].y > ankle_y) ankle_y = kpts[idx].y;
+        }
+    }
+
+    bool compressed = false;
+    if (head_y > 0 && ankle_y > 0 && det.h > 0) {
+        float stretch_ratio = (ankle_y - head_y) / det.h;
+        compressed = (stretch_ratio < cfg_.stretch_compress_ratio);
+    }
+
+    // 重心抬高
+    bool raised = false;
+    if (state.avg_center_y < 0) {
+        state.avg_center_y = center_y;
+    } else {
+        raised = (center_y < state.avg_center_y - cfg_.center_raise_threshold);
+        state.avg_center_y = 0.9f * state.avg_center_y + 0.1f * center_y;
+    }
+
+    if (raised || compressed) {
+        out_conf = compressed ? 0.8f : 0.6f;
+        return true;
+    }
+
+    out_conf = 0.0f;
+    return false;
+}
+
+bool ClimbingDetector::detectBodyTilt(
+    const core::InferenceResultPacket::BBox& det,
+    float& out_conf) {
+
+    if (!det.has_keypoints) { out_conf = 0.0f; return false; }
+
+    const auto& kpts = det.keypoints;
+    if (!isKeypointValid(kpts[Config::LEFT_SHOULDER]) ||
+        !isKeypointValid(kpts[Config::RIGHT_SHOULDER]) ||
+        !isKeypointValid(kpts[Config::LEFT_HIP]) ||
+        !isKeypointValid(kpts[Config::RIGHT_HIP])) {
+        out_conf = 0.0f;
+        return false;
+    }
+
+    float shoulder_x = (kpts[Config::LEFT_SHOULDER].x + kpts[Config::RIGHT_SHOULDER].x) / 2.0f;
+    float shoulder_y = (kpts[Config::LEFT_SHOULDER].y + kpts[Config::RIGHT_SHOULDER].y) / 2.0f;
+    float hip_x = (kpts[Config::LEFT_HIP].x + kpts[Config::RIGHT_HIP].x) / 2.0f;
+    float hip_y = (kpts[Config::LEFT_HIP].y + kpts[Config::RIGHT_HIP].y) / 2.0f;
+
+    float angle = std::abs(std::atan2(shoulder_x - hip_x, hip_y - shoulder_y) * 180.0f / CV_PI);
+
+    if (angle >= cfg_.tilt_min && angle <= cfg_.tilt_max) {
+        float mid = (cfg_.tilt_min + cfg_.tilt_max) / 2.0f;
+        float conf = 1.0f - std::abs(angle - mid) / (cfg_.tilt_max - cfg_.tilt_min) * 2.0f;
+        out_conf = std::max(0.3f, conf);
+        return true;
+    }
+
+    out_conf = 0.0f;
+    return false;
+}
+
+bool ClimbingDetector::detectLimbSpan(
+    const core::InferenceResultPacket::BBox& det,
+    float& out_conf) {
+
+    if (!det.has_keypoints) { out_conf = 0.0f; return false; }
+
+    const auto& kpts = det.keypoints;
+    bool has_lw = isKeypointValid(kpts[Config::LEFT_WRIST]);
+    bool has_rw = isKeypointValid(kpts[Config::RIGHT_WRIST]);
+    bool has_la = isKeypointValid(kpts[Config::LEFT_ANKLE]);
+    bool has_ra = isKeypointValid(kpts[Config::RIGHT_ANKLE]);
+
+    if ((!has_lw && !has_rw) || (!has_la && !has_ra)) {
+        out_conf = 0.0f;
+        return false;
+    }
+
+    float limb_span = 0.0f;
+    if (has_lw && has_rw) {
+        limb_span += euclideanDistance(kpts[Config::LEFT_WRIST], kpts[Config::RIGHT_WRIST]);
+    } else if (has_lw) {
+        limb_span += euclideanDistance(kpts[Config::LEFT_WRIST], kpts[Config::LEFT_WRIST]);
+    } else {
+        limb_span += euclideanDistance(kpts[Config::RIGHT_WRIST], kpts[Config::RIGHT_WRIST]);
+    }
+
+    if (has_la && has_ra) {
+        limb_span += euclideanDistance(kpts[Config::LEFT_ANKLE], kpts[Config::RIGHT_ANKLE]);
+    } else if (has_la) {
+        limb_span += euclideanDistance(kpts[Config::LEFT_ANKLE], kpts[Config::LEFT_ANKLE]);
+    } else {
+        limb_span += euclideanDistance(kpts[Config::RIGHT_ANKLE], kpts[Config::RIGHT_ANKLE]);
+    }
+
+    float bbox_diag = std::sqrt(det.w * det.w + det.h * det.h);
+    if (bbox_diag < 1.0f) { out_conf = 0.0f; return false; }
+
+    float normalize = limb_span / bbox_diag;
+
+    if (normalize > cfg_.limb_span_threshold) {
+        out_conf = std::min(1.0f, normalize / (cfg_.limb_span_threshold * 2.0f));
+        return true;
+    }
+
+    out_conf = 0.0f;
+    return false;
+}
+
+// ================================================================
+// 动态特征检测
+// ================================================================
+
+bool ClimbingDetector::detectAlternatingLimb(
+    const core::InferenceResultPacket::BBox& det,
+    TrackState& state,
+    float& out_conf) {
+
+    int window = cfg_.alternation_window;
+    if (static_cast<int>(state.left_wrist_y_history.size()) < window ||
+        static_cast<int>(state.right_wrist_y_history.size()) < window) {
+        out_conf = 0.0f;
+        return false;
+    }
+
+    int alternation_count = 0;
+    int total = 0;
+
+    auto& lw = state.left_wrist_y_history;
+    auto& rw = state.right_wrist_y_history;
+    int n = std::min(static_cast<int>(lw.size()), static_cast<int>(rw.size()));
+    int start = std::max(0, n - window);
+
+    for (int i = start + 1; i < n; i++) {
+        float left_dy = lw[i] - lw[i - 1];
+        float right_dy = rw[i] - rw[i - 1];
+        if (left_dy * right_dy < 0) {
+            alternation_count++;
+        }
+        total++;
+    }
+
+    if (total == 0) { out_conf = 0.0f; return false; }
+
+    float ratio = static_cast<float>(alternation_count) / total;
+
+    if (ratio > cfg_.alternation_ratio_threshold) {
+        out_conf = ratio;
+        return true;
+    }
+
+    out_conf = 0.0f;
+    return false;
+}
+
+bool ClimbingDetector::detectOverallAscent(
+    const core::InferenceResultPacket::BBox& det,
+    TrackState& state,
+    float& out_conf) {
+
+    int n = state.center_history.size();
+    int min_frames = cfg_.ascent_min_frames;
+    if (n < min_frames) { out_conf = 0.0f; return false; }
+
+    // 线性回归拟合Y轴斜率
+    int window = std::min(n, min_frames * 2);
+    int start = n - window;
+
+    float sum_x = 0, sum_y = 0, sum_xy = 0, sum_x2 = 0;
+    for (int i = 0; i < window; i++) {
+        float x = static_cast<float>(i);
+        float y = state.center_history[start + i].y;
+        sum_x += x;
+        sum_y += y;
+        sum_xy += x * y;
+        sum_x2 += x * x;
+    }
+
+    float denom = window * sum_x2 - sum_x * sum_x;
+    if (std::abs(denom) < 1e-6f) { out_conf = 0.0f; return false; }
+
+    float slope = (window * sum_xy - sum_x * sum_y) / denom;
+
+    if (slope < cfg_.ascent_slope_threshold) {
+        state.ascent_frame_count++;
+        if (state.ascent_frame_count >= 2) {
+            out_conf = std::min(1.0f, std::abs(slope) / std::abs(cfg_.ascent_slope_threshold));
+            return true;
+        }
+    } else {
+        state.ascent_frame_count = std::max(0, state.ascent_frame_count - 1);
+    }
+
+    out_conf = 0.0f;
+    return false;
+}
+
+// ================================================================
+// 过滤器
+// ================================================================
+
+float ClimbingDetector::filterByOscillation(const TrackState& state) const {
+    if (state.center_history.size() < 3) return 1.0f;
+
+    std::deque<float> y_hist;
+    for (const auto& p : state.center_history) y_hist.push_back(p.y);
+
+    float osc = calculateOscillation(y_hist);
+
+    if (osc > cfg_.oscillation_threshold_high) return 0.3f;
+    if (osc > cfg_.oscillation_threshold_low) return 0.7f;
+    return 1.0f;
+}
+
+float ClimbingDetector::filterByLateralMovement(const TrackState& state) const {
+    float lat = calculateLateralMovement(state.center_history);
+
+    if (lat > cfg_.lateral_threshold_high) return 0.3f;
+    if (lat > cfg_.lateral_threshold_low) return 0.7f;
+    return 1.0f;
+}
+
+float ClimbingDetector::filterByMovementBurst(const TrackState& state) const {
+    float burst = calculateMovementBurst(state.center_history);
+
+    if (burst > cfg_.burst_threshold_high) return 0.3f;
+    if (burst > cfg_.burst_threshold_low) return 0.7f;
+    return 1.0f;
 }
