@@ -903,9 +903,22 @@ bool ClimbingDetector::detectOverallAscent(
     int min_frames = cfg_.ascent_min_frames;
     if (n < min_frames) { out_conf = 0.0f; return false; }
 
-    // 线性回归拟合Y轴斜率
     int window = std::min(n, min_frames * 2);
     int start = n - window;
+
+    float y_first = state.center_history[start].y;
+    float y_last = state.center_history[start + window - 1].y;
+    float net_displacement = y_first - y_last;
+
+    LOG_INFO_FMT("[Climb] Track {} ascent net_disp={:.2f} y_first={:.2f} y_last={:.2f} window={}",
+                 det.track_id, net_displacement, y_first, y_last, window);
+
+    if (net_displacement < cfg_.net_displacement_threshold) {
+        state.ascent_frame_count = 0;
+        out_conf = 0.0f;
+        LOG_INFO_FMT("[Climb] Track {} ascent blocked: net_disp < threshold({})", det.track_id, cfg_.net_displacement_threshold);
+        return false;
+    }
 
     float sum_x = 0, sum_y = 0, sum_xy = 0, sum_x2 = 0;
     for (int i = 0; i < window; i++) {

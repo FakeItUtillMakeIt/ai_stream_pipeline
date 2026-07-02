@@ -91,6 +91,7 @@ public:
         // === 动态特征：整体向上移动 ===
         float ascent_slope_threshold = -1.0f;
         int ascent_min_frames = 3;
+        float net_displacement_threshold = 8.0f;
 
         // === 过滤器 ===
         float oscillation_threshold_high = 0.8f;
@@ -108,7 +109,7 @@ public:
         int cooldown_frames = 30;
 
         // === 综合判定 ===
-        float climb_score_threshold = 0.4f;
+        float climb_score_threshold = 0.5f;
         int min_involved_persons = 1;
 
         // 关键点索引 (COCO)
