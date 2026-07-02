@@ -5,6 +5,7 @@
 #include <iostream>
 #include <unordered_set>
 #include <numeric>
+#include <fstream>
 
 // ========== StateMachine ==========
 
@@ -144,6 +145,8 @@ void ClimbingDetector::TrackState::reset() {
     posture_frame_count = 0;
     ascent_frame_count = 0;
     last_bbox = cv::Rect2f();
+    feature_vector.clear();
+    feature_valid = false;
 }
 
 // ========== FrameAnalysis ==========
@@ -161,6 +164,19 @@ void ClimbingDetector::FrameAnalysis::clear() {
 
 ClimbingDetector::ClimbingDetector(const Config& cfg) : cfg_(cfg), frame_counter_(0) {
     climb_history_.clear();
+    if (cfg_.use_ml_score && !cfg_.ml_model_path.empty()) {
+        svm_loaded_ = svm_model_.load(cfg_.ml_model_path);
+        if (svm_loaded_) {
+            LOG_INFO_FMT("[Climb] SVM model loaded from {}, feature_dim={}",
+                         cfg_.ml_model_path, svm_model_.feature_dim);
+            if (!cfg_.ml_scaler_path.empty()) {
+                bool scaler_ok = svm_model_.loadScaler(cfg_.ml_scaler_path);
+                LOG_INFO_FMT("[Climb] SVM scaler loaded: {}", scaler_ok ? "yes" : "no");
+            }
+        } else {
+            LOG_WARN_FMT("[Climb] Failed to load SVM model from {}", cfg_.ml_model_path);
+        }
+    }
 }
 
 void ClimbingDetector::reset() {
@@ -275,6 +291,10 @@ ClimbingResult ClimbingDetector::process(
     cleanupInactive(active_ids);
     onStateTick(state_machine_.current_state);
 
+    if (!cfg_.training_data_path.empty() && !active_ids.empty()) {
+        exportTrainingData(tracks_, analysis, frame_counter_);
+    }
+
     LOG_INFO_FMT("[Climb] Frame {}: State={}, Duration={}, Event={}, Climbing={}",
                  frame_counter_,
                  state_machine_.getStateString(),
@@ -330,9 +350,13 @@ ClimbingDetector::FrameAnalysis ClimbingDetector::analyzeFrame(
         float score = 0.0f;
 
         // ===== 静态特征（单帧） =====
+        float hand_conf = 0.0f, arm_conf = 0.0f, knee_conf = 0.0f;
+        float center_conf = 0.0f, tilt_conf = 0.0f, limb_conf = 0.0f;
+
         float conf = 0.0f;
 
         if (detectHandAboveShoulder(det, conf)) {
+            hand_conf = conf;
             score += conf * 0.20f;
             analysis.individual_events[det.track_id].push_back(
                 {"hand_above_shoulder", det.track_id, conf, {}, "hand above shoulder", frame_counter_});
@@ -341,6 +365,7 @@ ClimbingDetector::FrameAnalysis ClimbingDetector::analyzeFrame(
         }
 
         if (detectArmBend(det, conf)) {
+            arm_conf = conf;
             score += conf * 0.20f;
             analysis.individual_events[det.track_id].push_back(
                 {"arm_bend", det.track_id, conf, {}, "arm bent", frame_counter_});
@@ -349,6 +374,7 @@ ClimbingDetector::FrameAnalysis ClimbingDetector::analyzeFrame(
         }
 
         if (detectKneeRaise(det, conf)) {
+            knee_conf = conf;
             score += conf * 0.20f;
             analysis.individual_events[det.track_id].push_back(
                 {"knee_raise", det.track_id, conf, {}, "knee raised", frame_counter_});
@@ -357,6 +383,7 @@ ClimbingDetector::FrameAnalysis ClimbingDetector::analyzeFrame(
         }
 
         if (detectCenterRaise(det, state, conf)) {
+            center_conf = conf;
             score += conf * 0.15f;
             analysis.individual_events[det.track_id].push_back(
                 {"center_raise", det.track_id, conf, {}, "center raised or compressed", frame_counter_});
@@ -365,6 +392,7 @@ ClimbingDetector::FrameAnalysis ClimbingDetector::analyzeFrame(
         }
 
         if (detectBodyTilt(det, conf)) {
+            tilt_conf = conf;
             score += conf * 0.15f;
             analysis.individual_events[det.track_id].push_back(
                 {"body_tilt", det.track_id, conf, {}, "body tilted", frame_counter_});
@@ -373,6 +401,7 @@ ClimbingDetector::FrameAnalysis ClimbingDetector::analyzeFrame(
         }
 
         if (detectLimbSpan(det, conf)) {
+            limb_conf = conf;
             score += conf * 0.10f;
             analysis.individual_events[det.track_id].push_back(
                 {"limb_span", det.track_id, conf, {}, "limbs spread", frame_counter_});
@@ -384,11 +413,11 @@ ClimbingDetector::FrameAnalysis ClimbingDetector::analyzeFrame(
         float dyn_conf = 0.0f;
 
         bool has_alternation = detectAlternatingLimb(det, state, dyn_conf);
-        bool has_ascent = detectOverallAscent(det, state, dyn_conf);
+        float alt_conf = 0.0f;
+        bool has_ascent = false;
 
         float dynamic_score = 0.0f;
         if (has_alternation) {
-            float alt_conf = 0.0f;
             detectAlternatingLimb(det, state, alt_conf);
             dynamic_score += alt_conf * 0.50f;
             analysis.individual_events[det.track_id].push_back(
@@ -406,25 +435,39 @@ ClimbingDetector::FrameAnalysis ClimbingDetector::analyzeFrame(
             LOG_INFO_FMT("[Climb] Track {} overall_ascent conf={:.2f}", det.track_id, ascent_conf);
         }
 
+        // ===== 计算过滤器值 =====
+        float osc = filterByOscillation(state);
+        float lat = filterByLateralMovement(state);
+        float burst_val = filterByMovementBurst(state);
+
+        // ===== 收集特征向量（训练数据采集 + ML推理共用） =====
+        collectFeatureVector(state, hand_conf, arm_conf, knee_conf,
+                             center_conf, tilt_conf, limb_conf,
+                             alt_conf, ascent_conf, has_ascent,
+                             osc, lat, burst_val);
+
         // ===== 综合得分 =====
-        float raw_score = score * 0.40f + dynamic_score * 0.60f;
+        float final_score;
+        if (cfg_.use_ml_score && svm_loaded_) {
+            final_score = computeMLScore(state);
+            LOG_INFO_FMT("[Climb] Track {} ml_score={:.2f}", det.track_id, final_score);
+        } else {
+            float raw_score = score * 0.40f + dynamic_score * 0.60f;
 
-        float penalty = filterByOscillation(state)
-                      * filterByLateralMovement(state)
-                      * filterByMovementBurst(state);
+            float penalty = osc * lat * burst_val;
 
-        float final_score = raw_score * penalty;
+            final_score = raw_score * penalty;
 
-        // 硬性约束：必须有持续上升
-        if (!has_ascent) {
-            final_score = 0.0f;
+            if (!has_ascent) {
+                final_score = 0.0f;
+            }
+
+            LOG_INFO_FMT("[Climb] Track {} static={:.2f} dynamic={:.2f} raw={:.2f} penalty={:.2f} final={:.2f} ascent={}",
+                         det.track_id, score, dynamic_score, raw_score, penalty, final_score, has_ascent);
         }
 
         analysis.individual_scores[det.track_id] = final_score;
         analysis.total_score += final_score;
-
-        LOG_INFO_FMT("[Climb] Track {} static={:.2f} dynamic={:.2f} raw={:.2f} penalty={:.2f} final={:.2f} ascent={}",
-                     det.track_id, score, dynamic_score, raw_score, penalty, final_score, has_ascent);
     }
 
     // 个体综合判定
@@ -980,4 +1023,112 @@ float ClimbingDetector::filterByMovementBurst(const TrackState& state) const {
     if (burst > cfg_.burst_threshold_high) return 0.3f;
     if (burst > cfg_.burst_threshold_low) return 0.7f;
     return 1.0f;
+}
+
+// ================================================================
+// ML 相关
+// ================================================================
+
+/* 特征向量定义 (14维):
+ *   [0] hand_above_shoulder_conf   - 手高于肩置信度 (0-1)
+ *   [1] arm_bend_conf              - 手臂弯曲置信度 (0-1)
+ *   [2] knee_raise_conf            - 膝盖抬起置信度 (0-1)
+ *   [3] center_raise_conf          - 重心抬高置信度 (0-1)
+ *   [4] body_tilt_conf             - 身体倾斜置信度 (0-1)
+ *   [5] limb_span_conf             - 四肢张开置信度 (0-1)
+ *   [6] alternating_limb_conf      - 交替运动置信度 (0-1)
+ *   [7] overall_ascent_conf        - 整体上升置信度 (0-1)
+ *   [8] has_ascent                 - 是否有上升 (0/1)
+ *   [9] oscillation                - 振荡程度 (0-1)
+ *  [10] lateral_movement           - 横向移动比例 (0-1)
+ *  [11] movement_burst             - 运动突变程度 (0-1)
+ *  [12] net_displacement           - 净Y位移 (px)
+ *  [13] ascent_slope               - 上升斜率 (px/frame)
+ */
+
+static constexpr int FEATURE_DIM = 14;
+
+void ClimbingDetector::collectFeatureVector(
+    TrackState& state, float hand_conf, float arm_conf, float knee_conf,
+    float center_conf, float tilt_conf, float limb_conf, float alt_conf,
+    float ascent_conf, bool has_ascent, float osc, float lat, float burst_val) {
+
+    state.feature_vector.resize(FEATURE_DIM);
+    state.feature_vector[0] = hand_conf;
+    state.feature_vector[1] = arm_conf;
+    state.feature_vector[2] = knee_conf;
+    state.feature_vector[3] = center_conf;
+    state.feature_vector[4] = tilt_conf;
+    state.feature_vector[5] = limb_conf;
+    state.feature_vector[6] = alt_conf;
+    state.feature_vector[7] = ascent_conf;
+    state.feature_vector[8] = has_ascent ? 1.0f : 0.0f;
+    state.feature_vector[9] = osc;
+    state.feature_vector[10] = lat;
+    state.feature_vector[11] = burst_val;
+
+    float net_disp = 0.0f;
+    if (state.center_history.size() >= 2) {
+        net_disp = state.center_history.front().y - state.center_history.back().y;
+    }
+    state.feature_vector[12] = net_disp;
+
+    state.feature_vector[13] = has_ascent ? ascent_conf * std::abs(cfg_.ascent_slope_threshold) : 0.0f;
+
+    state.feature_valid = true;
+}
+
+float ClimbingDetector::computeMLScore(const TrackState& state) const {
+    if (!state.feature_valid || !svm_loaded_) return 0.0f;
+    return svm_model_.predictProbability(state.feature_vector);
+}
+
+void ClimbingDetector::exportTrainingData(
+    const std::unordered_map<int, TrackState>& tracks,
+    const FrameAnalysis& analysis, int64_t frame_id) {
+
+    static std::ofstream csv_file;
+    static bool header_written = false;
+    static int sample_count = 0;
+
+    if (!csv_file.is_open()) {
+        csv_file.open(cfg_.training_data_path, std::ios::app);
+        if (!csv_file.is_open()) {
+            LOG_WARN_FMT("[Climb] Cannot open training data file: {}", cfg_.training_data_path);
+            return;
+        }
+    }
+
+    if (!header_written) {
+        csv_file << "sample_id,video_id,frame_id,track_id,label,hand_above_shoulder,arm_bend,knee_raise,center_raise,"
+                 << "body_tilt,limb_span,alternating_limb,overall_ascent,has_ascent,"
+                 << "oscillation,lateral_movement,movement_burst,net_displacement,ascent_slope\n";
+        header_written = true;
+    }
+
+    for (const auto& [tid, state] : tracks) {
+        if (!state.feature_valid) continue;
+
+        int label = 0;
+        auto it = analysis.is_suspicious.find(tid);
+        if (it != analysis.is_suspicious.end() && it->second) {
+            auto score_it = analysis.individual_scores.find(tid);
+            if (score_it != analysis.individual_scores.end() && score_it->second > cfg_.climb_score_threshold) {
+                label = 1;
+            }
+        }
+
+        sample_count++;
+        csv_file << sample_count << ","
+                 << cfg_.video_id << ","
+                 << frame_id << ","
+                 << tid << ","
+                 << label;
+        for (float f : state.feature_vector) {
+            csv_file << "," << f;
+        }
+        csv_file << "\n";
+    }
+
+    csv_file.flush();
 }

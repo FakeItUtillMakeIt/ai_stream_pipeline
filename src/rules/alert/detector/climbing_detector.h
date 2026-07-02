@@ -3,6 +3,7 @@
 #pragma once
 
 #include "ai_stream/core/packet.h"
+#include "svm_model.h"
 
 #include <opencv2/opencv.hpp>
 #include <vector>
@@ -112,6 +113,13 @@ public:
         float climb_score_threshold = 0.5f;
         int min_involved_persons = 1;
 
+        // === ML 判定模式 ===
+        bool use_ml_score = false;
+        std::string ml_model_path;
+        std::string ml_scaler_path;
+        std::string training_data_path="./feature_data.csv";
+        std::string video_id = "default";
+
         // 关键点索引 (COCO)
         static constexpr int NOSE = 0;
         static constexpr int LEFT_EYE = 1;
@@ -172,6 +180,9 @@ private:
         int ascent_frame_count = 0;
         cv::Rect2f last_bbox;
 
+        std::vector<float> feature_vector;
+        bool feature_valid = false;
+
         void reset();
     };
 
@@ -194,6 +205,9 @@ private:
     mutable std::mutex mutex_;
     static constexpr int MAX_HISTORY = 30;
     int64_t frame_counter_ = 0;
+
+    LinearSVMModel svm_model_;
+    bool svm_loaded_ = false;
 
     // ========== 状态机驱动 ==========
     FrameAnalysis analyzeFrame(
@@ -254,6 +268,14 @@ private:
     float filterByOscillation(const TrackState& state) const;
     float filterByLateralMovement(const TrackState& state) const;
     float filterByMovementBurst(const TrackState& state) const;
+
+    float computeMLScore(const TrackState& state) const;
+    void collectFeatureVector(TrackState& state, float hand_conf, float arm_conf,
+                              float knee_conf, float center_conf, float tilt_conf,
+                              float limb_conf, float alt_conf, float ascent_conf,
+                              bool has_ascent, float osc, float lat, float burst);
+    void exportTrainingData(const std::unordered_map<int, TrackState>& tracks,
+                            const FrameAnalysis& analysis, int64_t frame_id);
 
     // ========== 状态机回调 ==========
     void onEnterIdle();
