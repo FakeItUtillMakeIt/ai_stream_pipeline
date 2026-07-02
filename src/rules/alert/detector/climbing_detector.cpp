@@ -536,11 +536,12 @@ float ClimbingDetector::calculateLateralMovement(const std::deque<cv::Point2f>& 
     }
 
     // 两者都几乎不动 → 不是横移
-    if (total_x < 1.0f && total_y < 1.0f) return 0.0f;
+    if (total_x < 1.0f && total_y < 1.0f) return 0.5f;
     // 有横向位移但几乎没纵向位移 → 纯横移
     if (total_y < 1.0f) return 1.0f;
 
     float ratio = total_x / total_y;
+    LOG_INFO_FMT("[Climb] lateral_movement ratio={:.2f}, total_x={}, total_y={}", ratio, total_x, total_y);
     return std::min(1.0f, ratio);
 }
 

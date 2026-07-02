@@ -74,15 +74,15 @@ public:
         float knee_bend_max = 130.0f;
 
         // === 静态骨架：重心抬高/蜷缩 ===
-        float center_raise_threshold = 15.0f;
-        float stretch_compress_ratio = 0.7f;
+        float center_raise_threshold = 12.0f;
+        float stretch_compress_ratio = 0.8f;
 
         // === 身体朝向：倾斜角 ===
-        float tilt_min = 20.0f;
-        float tilt_max = 70.0f;
+        float tilt_min = 5.0f;
+        float tilt_max = 85.0f;
 
         // === 身体朝向：四肢张开 ===
-        float limb_span_threshold = 0.6f;
+        float limb_span_threshold = 0.5f;
 
         // === 动态特征：交替抬手抬脚 ===
         float alternation_ratio_threshold = 0.4f;
