@@ -462,7 +462,7 @@ ClimbingDetector::FrameAnalysis ClimbingDetector::analyzeFrame(
         } else {
             float raw_score = score * 0.40f + dynamic_score * 0.60f;
 
-            float penalty = osc * lat ;//* burst_val;
+            float penalty = osc * lat * burst_val;
 
             final_score = raw_score * penalty;
 
@@ -599,22 +599,27 @@ float ClimbingDetector::calculateLateralMovement(const std::deque<cv::Point2f>& 
 float ClimbingDetector::calculateMovementBurst(const std::deque<cv::Point2f>& center_history) {
     if (center_history.size() < 3) return 0.5f;
 
-    std::vector<float> speeds;
+    std::vector<float> x_speeds;
     for (size_t i = 1; i < center_history.size(); i++) {
         float dx = center_history[i].x - center_history[i - 1].x;
-        float dy = center_history[i].y - center_history[i - 1].y;
-        speeds.push_back(std::sqrt(dx * dx + dy * dy));
+        x_speeds.push_back(std::abs(dx));
     }
 
-    float mean = std::accumulate(speeds.begin(), speeds.end(), 0.0f) / speeds.size();
+    float mean = std::accumulate(x_speeds.begin(), x_speeds.end(), 0.0f) / x_speeds.size();
+
+    if (mean < 1.0f) {
+        LOG_INFO_FMT("[攀爬] 运动突变过滤(x轴): 均值={:.2f} < 1.0, 横向几乎无运动, 返回0", mean);
+        return 0.0f;
+    }
+
     float variance = 0.0f;
-    for (float s : speeds) {
+    for (float s : x_speeds) {
         variance += (s - mean) * (s - mean);
     }
-    variance /= speeds.size();
+    variance /= x_speeds.size();
 
-    float cv = (mean > 1e-3f) ? std::sqrt(variance) / mean : 0.0f;
-    LOG_INFO_FMT("[攀爬] 运动突变过滤: 均值={}, 方差={}, 变异系数={:.2f}", mean,variance,cv);
+    float cv = std::sqrt(variance) / mean;
+    LOG_INFO_FMT("[攀爬] 运动突变过滤(x轴): 均值={:.2f}, 方差={:.2f}, 变异系数={:.2f}", mean,variance,cv);
     return std::min(1.0f, cv / 2.0f);
 }
 
@@ -1084,7 +1089,7 @@ float ClimbingDetector::filterByMovementBurst(const TrackState& state) const {
  *   [8] has_ascent                 - 是否有上升 (0/1)
  *   [9] oscillation                - 振荡程度 (0-1)
  *  [10] lateral_movement           - 横向移动比例 (0-1)
- *  [11] movement_burst             - 运动突变程度 (0-1)
+ *  [11] movement_burst             - x轴运动突变程度 (0-1)
  *  [12] net_displacement_ratio     - 净Y位移/bbox_h
  *  [13] ascent_slope_ratio         - 上升斜率/bbox_h
  */

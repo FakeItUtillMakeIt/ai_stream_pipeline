@@ -93,9 +93,9 @@ public:
         float alternation_dx_threshold = 2.0f;
 
         // === 动态特征：整体向上移动 ===
-        float ascent_slope_ratio = -0.002f;
+        float ascent_slope_ratio = -0.002f; 
         int ascent_min_frames = 5;
-        float net_displacement_ratio = 0.02f;
+        float net_displacement_ratio = 0.02f; //移动速度快的话需要调大
 
         // === 过滤器 ===
         float oscillation_threshold_high = 0.7f;
