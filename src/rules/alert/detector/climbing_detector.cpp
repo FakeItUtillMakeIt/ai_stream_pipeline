@@ -54,7 +54,7 @@ void ClimbingDetector::StateMachine::update(StateTransitionEvent event, const Co
                 current_state = ClimbingState::SUSPICIOUS;
                 state_duration = 0;
                 suspicious_count = 0;
-                LOG_INFO("[Climb] State transition: IDLE -> SUSPICIOUS");
+                LOG_INFO("[攀爬] 状态转换: 空闲 -> 可疑");
             }
             break;
         }
@@ -67,7 +67,7 @@ void ClimbingDetector::StateMachine::update(StateTransitionEvent event, const Co
                     current_state = ClimbingState::CLIMBING;
                     state_duration = 0;
                     climbing_count = 0;
-                    LOG_INFO("[Climb] State transition: SUSPICIOUS -> CLIMBING");
+                    LOG_INFO("[攀爬] 状态转换: 可疑 -> 攀爬");
                 }
             } else if (event == StateTransitionEvent::MULTI_PERSON_SUSPICIOUS) {
                 climbing_count += 2;
@@ -76,7 +76,7 @@ void ClimbingDetector::StateMachine::update(StateTransitionEvent event, const Co
                     current_state = ClimbingState::CLIMBING;
                     state_duration = 0;
                     climbing_count = 0;
-                    LOG_INFO("[Climb] State transition: SUSPICIOUS -> CLIMBING (accelerated)");
+                    LOG_INFO("[攀爬] 状态转换: 可疑 -> 攀爬 (加速)");
                 }
             } else if (event == StateTransitionEvent::NO_EVENT) {
                 normal_count++;
@@ -85,7 +85,7 @@ void ClimbingDetector::StateMachine::update(StateTransitionEvent event, const Co
                     current_state = ClimbingState::IDLE;
                     state_duration = 0;
                     normal_count = 0;
-                    LOG_INFO("[Climb] State transition: SUSPICIOUS -> IDLE");
+                    LOG_INFO("[攀爬] 状态转换: 可疑 -> 空闲");
                 }
             } else {
                 normal_count = std::max(0, normal_count - 1);
@@ -104,7 +104,7 @@ void ClimbingDetector::StateMachine::update(StateTransitionEvent event, const Co
                     state_duration = 0;
                     normal_count = 0;
                     cooldown_count = 0;
-                    LOG_INFO_FMT("[Climb] State transition: CLIMBING -> COOLDOWN (total_climbing_frames={})",
+                    LOG_INFO_FMT("[攀爬] 状态转换: 攀爬 -> 冷却 (总攀爬帧数={})",
                                  total_climbing_frames);
                 }
             } else {
@@ -120,13 +120,13 @@ void ClimbingDetector::StateMachine::update(StateTransitionEvent event, const Co
                 state_duration = 0;
                 cooldown_count = 0;
                 normal_count = 0;
-                LOG_INFO("[Climb] State transition: COOLDOWN -> CLIMBING (re-trigger)");
+                LOG_INFO("[攀爬] 状态转换: 冷却 -> 攀爬 (再次触发)");
             } else if (cooldown_count >= cfg.cooldown_frames) {
                 current_state = ClimbingState::IDLE;
                 state_duration = 0;
                 cooldown_count = 0;
                 total_climbing_frames = 0;
-                LOG_INFO("[Climb] State transition: COOLDOWN -> IDLE");
+                LOG_INFO("[攀爬] 状态转换: 冷却 -> 空闲");
             }
             break;
         }
@@ -169,14 +169,14 @@ ClimbingDetector::ClimbingDetector(const Config& cfg) : cfg_(cfg), frame_counter
     if (cfg_.use_ml_score && !cfg_.ml_model_path.empty()) {
         svm_loaded_ = svm_model_.load(cfg_.ml_model_path);
         if (svm_loaded_) {
-            LOG_INFO_FMT("[Climb] SVM model loaded from {}, feature_dim={}",
+            LOG_INFO_FMT("[攀爬] SVM模型已加载: {}, 特征维度={}",
                          cfg_.ml_model_path, svm_model_.feature_dim);
             if (!cfg_.ml_scaler_path.empty()) {
                 bool scaler_ok = svm_model_.loadScaler(cfg_.ml_scaler_path);
-                LOG_INFO_FMT("[Climb] SVM scaler loaded: {}", scaler_ok ? "yes" : "no");
+                LOG_INFO_FMT("[攀爬] SVM归一化参数加载: {}", scaler_ok ? "成功" : "失败");
             }
         } else {
-            LOG_WARN_FMT("[Climb] Failed to load SVM model from {}", cfg_.ml_model_path);
+            LOG_WARN_FMT("[攀爬] SVM模型加载失败: {}", cfg_.ml_model_path);
         }
     }
 }
@@ -215,20 +215,20 @@ int ClimbingDetector::getTotalClimbingFrames() const {
 
 void ClimbingDetector::onEnterIdle() {
     if (state_machine_.previous_state != ClimbingState::IDLE) {
-        LOG_INFO("[Climb] Entered IDLE state");
+        LOG_INFO("[攀爬] 进入空闲状态");
     }
 }
 
 void ClimbingDetector::onEnterSuspicious() {
-    LOG_INFO("[Climb] Entered SUSPICIOUS state");
+    LOG_INFO("[攀爬] 进入可疑状态");
 }
 
 void ClimbingDetector::onEnterClimbing() {
-    LOG_INFO("[Climb] Entered CLIMBING state - CLIMBING DETECTED!");
+    LOG_INFO("[攀爬] 进入攀爬状态 - 检测到攀爬!");
 }
 
 void ClimbingDetector::onEnterCooldown() {
-    LOG_INFO("[Climb] Entered COOLDOWN state");
+    LOG_INFO("[攀爬] 进入冷却状态");
 }
 
 void ClimbingDetector::onStateTick(ClimbingState state) {
@@ -297,7 +297,7 @@ ClimbingResult ClimbingDetector::process(
         exportTrainingData(tracks_, analysis, frame_counter_);
     }
 
-    LOG_INFO_FMT("[Climb] Frame {}: State={}, Duration={}, Event={}, Climbing={}",
+    LOG_INFO_FMT("[攀爬] 第{}帧: 状态={}, 持续帧数={}, 事件={}, 是否攀爬={}",
                  frame_counter_,
                  state_machine_.getStateString(),
                  state_machine_.state_duration,
@@ -368,7 +368,7 @@ ClimbingDetector::FrameAnalysis ClimbingDetector::analyzeFrame(
             score += conf * 0.20f;
             analysis.individual_events[det.track_id].push_back(
                 {"hand_above_shoulder", det.track_id, conf, {}, "hand above shoulder", frame_counter_});
-            LOG_INFO_FMT("[Climb] Track {} hand_above_shoulder conf={:.2f} score={:.2f}",
+            LOG_INFO_FMT("[攀爬] 目标{} 手高于肩 置信度={:.2f} 累计分={:.2f}",
                          det.track_id, conf, score);
         }
 
@@ -377,7 +377,7 @@ ClimbingDetector::FrameAnalysis ClimbingDetector::analyzeFrame(
             score += conf * 0.20f;
             analysis.individual_events[det.track_id].push_back(
                 {"arm_bend", det.track_id, conf, {}, "arm bent", frame_counter_});
-            LOG_INFO_FMT("[Climb] Track {} arm_bend conf={:.2f} score={:.2f}",
+            LOG_INFO_FMT("[攀爬] 目标{} 手臂弯曲 置信度={:.2f} 累计分={:.2f}",
                          det.track_id, conf, score);
         }
 
@@ -386,7 +386,7 @@ ClimbingDetector::FrameAnalysis ClimbingDetector::analyzeFrame(
             score += conf * 0.20f;
             analysis.individual_events[det.track_id].push_back(
                 {"knee_raise", det.track_id, conf, {}, "knee raised", frame_counter_});
-            LOG_INFO_FMT("[Climb] Track {} knee_raise conf={:.2f} score={:.2f}",
+            LOG_INFO_FMT("[攀爬] 目标{} 膝盖抬起 置信度={:.2f} 累计分={:.2f}",
                          det.track_id, conf, score);
         }
 
@@ -395,7 +395,7 @@ ClimbingDetector::FrameAnalysis ClimbingDetector::analyzeFrame(
             score += conf * 0.15f;
             analysis.individual_events[det.track_id].push_back(
                 {"center_raise", det.track_id, conf, {}, "center raised or compressed", frame_counter_});
-            LOG_INFO_FMT("[Climb] Track {} center_raise conf={:.2f} score={:.2f}",
+            LOG_INFO_FMT("[攀爬] 目标{} 重心抬高/蜷缩 置信度={:.2f} 累计分={:.2f}",
                          det.track_id, conf, score);
         }
 
@@ -404,7 +404,7 @@ ClimbingDetector::FrameAnalysis ClimbingDetector::analyzeFrame(
             score += conf * 0.15f;
             analysis.individual_events[det.track_id].push_back(
                 {"body_tilt", det.track_id, conf, {}, "body tilted", frame_counter_});
-            LOG_INFO_FMT("[Climb] Track {} body_tilt conf={:.2f} score={:.2f}",
+            LOG_INFO_FMT("[攀爬] 目标{} 身体倾斜 置信度={:.2f} 累计分={:.2f}",
                          det.track_id, conf, score);
         }
 
@@ -413,7 +413,7 @@ ClimbingDetector::FrameAnalysis ClimbingDetector::analyzeFrame(
             score += conf * 0.10f;
             analysis.individual_events[det.track_id].push_back(
                 {"limb_span", det.track_id, conf, {}, "limbs spread", frame_counter_});
-            LOG_INFO_FMT("[Climb] Track {} limb_span conf={:.2f} score={:.2f}",
+            LOG_INFO_FMT("[攀爬] 目标{} 四肢张开 置信度={:.2f} 累计分={:.2f}",
                          det.track_id, conf, score);
         }
 
@@ -430,7 +430,7 @@ ClimbingDetector::FrameAnalysis ClimbingDetector::analyzeFrame(
             dynamic_score += alt_conf * 0.50f;
             analysis.individual_events[det.track_id].push_back(
                 {"alternating_limb", det.track_id, alt_conf, {}, "alternating limb movement", frame_counter_});
-            LOG_INFO_FMT("[Climb] Track {} alternating_limb conf={:.2f}", det.track_id, alt_conf);
+            LOG_INFO_FMT("[攀爬] 目标{} 交替抬手抬脚 置信度={:.2f}", det.track_id, alt_conf);
         }
 
         float ascent_conf = 0.0f;
@@ -440,7 +440,7 @@ ClimbingDetector::FrameAnalysis ClimbingDetector::analyzeFrame(
             analysis.individual_events[det.track_id].push_back(
                 {"overall_ascent", det.track_id, ascent_conf, {}, "overall upward movement", frame_counter_});
             analysis.has_ascent = true;
-            LOG_INFO_FMT("[Climb] Track {} overall_ascent conf={:.2f}", det.track_id, ascent_conf);
+            LOG_INFO_FMT("[攀爬] 目标{} 整体上升 置信度={:.2f}", det.track_id, ascent_conf);
         }
 
         // ===== 计算过滤器值 =====
@@ -458,7 +458,7 @@ ClimbingDetector::FrameAnalysis ClimbingDetector::analyzeFrame(
         float final_score;
         if (cfg_.use_ml_score && svm_loaded_) {
             final_score = computeMLScore(state);
-            LOG_INFO_FMT("[Climb] Track {} ml_score={:.2f}", det.track_id, final_score);
+            LOG_INFO_FMT("[攀爬] 目标{} ML模型得分={:.2f}", det.track_id, final_score);
         } else {
             float raw_score = score * 0.40f + dynamic_score * 0.60f;
 
@@ -470,8 +470,8 @@ ClimbingDetector::FrameAnalysis ClimbingDetector::analyzeFrame(
                 final_score = 0.0f;
             }
 
-            LOG_INFO_FMT("[Climb] Track {} static={:.2f} dynamic={:.2f} raw={:.2f} penalty={:.2f} final={:.2f} ascent={}",
-                         det.track_id, score, dynamic_score, raw_score, penalty, final_score, has_ascent);
+            LOG_INFO_FMT("[攀爬] 目标{} 静态分={:.2f} 动态分={:.2f} 原始分={:.2f} 惩罚={:.2f},震荡={:.2f},横向={:.2f},突变={:.2f} 最终分={:.2f} 上升={}",
+                         det.track_id, score, dynamic_score, raw_score, penalty, osc, lat, burst_val, final_score, has_ascent);
         }
 
         analysis.individual_scores[det.track_id] = final_score;
@@ -572,7 +572,7 @@ float ClimbingDetector::calculateOscillation(const std::deque<float>& y_history)
             direction_changes++;
         }
     }
-    LOG_INFO_FMT("[Climb] oscillation direction_changes={}, size={}", direction_changes, y_history.size());
+    LOG_INFO_FMT("[攀爬] 振荡过滤: 方向变化次数={}, 历史长度={}", direction_changes, y_history.size());
     return static_cast<float>(direction_changes) / static_cast<float>(y_history.size() - 2);
 }
 
@@ -592,7 +592,7 @@ float ClimbingDetector::calculateLateralMovement(const std::deque<cv::Point2f>& 
     if (total_y < 1.0f) return 1.0f;
 
     float ratio = total_x / total_y;
-    LOG_INFO_FMT("[Climb] lateral_movement ratio={:.2f}, total_x={}, total_y={}", ratio, total_x, total_y);
+    LOG_INFO_FMT("[攀爬] 横向移动过滤: 比例={:.2f}, 横向总量={}, 纵向总量={}", ratio, total_x, total_y);
     return std::min(1.0f, ratio);
 }
 
@@ -614,7 +614,7 @@ float ClimbingDetector::calculateMovementBurst(const std::deque<cv::Point2f>& ce
     variance /= speeds.size();
 
     float cv = (mean > 1e-3f) ? std::sqrt(variance) / mean : 0.0f;
-    LOG_INFO_FMT("[Climb] movement_burst mean:{},variance:{},cv={:.2f}", mean,variance,cv);
+    LOG_INFO_FMT("[攀爬] 运动突变过滤: 均值={}, 方差={}, 变异系数={:.2f}", mean,variance,cv);
     return std::min(1.0f, cv / 2.0f);
 }
 
@@ -994,13 +994,13 @@ bool ClimbingDetector::detectOverallAscent(
     float y_last = state.center_history[start + window - 1].y;
     float net_displacement = y_first - y_last;
 
-    LOG_INFO_FMT("[Climb] Track {} ascent net_disp={:.2f} y_first={:.2f} y_last={:.2f} window={} req={:.2f}",
-                 det.track_id, net_displacement, y_first, y_last, window, net_disp_required);
+    LOG_INFO_FMT("[攀爬] 目标{} 上升检测: 净位移={:.2f} 起点Y={:.2f} 终点Y={:.2f} 窗口={} 要求={:.2f}, 身高={}",
+                 det.track_id, net_displacement, y_first, y_last, window, net_disp_required, bbox_h);
 
     if (net_displacement < net_disp_required) {
         state.ascent_frame_count = 0;
         out_conf = 0.0f;
-        LOG_INFO_FMT("[Climb] Track {} ascent blocked: net_disp < {}", det.track_id, net_disp_required);
+        LOG_INFO_FMT("[攀爬] 目标{} 上升被拦截: 净位移 < 要求值({})", det.track_id, net_disp_required);
         return false;
     }
 
@@ -1143,7 +1143,7 @@ void ClimbingDetector::exportTrainingData(
     if (!csv_file.is_open()) {
         csv_file.open(cfg_.training_data_path, std::ios::app);
         if (!csv_file.is_open()) {
-            LOG_WARN_FMT("[Climb] Cannot open training data file: {}", cfg_.training_data_path);
+            LOG_WARN_FMT("[攀爬] 无法打开训练数据文件: {}", cfg_.training_data_path);
             return;
         }
     }

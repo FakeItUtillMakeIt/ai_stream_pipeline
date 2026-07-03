@@ -93,17 +93,17 @@ public:
         float alternation_dx_threshold = 2.0f;
 
         // === 动态特征：整体向上移动 ===
-        float ascent_slope_ratio = -0.01f;
+        float ascent_slope_ratio = -0.002f;
         int ascent_min_frames = 3;
-        float net_displacement_ratio = 0.04f;
+        float net_displacement_ratio = 0.02f;
 
         // === 过滤器 ===
-        float oscillation_threshold_high = 0.8f;
-        float oscillation_threshold_low = 0.6f;
-        float lateral_threshold_high = 0.8f;
-        float lateral_threshold_low = 0.6f;
-        float burst_threshold_high = 0.8f;
-        float burst_threshold_low = 0.6f;
+        float oscillation_threshold_high = 0.7f;
+        float oscillation_threshold_low = 0.3f;
+        float lateral_threshold_high = 0.6f;
+        float lateral_threshold_low = 0.3f;
+        float burst_threshold_high = 0.5f;
+        float burst_threshold_low = 0.3f;
 
         // === 状态机 ===
         int suspicious_enter_threshold = 3;
@@ -113,7 +113,7 @@ public:
         int cooldown_frames = 30;
 
         // === 综合判定 ===
-        float climb_score_threshold = 0.5f;
+        float climb_score_threshold = 0.4f;
         int min_involved_persons = 1;
 
         // === ML 判定模式 ===
