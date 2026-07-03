@@ -59,9 +59,8 @@ struct LinearSVMModel {
 
             if (tokens.empty()) continue;
 
-            if (tokens[0] == "type" || tokens[0] == "type\r") {
+            if (tokens[0] == "dim") {
                 header_found = true;
-                continue;
             }
 
             if (!header_found) continue;
