@@ -94,7 +94,7 @@ public:
 
         // === 动态特征：整体向上移动 ===
         float ascent_slope_ratio = -0.002f;
-        int ascent_min_frames = 3;
+        int ascent_min_frames = 5;
         float net_displacement_ratio = 0.02f;
 
         // === 过滤器 ===
@@ -108,7 +108,7 @@ public:
         // === 状态机 ===
         int suspicious_enter_threshold = 3;
         int suspicious_exit_threshold = 5;
-        int climbing_enter_threshold = 1;
+        int climbing_enter_threshold = 3;
         int climbing_exit_threshold = 5;
         int cooldown_frames = 30;
 

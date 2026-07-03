@@ -462,7 +462,7 @@ ClimbingDetector::FrameAnalysis ClimbingDetector::analyzeFrame(
         } else {
             float raw_score = score * 0.40f + dynamic_score * 0.60f;
 
-            float penalty = osc * lat * burst_val;
+            float penalty = osc * lat ;//* burst_val;
 
             final_score = raw_score * penalty;
 
@@ -562,7 +562,7 @@ float ClimbingDetector::calculateAngle(
 }
 
 float ClimbingDetector::calculateOscillation(const std::deque<float>& y_history) {
-    if (y_history.size() < 3) return 0.0f;
+    if (y_history.size() < 3) return 0.5f;
 
     int direction_changes = 0;
     for (size_t i = 2; i < y_history.size(); i++) {
@@ -577,7 +577,7 @@ float ClimbingDetector::calculateOscillation(const std::deque<float>& y_history)
 }
 
 float ClimbingDetector::calculateLateralMovement(const std::deque<cv::Point2f>& center_history) {
-    if (center_history.size() < 2) return 0.0f;
+    if (center_history.size() < 2) return 0.5f;
 
     float total_x = 0.0f;
     float total_y = 0.0f;
@@ -597,7 +597,7 @@ float ClimbingDetector::calculateLateralMovement(const std::deque<cv::Point2f>& 
 }
 
 float ClimbingDetector::calculateMovementBurst(const std::deque<cv::Point2f>& center_history) {
-    if (center_history.size() < 3) return 0.0f;
+    if (center_history.size() < 3) return 0.5f;
 
     std::vector<float> speeds;
     for (size_t i = 1; i < center_history.size(); i++) {
