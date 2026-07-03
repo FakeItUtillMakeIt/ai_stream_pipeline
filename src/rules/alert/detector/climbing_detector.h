@@ -64,18 +64,20 @@ public:
         float fps = 30.0f;
 
         // === 静态骨架：手高于肩 ===
-        float arm_raise_offset = 2.0f;
+        float arm_raise_offset_ratio = 0.025f;
 
         // === 静态骨架：手臂弯曲 ===
-        float arm_bend_min = 60.0f;
-        float arm_bend_max = 130.0f;
+        float arm_bend_min = 45.0f;
+        float arm_bend_max = 155.0f;
+        float arm_bend_ideal = 90.0f;
 
         // === 静态骨架：膝盖抬起 ===
-        float knee_bend_min = 60.0f;
-        float knee_bend_max = 130.0f;
+        float knee_bend_min = 45.0f;
+        float knee_bend_max = 155.0f;
+        float knee_bend_ideal = 90.0f;
 
         // === 静态骨架：重心抬高/蜷缩 ===
-        float center_raise_threshold = 12.0f;
+        float center_raise_ratio = 0.06f;
         float stretch_compress_ratio = 0.8f;
 
         // === 身体朝向：倾斜角 ===
@@ -86,13 +88,14 @@ public:
         float limb_span_threshold = 0.5f;
 
         // === 动态特征：交替抬手抬脚 ===
-        float alternation_ratio_threshold = 0.4f;
+        float alternation_ratio_threshold = 0.6f;
         int alternation_window = 10;
+        float alternation_dx_threshold = 2.0f;
 
         // === 动态特征：整体向上移动 ===
-        float ascent_slope_threshold = -1.0f;
+        float ascent_slope_ratio = -0.01f;
         int ascent_min_frames = 3;
-        float net_displacement_threshold = 8.0f;
+        float net_displacement_ratio = 0.04f;
 
         // === 过滤器 ===
         float oscillation_threshold_high = 0.8f;
@@ -173,6 +176,8 @@ private:
         std::deque<cv::Point2f> center_history;
         std::deque<float> left_wrist_y_history;
         std::deque<float> right_wrist_y_history;
+        std::deque<float> left_wrist_x_history;
+        std::deque<float> right_wrist_x_history;
         std::deque<float> left_ankle_y_history;
         std::deque<float> right_ankle_y_history;
         float avg_center_y = -1.0f;

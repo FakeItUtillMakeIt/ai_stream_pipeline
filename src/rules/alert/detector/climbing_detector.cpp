@@ -139,6 +139,8 @@ void ClimbingDetector::TrackState::reset() {
     center_history.clear();
     left_wrist_y_history.clear();
     right_wrist_y_history.clear();
+    left_wrist_x_history.clear();
+    right_wrist_x_history.clear();
     left_ankle_y_history.clear();
     right_ankle_y_history.clear();
     avg_center_y = -1.0f;
@@ -328,13 +330,19 @@ ClimbingDetector::FrameAnalysis ClimbingDetector::analyzeFrame(
         const auto& kpts = det.keypoints;
         if (isKeypointValid(kpts[Config::LEFT_WRIST])) {
             state.left_wrist_y_history.push_back(kpts[Config::LEFT_WRIST].y);
+            state.left_wrist_x_history.push_back(kpts[Config::LEFT_WRIST].x);
             while (state.left_wrist_y_history.size() > static_cast<size_t>(cfg_.history_frames))
                 state.left_wrist_y_history.pop_front();
+            while (state.left_wrist_x_history.size() > static_cast<size_t>(cfg_.history_frames))
+                state.left_wrist_x_history.pop_front();
         }
         if (isKeypointValid(kpts[Config::RIGHT_WRIST])) {
             state.right_wrist_y_history.push_back(kpts[Config::RIGHT_WRIST].y);
+            state.right_wrist_x_history.push_back(kpts[Config::RIGHT_WRIST].x);
             while (state.right_wrist_y_history.size() > static_cast<size_t>(cfg_.history_frames))
                 state.right_wrist_y_history.pop_front();
+            while (state.right_wrist_x_history.size() > static_cast<size_t>(cfg_.history_frames))
+                state.right_wrist_x_history.pop_front();
         }
         if (isKeypointValid(kpts[Config::LEFT_ANKLE])) {
             state.left_ankle_y_history.push_back(kpts[Config::LEFT_ANKLE].y);
@@ -650,13 +658,15 @@ bool ClimbingDetector::detectHandAboveShoulder(
     if (!det.has_keypoints) { out_conf = 0.0f; return false; }
 
     const auto& kpts = det.keypoints;
+    float offset = det.h * cfg_.arm_raise_offset_ratio;
+
     bool left_up = isKeypointValid(kpts[Config::LEFT_WRIST]) &&
                    isKeypointValid(kpts[Config::LEFT_SHOULDER]) &&
-                   kpts[Config::LEFT_WRIST].y < kpts[Config::LEFT_SHOULDER].y - cfg_.arm_raise_offset;
+                   kpts[Config::LEFT_WRIST].y < kpts[Config::LEFT_SHOULDER].y - offset;
 
     bool right_up = isKeypointValid(kpts[Config::RIGHT_WRIST]) &&
-                    isKeypointValid(kpts[Config::RIGHT_SHOULDER]) &&
-                    kpts[Config::RIGHT_WRIST].y < kpts[Config::RIGHT_SHOULDER].y - cfg_.arm_raise_offset;
+                     isKeypointValid(kpts[Config::RIGHT_SHOULDER]) &&
+                     kpts[Config::RIGHT_WRIST].y < kpts[Config::RIGHT_SHOULDER].y - offset;
 
     if (left_up || right_up) {
         out_conf = (left_up && right_up) ? 1.0f : 0.7f;
@@ -685,9 +695,11 @@ bool ClimbingDetector::detectArmBend(
                                      kpts[Config::LEFT_ELBOW],
                                      kpts[Config::LEFT_WRIST]);
         if (angle >= cfg_.arm_bend_min && angle <= cfg_.arm_bend_max) {
-            float conf = 1.0f - std::abs(angle - 90.0f) / 90.0f;
-            best_conf = std::max(best_conf, conf);
-            found = true;
+            float dist = std::abs(angle - cfg_.arm_bend_ideal);
+            float max_dist = std::max(cfg_.arm_bend_ideal - cfg_.arm_bend_min,
+                                      cfg_.arm_bend_max - cfg_.arm_bend_ideal);
+            float conf = 1.0f - dist / max_dist;
+            if (conf > 0) { best_conf = std::max(best_conf, conf); found = true; }
         }
     }
 
@@ -699,9 +711,11 @@ bool ClimbingDetector::detectArmBend(
                                      kpts[Config::RIGHT_ELBOW],
                                      kpts[Config::RIGHT_WRIST]);
         if (angle >= cfg_.arm_bend_min && angle <= cfg_.arm_bend_max) {
-            float conf = 1.0f - std::abs(angle - 90.0f) / 90.0f;
-            best_conf = std::max(best_conf, conf);
-            found = true;
+            float dist = std::abs(angle - cfg_.arm_bend_ideal);
+            float max_dist = std::max(cfg_.arm_bend_ideal - cfg_.arm_bend_min,
+                                      cfg_.arm_bend_max - cfg_.arm_bend_ideal);
+            float conf = 1.0f - dist / max_dist;
+            if (conf > 0) { best_conf = std::max(best_conf, conf); found = true; }
         }
     }
 
@@ -727,9 +741,11 @@ bool ClimbingDetector::detectKneeRaise(
                                      kpts[Config::LEFT_KNEE],
                                      kpts[Config::LEFT_ANKLE]);
         if (angle >= cfg_.knee_bend_min && angle <= cfg_.knee_bend_max) {
-            float conf = 1.0f - std::abs(angle - 90.0f) / 90.0f;
-            best_conf = std::max(best_conf, conf);
-            found = true;
+            float dist = std::abs(angle - cfg_.knee_bend_ideal);
+            float max_dist = std::max(cfg_.knee_bend_ideal - cfg_.knee_bend_min,
+                                      cfg_.knee_bend_max - cfg_.knee_bend_ideal);
+            float conf = 1.0f - dist / max_dist;
+            if (conf > 0) { best_conf = std::max(best_conf, conf); found = true; }
         }
     }
 
@@ -741,9 +757,11 @@ bool ClimbingDetector::detectKneeRaise(
                                      kpts[Config::RIGHT_KNEE],
                                      kpts[Config::RIGHT_ANKLE]);
         if (angle >= cfg_.knee_bend_min && angle <= cfg_.knee_bend_max) {
-            float conf = 1.0f - std::abs(angle - 90.0f) / 90.0f;
-            best_conf = std::max(best_conf, conf);
-            found = true;
+            float dist = std::abs(angle - cfg_.knee_bend_ideal);
+            float max_dist = std::max(cfg_.knee_bend_ideal - cfg_.knee_bend_min,
+                                      cfg_.knee_bend_max - cfg_.knee_bend_ideal);
+            float conf = 1.0f - dist / max_dist;
+            if (conf > 0) { best_conf = std::max(best_conf, conf); found = true; }
         }
     }
 
@@ -792,17 +810,23 @@ bool ClimbingDetector::detectCenterRaise(
         compressed = (stretch_ratio < cfg_.stretch_compress_ratio);
     }
 
-    // 重心抬高
+    // 重心抬高：当前center_y vs 历史窗口均值
     bool raised = false;
-    if (state.avg_center_y < 0) {
-        state.avg_center_y = center_y;
-    } else {
-        raised = (center_y < state.avg_center_y - cfg_.center_raise_threshold);
-        state.avg_center_y = 0.9f * state.avg_center_y + 0.1f * center_y;
+    float baseline_y = center_y;
+    if (state.center_history.size() >= static_cast<size_t>(cfg_.ascent_min_frames)) {
+        float acc = 0.0f;
+        int w = std::min(static_cast<int>(state.center_history.size()), cfg_.history_frames);
+        int start = static_cast<int>(state.center_history.size()) - w;
+        for (int i = start; i < static_cast<int>(state.center_history.size()); i++) {
+            acc += state.center_history[i].y;
+        }
+        baseline_y = acc / w;
+        float raise_px = cfg_.center_raise_ratio * det.h;
+        raised = (center_y < baseline_y - raise_px);
     }
 
     if (raised || compressed) {
-        out_conf = compressed ? 0.8f : 0.6f;
+        out_conf = compressed ? 0.8f : (raised ? 0.6f : 0.0f);
         return true;
     }
 
@@ -863,18 +887,14 @@ bool ClimbingDetector::detectLimbSpan(
     float limb_span = 0.0f;
     if (has_lw && has_rw) {
         limb_span += euclideanDistance(kpts[Config::LEFT_WRIST], kpts[Config::RIGHT_WRIST]);
-    } else if (has_lw) {
-        limb_span += euclideanDistance(kpts[Config::LEFT_WRIST], kpts[Config::LEFT_WRIST]);
     } else {
-        limb_span += euclideanDistance(kpts[Config::RIGHT_WRIST], kpts[Config::RIGHT_WRIST]);
+        limb_span += det.w * 0.8f;
     }
 
     if (has_la && has_ra) {
         limb_span += euclideanDistance(kpts[Config::LEFT_ANKLE], kpts[Config::RIGHT_ANKLE]);
-    } else if (has_la) {
-        limb_span += euclideanDistance(kpts[Config::LEFT_ANKLE], kpts[Config::LEFT_ANKLE]);
     } else {
-        limb_span += euclideanDistance(kpts[Config::RIGHT_ANKLE], kpts[Config::RIGHT_ANKLE]);
+        limb_span += det.w * 0.8f;
     }
 
     float bbox_diag = std::sqrt(det.w * det.w + det.h * det.h);
@@ -902,7 +922,9 @@ bool ClimbingDetector::detectAlternatingLimb(
 
     int window = cfg_.alternation_window;
     if (static_cast<int>(state.left_wrist_y_history.size()) < window ||
-        static_cast<int>(state.right_wrist_y_history.size()) < window) {
+        static_cast<int>(state.right_wrist_y_history.size()) < window ||
+        static_cast<int>(state.left_wrist_x_history.size()) < window ||
+        static_cast<int>(state.right_wrist_x_history.size()) < window) {
         out_conf = 0.0f;
         return false;
     }
@@ -910,15 +932,29 @@ bool ClimbingDetector::detectAlternatingLimb(
     int alternation_count = 0;
     int total = 0;
 
-    auto& lw = state.left_wrist_y_history;
-    auto& rw = state.right_wrist_y_history;
-    int n = std::min(static_cast<int>(lw.size()), static_cast<int>(rw.size()));
+    auto& ly = state.left_wrist_y_history;
+    auto& ry = state.right_wrist_y_history;
+    auto& lx = state.left_wrist_x_history;
+    auto& rx = state.right_wrist_x_history;
+    int n = std::min({static_cast<int>(ly.size()), static_cast<int>(ry.size()),
+                      static_cast<int>(lx.size()), static_cast<int>(rx.size())});
     int start = std::max(0, n - window);
 
+    float dx_thresh = det.w * 0.005f;
+    if (dx_thresh < cfg_.alternation_dx_threshold) {
+        dx_thresh = cfg_.alternation_dx_threshold;
+    }
+
     for (int i = start + 1; i < n; i++) {
-        float left_dy = lw[i] - lw[i - 1];
-        float right_dy = rw[i] - rw[i - 1];
-        if (left_dy * right_dy < 0) {
+        float left_dy = ly[i] - ly[i - 1];
+        float right_dy = ry[i] - ry[i - 1];
+        float left_dx = lx[i] - lx[i - 1];
+        float right_dx = rx[i] - rx[i - 1];
+
+        bool dy_alternation = (left_dy * right_dy < 0);
+        bool dx_exceeds = (std::abs(left_dx) > dx_thresh || std::abs(right_dx) > dx_thresh);
+
+        if (dy_alternation && dx_exceeds) {
             alternation_count++;
         }
         total++;
@@ -946,6 +982,11 @@ bool ClimbingDetector::detectOverallAscent(
     int min_frames = cfg_.ascent_min_frames;
     if (n < min_frames) { out_conf = 0.0f; return false; }
 
+    float bbox_h = det.h;
+    if (bbox_h < 1.0f) { out_conf = 0.0f; return false; }
+
+    float net_disp_required = cfg_.net_displacement_ratio * bbox_h;
+
     int window = std::min(n, min_frames * 2);
     int start = n - window;
 
@@ -953,15 +994,17 @@ bool ClimbingDetector::detectOverallAscent(
     float y_last = state.center_history[start + window - 1].y;
     float net_displacement = y_first - y_last;
 
-    LOG_INFO_FMT("[Climb] Track {} ascent net_disp={:.2f} y_first={:.2f} y_last={:.2f} window={}",
-                 det.track_id, net_displacement, y_first, y_last, window);
+    LOG_INFO_FMT("[Climb] Track {} ascent net_disp={:.2f} y_first={:.2f} y_last={:.2f} window={} req={:.2f}",
+                 det.track_id, net_displacement, y_first, y_last, window, net_disp_required);
 
-    if (net_displacement < cfg_.net_displacement_threshold) {
+    if (net_displacement < net_disp_required) {
         state.ascent_frame_count = 0;
         out_conf = 0.0f;
-        LOG_INFO_FMT("[Climb] Track {} ascent blocked: net_disp < threshold({})", det.track_id, cfg_.net_displacement_threshold);
+        LOG_INFO_FMT("[Climb] Track {} ascent blocked: net_disp < {}", det.track_id, net_disp_required);
         return false;
     }
+
+    float slope_required = cfg_.ascent_slope_ratio * bbox_h;
 
     float sum_x = 0, sum_y = 0, sum_xy = 0, sum_x2 = 0;
     for (int i = 0; i < window; i++) {
@@ -978,10 +1021,10 @@ bool ClimbingDetector::detectOverallAscent(
 
     float slope = (window * sum_xy - sum_x * sum_y) / denom;
 
-    if (slope < cfg_.ascent_slope_threshold) {
+    if (slope < slope_required) {
         state.ascent_frame_count++;
         if (state.ascent_frame_count >= 2) {
-            out_conf = std::min(1.0f, std::abs(slope) / std::abs(cfg_.ascent_slope_threshold));
+            out_conf = std::min(1.0f, std::abs(slope) / std::abs(slope_required));
             return true;
         }
     } else {
@@ -1029,7 +1072,7 @@ float ClimbingDetector::filterByMovementBurst(const TrackState& state) const {
 // ML 相关
 // ================================================================
 
-/* 特征向量定义 (14维):
+/* 特征向量定义 (14维，归一化为比例值):
  *   [0] hand_above_shoulder_conf   - 手高于肩置信度 (0-1)
  *   [1] arm_bend_conf              - 手臂弯曲置信度 (0-1)
  *   [2] knee_raise_conf            - 膝盖抬起置信度 (0-1)
@@ -1042,8 +1085,8 @@ float ClimbingDetector::filterByMovementBurst(const TrackState& state) const {
  *   [9] oscillation                - 振荡程度 (0-1)
  *  [10] lateral_movement           - 横向移动比例 (0-1)
  *  [11] movement_burst             - 运动突变程度 (0-1)
- *  [12] net_displacement           - 净Y位移 (px)
- *  [13] ascent_slope               - 上升斜率 (px/frame)
+ *  [12] net_displacement_ratio     - 净Y位移/bbox_h
+ *  [13] ascent_slope_ratio         - 上升斜率/bbox_h
  */
 
 static constexpr int FEATURE_DIM = 14;
@@ -1068,12 +1111,18 @@ void ClimbingDetector::collectFeatureVector(
     state.feature_vector[11] = burst_val;
 
     float net_disp = 0.0f;
-    if (state.center_history.size() >= 2) {
-        net_disp = state.center_history.front().y - state.center_history.back().y;
+    if (state.center_history.size() >= 2 && state.last_bbox.height > 0) {
+        float raw_disp = state.center_history.front().y - state.center_history.back().y;
+        net_disp = raw_disp / state.last_bbox.height;
     }
     state.feature_vector[12] = net_disp;
 
-    state.feature_vector[13] = has_ascent ? ascent_conf * std::abs(cfg_.ascent_slope_threshold) : 0.0f;
+    float slope_ratio = 0.0f;
+    if (has_ascent && state.last_bbox.height > 0) {
+        slope_ratio = ascent_conf * std::abs(cfg_.ascent_slope_ratio * state.last_bbox.height) / (cfg_.ascent_slope_ratio * state.last_bbox.height);
+        slope_ratio = has_ascent ? ascent_conf : 0.0f;
+    }
+    state.feature_vector[13] = slope_ratio;
 
     state.feature_valid = true;
 }
@@ -1102,7 +1151,7 @@ void ClimbingDetector::exportTrainingData(
     if (!header_written) {
         csv_file << "sample_id,video_id,frame_id,track_id,label,hand_above_shoulder,arm_bend,knee_raise,center_raise,"
                  << "body_tilt,limb_span,alternating_limb,overall_ascent,has_ascent,"
-                 << "oscillation,lateral_movement,movement_burst,net_displacement,ascent_slope\n";
+                 << "oscillation,lateral_movement,movement_burst,net_displacement_ratio,ascent_slope_ratio\n";
         header_written = true;
     }
 
