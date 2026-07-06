@@ -65,6 +65,7 @@ private:
     double smooth_factor_;               // 平滑因子（0-1，越大越平滑）
     double min_direction_consistency_;   // 最小方向一致性（同向变化帧数/总帧数）
     double min_rising_score_;            // 最小上升评分阈值
+    int rising_falling_tolerance_;       // rising_frames递减容错帧数（允许短暂中断）
     double score_slope_weight_;          // 斜率评分权重
     double score_x_weight_;             // X位移评分权重
     double score_height_weight_;        // 高度稳定评分权重
@@ -88,6 +89,10 @@ private:
     bool check_oscillation(const std::deque<double>& y_history) const;
     
     bool check_sustain_ratio(const RisingTrackState& state) const;
+
+    bool check_sustain_ratio_recent(const RisingTrackState& state) const;
+
+    bool check_camera_x_consistency(const std::vector<int>& rising_track_ids) const;
     
     bool check_acceleration(const std::deque<double>& acceleration_history) const;
     

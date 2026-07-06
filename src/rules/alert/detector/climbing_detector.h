@@ -120,7 +120,7 @@ public:
         bool use_ml_score = false;
         std::string ml_model_path;
         std::string ml_scaler_path;
-        std::string training_data_path="./feature_data.csv";
+        std::string training_data_path;
         std::string video_id = "default";
 
         // 关键点索引 (COCO)

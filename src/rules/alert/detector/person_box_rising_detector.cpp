@@ -19,9 +19,10 @@ PersonBoxRisingDetector::PersonBoxRisingDetector(const std::string& video_path)
     , min_camera_shake_tracks_(2)    // 至少2人同时上升判定为镜头晃动
     , max_acceleration_(15.0)        // 加速度超过15像素/帧²认为是突然动作
     , aspect_ratio_change_threshold_(0.3)  // 宽高比变化超过30%认为是蹲下/起身
-    , smooth_factor_(0.3)            // 平滑因子，0.3表示当前帧权重0.3
+    , smooth_factor_(0.6)            // 平滑因子，0.6表示当前帧权重0.6，减少拖尾滞后
     , min_direction_consistency_(0.6) // 至少60%的帧同向变化才认为是持续上升
     , min_rising_score_(0.7)         // 评分超过0.7判定为上升
+    , rising_falling_tolerance_(2)  // 允许短暂中断帧数，超过2帧才复位rising_frames
     , score_slope_weight_(0.25)     // 斜率bonus权重
     , score_x_weight_(0.20)         // X位移惩罚权重
     , score_height_weight_(0.10)    // 高度稳定惩罚权重
@@ -98,7 +99,7 @@ bool PersonBoxRisingDetector::check_oscillation(const std::deque<double>& y_hist
         }
     }
     
-    bool has_oscillation = (range > max_oscillation_range_) && (direction_changes > y_history.size() / 3);
+    bool has_oscillation = (range > max_oscillation_range_) && (direction_changes > static_cast<int>(y_history.size()) / 3);
     
     return has_oscillation;
 }
@@ -110,6 +111,22 @@ bool PersonBoxRisingDetector::check_sustain_ratio(const RisingTrackState& state)
     double ratio = static_cast<double>(state.rising_frames) / history_size;
     
     return ratio >= min_sustain_ratio_;
+}
+
+bool PersonBoxRisingDetector::check_sustain_ratio_recent(const RisingTrackState& state) const {
+    int history_size = static_cast<int>(state.y_history.size());
+    int check_window = std::min(window_size_, history_size);
+    if (check_window < required_rising_frames_) return false;
+    if (state.y_history.size() < static_cast<size_t>(check_window)) return false;
+    int rising_in_window = 0;
+    for (size_t i = state.y_history.size() - check_window; i < state.y_history.size(); i++) {
+        if (i > 0) {
+            double diff = state.y_history[i] - state.y_history[i - 1];
+            if (diff < 0) rising_in_window++;
+        }
+    }
+    double recent_ratio = static_cast<double>(rising_in_window) / (check_window - 1);
+    return recent_ratio >= min_sustain_ratio_;
 }
 
 bool PersonBoxRisingDetector::check_acceleration(const std::deque<double>& acceleration_history) const {
@@ -161,6 +178,27 @@ bool PersonBoxRisingDetector::check_direction_consistency(const std::deque<doubl
     return consistency >= min_direction_consistency_;
 }
 
+bool PersonBoxRisingDetector::check_camera_x_consistency(const std::vector<int>& rising_track_ids) const {
+    if (rising_track_ids.size() < static_cast<size_t>(min_camera_shake_tracks_)) return false;
+    double x_sum = 0.0;
+    int valid_count = 0;
+    for (int track_id : rising_track_ids) {
+        auto it = track_rising_state_.find(track_id);
+        if (it == track_rising_state_.end()) continue;
+        const auto& x_history = it->second.x_history;
+        if (x_history.size() < 2) continue;
+        double x_first = x_history.front();
+        double x_last = x_history.back();
+        double x_disp = x_last - x_first;
+        if (x_disp > 0) x_sum += 1.0;
+        else if (x_disp < 0) x_sum -= 1.0;
+        else x_sum += 0.0;
+        valid_count++;
+    }
+    if (valid_count < min_camera_shake_tracks_) return false;
+    return std::abs(x_sum) >= static_cast<double>(valid_count);
+}
+
 std::deque<double> PersonBoxRisingDetector::smooth_trajectory(const std::deque<double>& y_history) const {
     if (y_history.size() < 2) return y_history;
     
@@ -188,7 +226,7 @@ double PersonBoxRisingDetector::calculate_rising_score(double trend_slope,
     
     if (!no_oscillation) return 0.0;
     if (!x_displacement_ok) return 0.0;
-    //if (!direction_ok)   return 0.0;
+    if (!direction_ok)   return 0.0;
     
     double score = 1.0;
 
@@ -230,7 +268,8 @@ RisingResult PersonBoxRisingDetector::process(const std::vector<core::InferenceR
         }
     }
     
-    bool is_camera_shake = (static_cast<int>(potential_rising_tracks.size()) >= min_camera_shake_tracks_);
+    bool is_camera_shake = (static_cast<int>(potential_rising_tracks.size()) >= min_camera_shake_tracks_)
+                          && check_camera_x_consistency(potential_rising_tracks);
     
     if (is_camera_shake) {
         for (int track_id : potential_rising_tracks) {
@@ -283,10 +322,10 @@ bool PersonBoxRisingDetector::update_track(int track_id, const core::InferenceRe
         state.w_history.pop_front();
     }
     
-    if (static_cast<int>(state.speed_history.size()) > window_size_) {
+    while (static_cast<int>(state.speed_history.size()) > history_length_) {
         state.speed_history.pop_front();
     }
-    if (static_cast<int>(state.acceleration_history.size()) > window_size_) {
+    while (static_cast<int>(state.acceleration_history.size()) > history_length_) {
         state.acceleration_history.pop_front();
     }
     
@@ -307,17 +346,17 @@ bool PersonBoxRisingDetector::update_track(int track_id, const core::InferenceRe
     double trend_slope = 0.0;
     bool x_displacement_ok = check_x_displacement(state.x_history);
     bool height_stable = check_height_stability(state.h_history);
-    bool no_oscillation = !check_oscillation(state.y_history);
+    bool no_oscillation = !check_oscillation(state.smoothed_y_history);
     bool acceleration_ok = check_acceleration(state.acceleration_history);
     bool aspect_ratio_ok = check_aspect_ratio_stability(state.w_history, state.h_history);
-    bool direction_ok = check_direction_consistency(state.y_history);
+    bool direction_ok = check_direction_consistency(state.smoothed_y_history);
     
     if (static_cast<int>(state.smoothed_y_history.size()) >= window_size_) {
         trend_slope = calculate_slope(state.smoothed_y_history);
     }
     
     double rising_score = calculate_rising_score(trend_slope, x_displacement_ok, height_stable, no_oscillation, acceleration_ok, aspect_ratio_ok, direction_ok);
-    
+    LOG_INFO_FMT("Track:{}, Rising Score: {}", track_id, rising_score);
     state.rising_score = rising_score;
     
     bool is_currently_rising = (rising_score >= min_rising_score_);
@@ -326,11 +365,13 @@ bool PersonBoxRisingDetector::update_track(int track_id, const core::InferenceRe
         state.rising_frames++;
         state.non_rising_frames = 0;
     } else {
-        state.rising_frames = 0;
         state.non_rising_frames++;
+        if (state.non_rising_frames > rising_falling_tolerance_) {
+            state.rising_frames = std::max(0, state.rising_frames - state.non_rising_frames);
+        }
     }
     
-    if (state.rising_frames >= required_rising_frames_) {
+    if (state.rising_frames >= required_rising_frames_ && check_sustain_ratio_recent(state)) {
         if (!state.is_rising) {
             std::ostringstream oss;
             oss << "video_path:" << video_path_ 
@@ -340,7 +381,7 @@ bool PersonBoxRisingDetector::update_track(int track_id, const core::InferenceRe
             LOG_INFO_FMT("{}",oss.str());
         }
         state.is_rising = true;
-    } else if (state.non_rising_frames >= required_rising_frames_) {
+    } else if (state.non_rising_frames >= required_rising_frames_ || !check_sustain_ratio_recent(state)) {
         if (state.is_rising) {
             std::ostringstream oss;
             oss << "video_path:" << video_path_ 
