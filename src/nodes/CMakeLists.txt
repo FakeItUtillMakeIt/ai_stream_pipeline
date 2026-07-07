@@ -36,6 +36,7 @@ if(WITH_TENSORRT)
         infer/detection_infer.cpp
         infer/pose_infer.cpp
         infer/int8_calibrator.cpp
+        infer/action_recognition_videomae.cpp
     )
 endif()
 
