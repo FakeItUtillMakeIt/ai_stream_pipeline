@@ -139,7 +139,8 @@ private:
     double max_acceleration_;           // 最大归一化加速度
     double aspect_ratio_change_threshold_;
     double smooth_factor_;
-    double min_direction_consistency_;
+double min_direction_consistency_;
+    double min_total_y_rise_;            // 窗口内Y总上升最小值（归一化，硬门限）
 
     // 分数阈值
     double min_rising_score_;
@@ -196,7 +197,8 @@ private:
                                   bool acceleration_ok,
                                   bool aspect_ratio_ok,
                                   bool direction_ok,
-                                  double sustain_ratio) const;
+                                  double sustain_ratio,
+                                  bool total_y_rise_ok) const;
 
     // ========== 状态机 ==========
     ClimbEvent evaluate_event(const RisingTrackState& state, bool is_currently_rising) const;

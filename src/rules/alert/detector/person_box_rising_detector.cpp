@@ -11,7 +11,7 @@ PersonBoxRisingDetector::PersonBoxRisingDetector(const std::string& video_path)
     , video_height_(1080)
     , resolution_set_(false)
     // ========== 归一化阈值（与分辨率无关）==========
-    , rising_speed_threshold_(-0.003)        // 每帧向上移动超过1.5%画面高度
+    , rising_speed_threshold_(-0.002)        // 每帧向上移动超过1.5%画面高度
     , window_size_(10)
     , history_length_(30)
     , required_rising_frames_(5)
@@ -26,6 +26,7 @@ PersonBoxRisingDetector::PersonBoxRisingDetector(const std::string& video_path)
     , aspect_ratio_change_threshold_(0.25)   // 宽高比变化不超过25%
     , smooth_factor_(0.6)
     , min_direction_consistency_(0.6)
+    , min_total_y_rise_(0.02)              // 窗口内总上升至少3%画面高度
     // 分数阈值
     , min_rising_score_(0.7)
     , score_smoothing_factor_(0.5)
@@ -335,7 +336,8 @@ double PersonBoxRisingDetector::calculate_rising_score(
     bool acceleration_ok,
     bool aspect_ratio_ok,
     bool direction_ok,
-    double sustain_ratio) const {
+    double sustain_ratio,
+    bool total_y_rise_ok) const {
 
     // 硬门限：趋势斜率必须小于阈值（负值表示上升）
     if (trend_slope_norm >= rising_speed_threshold_) {
@@ -344,6 +346,9 @@ double PersonBoxRisingDetector::calculate_rising_score(
 
     // 硬门限：方向一致性必须满足
     if (!direction_ok) return 0.0;
+
+    // 硬门限：窗口内Y总上升必须满足阈值
+    if (!total_y_rise_ok) return 0.0;
 
     // 基础分
     double score = 1.0;
@@ -569,12 +574,24 @@ bool PersonBoxRisingDetector::update_track(int track_id, const core::InferenceRe
     // 持续比例检查
     double sustain_ratio = check_sustain_ratio_recent(state) ? 1.0 : 0.0;
 
+    // 计算窗口内y值总上升（累加所有向上的步长）
+    double total_y_rise = 0.0;
+    if (static_cast<int>(state.smoothed_y_history_norm.size()) >= window_size_) {
+        for (size_t i = state.smoothed_y_history_norm.size() - window_size_ + 1; 
+             i < state.smoothed_y_history_norm.size(); i++) {
+            double diff = state.smoothed_y_history_norm[i - 1] - state.smoothed_y_history_norm[i];  // 前一帧 - 当前帧
+            if (diff > 0) {
+                total_y_rise += diff;
+            }
+        }
+    }
+    bool total_y_rise_ok = (total_y_rise >= min_total_y_rise_);
+
     // 计算分数（归一化）
     double rising_score = calculate_rising_score(
         trend_slope, x_displacement_ok, height_stable, no_oscillation,
-        acceleration_ok, aspect_ratio_ok, direction_ok, sustain_ratio
+        acceleration_ok, aspect_ratio_ok, direction_ok, sustain_ratio, total_y_rise_ok
     );
-
     // 分数平滑（防止抖动）
     if (state.smoothed_score > 0) {
         state.smoothed_score = score_smoothing_factor_ * rising_score 
@@ -622,7 +639,9 @@ bool PersonBoxRisingDetector::update_track(int track_id, const core::InferenceRe
         << ", h_norm=" << h_norm
         << ", state=" << static_cast<int>(state.current_state)
         << ", rising_frames=" << state.rising_frames
-        << ", non_rising=" << state.non_rising_frames;
+        << ", non_rising=" << state.non_rising_frames
+        << ", total_y_rise=" << std::setprecision(6) << total_y_rise
+        << ", total_y_rise_ok=" << (total_y_rise_ok ? "1" : "0");
     LOG_INFO_FMT("{}", oss.str());
 
     return state.is_rising;
