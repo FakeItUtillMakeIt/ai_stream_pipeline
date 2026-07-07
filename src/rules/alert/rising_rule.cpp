@@ -160,7 +160,7 @@ namespace ai_stream
             }
 
             std::vector<int> rising_track_ids;
-            auto climb_result = rising_detector_.process(person_boxes);
+            auto climb_result = rising_detector_.process(person_boxes, packet->frame_id);
             if(climb_result.is_rising)
             {
                 rising_track_ids = climb_result.active_track_ids;
