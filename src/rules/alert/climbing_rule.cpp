@@ -37,6 +37,19 @@ namespace ai_stream
                         
                     }
                 }
+                if (config.contains("action_recongnition_mode") && config["action_recongnition_mode"].is_string())
+                {
+                    std::string mode = config.value("action_recongnition_mode", "");
+                    if (mode == "model")
+                    {
+                        action_recognition_mode_ = ActionRecongnitionType::ACTION_RECOGNITION_MODEL;
+                    }
+                    else if (mode == "pose")
+                    {
+                        action_recognition_mode_ = ActionRecongnitionType::ACTION_RECOGNITION_POSE;
+                    }
+                
+                }
             }
             catch (const std::exception &e)
             {
@@ -163,10 +176,12 @@ namespace ai_stream
             bool is_climbing = false;
             if (action_recognition_mode_==ActionRecongnitionType::ACTION_RECOGNITION_MODEL)
             {
+                LOG_INFO_FMT("ClimbingRule::rule_logic() using action recognition model:{}", packet->action_results.size());
                 if (packet->action_results.empty())
                     return RuleStatus::RULE_STATUS_OK;
                 for (const auto &action_result : packet->action_results)
                 {
+                    LOG_INFO_FMT("ClimbingRule::rule_logic() action_result: track_id={}, action_label={}, confidence={}", action_result.track_id, action_result.action_label, action_result.confidence);
                     if (action_result.action_label != alertTypeMap[AlertType::CLAMBING])
                         continue;
                     is_climbing = true;

@@ -14,6 +14,7 @@ set(NODES_SOURCES
     sink/mp4_save.cpp
     sink/encoder_base.cpp
     preprocess/resize_normalize.cpp
+    fusion/fusion_node.cpp
 )
 
 # 预处理节点：根据 CUDA 支持选择 CPU 或 GPU 版本
