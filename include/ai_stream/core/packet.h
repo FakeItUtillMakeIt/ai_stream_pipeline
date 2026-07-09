@@ -89,6 +89,13 @@ namespace rules
         {AlertType::PHOTOGRAPHER, "揽拍"}
     };
 
+    enum class ActionRecongnitionType : uint8_t
+    {
+        ACTION_RECOGNITION_UNKNOWN = 0,
+        ACTION_RECOGNITION_POSE = 1, //使用姿态识别
+        ACTION_RECOGNITION_MODEL = 2,//使用模型识别
+    };
+
     enum class AlertItemType : uint8_t
     {
         ITEM_UNKNOWN = 0,

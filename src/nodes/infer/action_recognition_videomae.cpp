@@ -18,8 +18,8 @@ namespace nodes {
 ActionRecognitionVideoMAENode::ActionRecognitionVideoMAENode()
     : cfg_{} {
     name_ = "ActionRecognitionVideoMAE";
-    // 默认配置：3分类（climb, fight, other）
-    cfg_.action_labels = {"climb", "fight", "other"};
+    // 默认配置：3分类（climbing, fighting, other）
+    cfg_.action_labels = {"climbing", "fighting", "other"};
     cfg_.confidence_threshold = 0.7f;
     cfg_.num_frames = 16;
     cfg_.frame_interval = 2;

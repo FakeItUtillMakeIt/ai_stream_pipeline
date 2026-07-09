@@ -11,6 +11,7 @@ namespace ai_stream
         FightingRule::FightingRule() : fighting_detector_(FightingDetector::Config())
         {
             LOG_INFO("FightingRule::FightingRule()");
+            action_recognition_mode_ = ActionRecongnitionType::ACTION_RECOGNITION_POSE;
         }
 
         bool FightingRule::initialize(const nlohmann::json &config)
@@ -164,12 +165,27 @@ namespace ai_stream
             // 更新zone_alert_map_ 打架至少2人
             if (person_count < 2)
                 return RuleStatus::RULE_STATUS_OK;
-            // 调用打架检测器
-            auto fight_result = fighting_detector_.process(person_boxes);
-            if (fight_result.is_fighting)
+            bool is_fighting = false;
+            if (action_recognition_mode_==ActionRecongnitionType::ACTION_RECOGNITION_MODEL)
             {
+                if (packet->action_results.empty())
+                    return RuleStatus::RULE_STATUS_OK;
+                for (const auto &action_result : packet->action_results)
+                {
+                    if (action_result.action_label != alertTypeMap[AlertType::FIGHTING])
+                        continue;
+                    is_fighting = true;
+                }
+            }
+            if (action_recognition_mode_ == ActionRecongnitionType::ACTION_RECOGNITION_POSE)
+            {// 调用打架检测器
+                auto fight_result = fighting_detector_.process(person_boxes);
+                is_fighting = fight_result.is_fighting;
                 person_track_ids = fight_result.active_track_ids;
-
+            }
+            
+            if (is_fighting)
+            {
                 auto it = zone_alert_map_.find(zone_no);
                 if (it == zone_alert_map_.end())
                 {
