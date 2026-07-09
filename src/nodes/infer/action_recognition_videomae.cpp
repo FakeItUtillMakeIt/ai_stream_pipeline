@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <numeric>
 #include <fstream>
+#include <nlohmann/json.hpp>
 
 
 namespace ai_stream {
@@ -17,6 +18,15 @@ namespace nodes {
 ActionRecognitionVideoMAENode::ActionRecognitionVideoMAENode()
     : cfg_{} {
     name_ = "ActionRecognitionVideoMAE";
+    // 默认配置：3分类（climb, fight, other）
+    cfg_.action_labels = {"climb", "fight", "other"};
+    cfg_.confidence_threshold = 0.7f;
+    cfg_.num_frames = 16;
+    cfg_.frame_interval = 2;
+    cfg_.window_size = 16;
+    cfg_.stride = 8;
+    cfg_.input_height = 224;
+    cfg_.input_width = 224;
     LOG_INFO_FMT("[ActionRecognitionVideoMAE] Default Constructor");
 }
 
@@ -292,6 +302,40 @@ void ActionRecognitionVideoMAENode::setBatchSize(int batch_size) {
 }
 
 bool ActionRecognitionVideoMAENode::loadModel() {
+    // 尝试从JSON配置文件加载参数
+    std::string config_path = cfg_.model_path;
+    // 将.engine替换为.json查找配置文件
+    auto pos = config_path.find(".engine");
+    if (pos != std::string::npos) {
+        config_path.replace(pos, 6, ".json");
+        std::ifstream config_file(config_path);
+        if (config_file.is_open()) {
+            try {
+                nlohmann::json config;
+                config_file >> config;
+                
+                if (config.contains("confidence_threshold")) {
+                    cfg_.confidence_threshold = config["confidence_threshold"].get<float>();
+                }
+                if (config.contains("num_classes")) {
+                    int num_classes = config["num_classes"].get<int>();
+                    if (config.contains("class_names")) {
+                        cfg_.action_labels = config["class_names"].get<std::vector<std::string>>();
+                    }
+                }
+                if (config.contains("num_frames")) {
+                    cfg_.num_frames = config["num_frames"].get<int>();
+                }
+                if (config.contains("frame_stride")) {
+                    cfg_.stride = config["frame_stride"].get<int>();
+                }
+                LOG_INFO_FMT("Loaded config from: {}", config_path);
+            } catch (const std::exception& e) {
+                LOG_WARN_FMT("Failed to parse config file: {}, using defaults", config_path);
+            }
+        }
+    }
+    
     // 加载TensorRT引擎
     std::ifstream file(cfg_.model_path, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
