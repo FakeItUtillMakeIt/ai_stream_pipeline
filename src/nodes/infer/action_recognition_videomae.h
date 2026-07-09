@@ -56,14 +56,17 @@ private:
     // TensorRT相关
     bool loadModel();
     void allocateBuffers();
-    void infer(const std::vector<cv::Mat>& clip, core::InferenceResultPacket::ActionResult& result);
+    void inferFromGpu(const std::vector<void*>& gpu_frames, core::InferenceResultPacket::ActionResult& result);
+    void inferFromCpu(const std::vector<cv::Mat>& clip, core::InferenceResultPacket::ActionResult& result);
     
     // 帧缓冲和滑动窗口
+    void updateGpuFrameBuffer(uint32_t stream_id, void* d_ptr, int64_t frame_id);
     void updateFrameBuffer(uint32_t stream_id, const cv::Mat& frame, int64_t frame_id);
     bool shouldRunInference(uint32_t stream_id);
+    std::vector<void*> getGpuClipFromBuffer(uint32_t stream_id);
     std::vector<cv::Mat> getClipFromBuffer(uint32_t stream_id);
     
-    // 预处理
+    // 预处理（CPU路径使用）
     void preprocessClip(const std::vector<cv::Mat>& clip, float* input_buffer);
     
     // 后处理
@@ -83,11 +86,17 @@ private:
     size_t input_size_ = 0;
     size_t output_size_ = 0;
     
-    // 帧缓冲区（按stream_id存储）
+    // CPU帧缓冲区（用于接收CPU预处理节点的输出）
     struct FrameBuffer {
         std::deque<std::pair<int64_t, cv::Mat>> frames;  // (frame_id, frame)
     };
     std::unordered_map<uint32_t, FrameBuffer> frame_buffers_;
+    
+    // GPU帧缓冲区（用于接收GPU预处理节点的输出）
+    struct GpuFrameBuffer {
+        std::deque<std::pair<int64_t, void*>> frames;  // (frame_id, d_ptr)
+    };
+    std::unordered_map<uint32_t, GpuFrameBuffer> gpu_frame_buffers_;
     
     // 滑动窗口状态
     struct WindowState {

@@ -111,10 +111,6 @@ namespace ai_stream
                     if (type.find("resize_normalize") != std::string::npos)
                     { 
                         auto preprocess_node = std::dynamic_pointer_cast<nodes::IPreprocessNode>(node);
-                        // std::vector<float> std = {0.229f, 0.224f, 0.225f};
-                        // std::vector<float> mean = {0.485f, 0.456f, 0.406f};
-                        // preprocess_node->setStd(std);
-                        // preprocess_node->setMean(mean);
                         if (params.contains("output_width") && params.contains("output_height"))
                         {
                             preprocess_node->setTargetSize(params["output_width"].get<int>(), params["output_height"].get<int>());
@@ -126,6 +122,14 @@ namespace ai_stream
                         if (params.contains("keep_aspect_ratio"))
                         {
                             preprocess_node->setKeepAspectRatio(params["keep_aspect_ratio"].get<bool>());
+                        }
+                        if (params.contains("mean"))
+                        {
+                            preprocess_node->setMean(params["mean"].get<std::vector<float>>());
+                        }
+                        if (params.contains("std"))
+                        {
+                            preprocess_node->setStd(params["std"].get<std::vector<float>>());
                         }
                     }
 

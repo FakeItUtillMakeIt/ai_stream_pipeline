@@ -80,7 +80,7 @@ void ActionRecognitionVideoMAENode::pushData(std::shared_ptr<core::BasePacket> p
     in_time_ms_ = utils::TimeUtil::currentTimeMs();
     
     auto video_frame = std::dynamic_pointer_cast<core::VideoFramePacket>(packet);
-    if (!video_frame || !video_frame->mat) {
+    if (!video_frame) {
         broadcast(packet);
         return;
     }
@@ -88,57 +88,71 @@ void ActionRecognitionVideoMAENode::pushData(std::shared_ptr<core::BasePacket> p
     uint32_t stream_id = packet->stream_id;
     int64_t frame_id = packet->frame_id;
     
-    // 更新帧缓冲区
-    updateFrameBuffer(stream_id, *video_frame->mat, frame_id);
-    
-    // 检查是否应该执行推理
-    if (shouldRunInference(stream_id)) {
-        // 获取clip
-        auto clip = getClipFromBuffer(stream_id);
+    // 根据数据类型选择处理路径
+    if (video_frame->is_gpu && video_frame->d_ptr) {
+        // GPU预处理路径：直接缓冲GPU数据
+        updateGpuFrameBuffer(stream_id, video_frame->d_ptr, frame_id);
         
-        if (clip.size() >= static_cast<size_t>(cfg_.num_frames)) {
-            // 执行推理
-            auto infer_result = std::make_shared<core::InferenceResultPacket>();
-            infer_result->stream_id = stream_id;
-            infer_result->frame_id = frame_id;
-            infer_result->timestamp_ms = packet->timestamp_ms;
-            infer_result->source_frame = video_frame;
+        if (shouldRunInference(stream_id)) {
+            auto gpu_clip = getGpuClipFromBuffer(stream_id);
             
-            core::InferenceResultPacket::ActionResult action_result;
-            infer(clip, action_result);
-            
-            if (action_result.confidence >= cfg_.confidence_threshold) {
-                infer_result->action_results.push_back(action_result);
-                LOG_INFO_FMT("[ActionRecognition] Detected action: {} (confidence: {:.4f})", 
-                             action_result.action_label, action_result.confidence);
+            if (gpu_clip.size() >= static_cast<size_t>(cfg_.num_frames)) {
+                auto infer_result = std::make_shared<core::InferenceResultPacket>();
+                infer_result->stream_id = stream_id;
+                infer_result->frame_id = frame_id;
+                infer_result->timestamp_ms = packet->timestamp_ms;
+                infer_result->source_frame = video_frame;
+                
+                core::InferenceResultPacket::ActionResult action_result;
+                inferFromGpu(gpu_clip, action_result);
+                
+                if (action_result.confidence >= cfg_.confidence_threshold) {
+                    infer_result->action_results.push_back(action_result);
+                    LOG_INFO_FMT("[ActionRecognition] Detected action: {} (confidence: {:.4f})", 
+                                 action_result.action_label, action_result.confidence);
+                }
+                
+                uint64_t cost = utils::TimeUtil::currentTimeMs() - in_time_ms_;
+                infer_result->cost_ms = cost;
+                infer_result->cost_time_map[name_] = cost;
+                
+                broadcast(infer_result);
             }
+        }
+    } else if (video_frame->mat && !video_frame->mat->empty()) {
+        // CPU预处理路径：预处理节点已完成resize+normalize，只需布局转换
+        updateFrameBuffer(stream_id, *video_frame->mat, frame_id);
+        
+        if (shouldRunInference(stream_id)) {
+            auto clip = getClipFromBuffer(stream_id);
             
-            // 记录耗时
-            uint64_t cost = utils::TimeUtil::currentTimeMs() - in_time_ms_;
-            infer_result->cost_ms = cost;
-            infer_result->cost_time_map[name_] = cost;
-            
-            broadcast(infer_result);
+            if (clip.size() >= static_cast<size_t>(cfg_.num_frames)) {
+                auto infer_result = std::make_shared<core::InferenceResultPacket>();
+                infer_result->stream_id = stream_id;
+                infer_result->frame_id = frame_id;
+                infer_result->timestamp_ms = packet->timestamp_ms;
+                infer_result->source_frame = video_frame;
+                
+                core::InferenceResultPacket::ActionResult action_result;
+                inferFromCpu(clip, action_result);
+                
+                if (action_result.confidence >= cfg_.confidence_threshold) {
+                    infer_result->action_results.push_back(action_result);
+                    LOG_INFO_FMT("[ActionRecognition] Detected action: {} (confidence: {:.4f})", 
+                                 action_result.action_label, action_result.confidence);
+                }
+                
+                uint64_t cost = utils::TimeUtil::currentTimeMs() - in_time_ms_;
+                infer_result->cost_ms = cost;
+                infer_result->cost_time_map[name_] = cost;
+                
+                broadcast(infer_result);
+            }
         }
     }
     
     // 广播原始packet（用于下游节点）
     broadcast(packet);
-}
-
-void ActionRecognitionVideoMAENode::updateFrameBuffer(uint32_t stream_id, 
-                                                       const cv::Mat& frame, 
-                                                       int64_t frame_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    
-    auto& buffer = frame_buffers_[stream_id];
-    buffer.frames.push_back({frame_id, frame.clone()});
-    
-    // 限制缓冲区大小（保留最近的帧）
-    int max_buffer_size = cfg_.window_size * cfg_.frame_interval + 10;
-    while (static_cast<int>(buffer.frames.size()) > max_buffer_size) {
-        buffer.frames.pop_front();
-    }
 }
 
 bool ActionRecognitionVideoMAENode::shouldRunInference(uint32_t stream_id) {
@@ -150,13 +164,70 @@ bool ActionRecognitionVideoMAENode::shouldRunInference(uint32_t stream_id) {
     // 检查是否达到滑动步长
     if (state.frame_counter >= cfg_.stride) {
         state.frame_counter = 0;
-        if (!frame_buffers_[stream_id].frames.empty()) {
+        // 根据使用的缓冲区获取最后帧ID
+        if (!gpu_frame_buffers_[stream_id].frames.empty()) {
+            state.last_inference_frame = gpu_frame_buffers_[stream_id].frames.back().first;
+        } else if (!frame_buffers_[stream_id].frames.empty()) {
             state.last_inference_frame = frame_buffers_[stream_id].frames.back().first;
         }
         return true;
     }
     
     return false;
+}
+
+void ActionRecognitionVideoMAENode::updateGpuFrameBuffer(uint32_t stream_id, 
+                                                          void* d_ptr, 
+                                                          int64_t frame_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    auto& buffer = gpu_frame_buffers_[stream_id];
+    buffer.frames.push_back({frame_id, d_ptr});
+    
+    // 限制缓冲区大小
+    int max_buffer_size = cfg_.window_size * cfg_.frame_interval + 10;
+    while (static_cast<int>(buffer.frames.size()) > max_buffer_size) {
+        buffer.frames.pop_front();
+    }
+}
+
+void ActionRecognitionVideoMAENode::updateFrameBuffer(uint32_t stream_id, 
+                                                       const cv::Mat& frame, 
+                                                       int64_t frame_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    auto& buffer = frame_buffers_[stream_id];
+    buffer.frames.push_back({frame_id, frame.clone()});
+    
+    // 限制缓冲区大小
+    int max_buffer_size = cfg_.window_size * cfg_.frame_interval + 10;
+    while (static_cast<int>(buffer.frames.size()) > max_buffer_size) {
+        buffer.frames.pop_front();
+    }
+}
+
+std::vector<void*> ActionRecognitionVideoMAENode::getGpuClipFromBuffer(uint32_t stream_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    std::vector<void*> clip;
+    auto& buffer = gpu_frame_buffers_[stream_id];
+    
+    if (buffer.frames.empty()) return clip;
+    
+    // 按间隔采样帧
+    int step = cfg_.frame_interval;
+    
+    // 从最新的帧开始，向前采样
+    for (int i = static_cast<int>(buffer.frames.size()) - 1; 
+         i >= 0 && static_cast<int>(clip.size()) < cfg_.num_frames; 
+         i -= step) {
+        clip.push_back(buffer.frames[i].second);
+    }
+    
+    // 反转clip，使其按时间顺序排列
+    std::reverse(clip.begin(), clip.end());
+    
+    return clip;
 }
 
 std::vector<cv::Mat> ActionRecognitionVideoMAENode::getClipFromBuffer(uint32_t stream_id) {
@@ -183,53 +254,59 @@ std::vector<cv::Mat> ActionRecognitionVideoMAENode::getClipFromBuffer(uint32_t s
     return clip;
 }
 
-void ActionRecognitionVideoMAENode::preprocessClip(const std::vector<cv::Mat>& clip, 
-                                                    float* input_buffer) {
-    // VideoMAE预处理：resize + normalize
-    // 输入格式：[1, num_frames*3, height, width] (NCHW, 视频展开为通道)
+void ActionRecognitionVideoMAENode::inferFromGpu(const std::vector<void*>& gpu_frames, 
+                                                  core::InferenceResultPacket::ActionResult& result) {
+    if (static_cast<int>(gpu_frames.size()) < cfg_.num_frames) return;
     
-    int h = cfg_.input_height;
-    int w = cfg_.input_width;
-    int num_frames = static_cast<int>(clip.size());
+    // 每帧数据大小: 3 * height * width * sizeof(float) = 3 * 224 * 224 * 4 = 602112 bytes
+    int single_frame_size = 3 * cfg_.input_height * cfg_.input_width * sizeof(float);
     
-    // ImageNet标准化参数
-    float mean[3] = {0.485f, 0.456f, 0.406f};
-    float std[3] = {0.229f, 0.224f, 0.225f};
-    
-    for (int t = 0; t < num_frames; t++) {
-        cv::Mat resized;
-        cv::resize(clip[t], resized, cv::Size(w, h));
-        
-        for (int c = 0; c < 3; c++) {
-            for (int i = 0; i < h; i++) {
-                for (int j = 0; j < w; j++) {
-                    float pixel = resized.at<cv::Vec3b>(i, j)[c] / 255.0f;
-                    input_buffer[t * 3 * h * w + c * h * w + i * w + j] = 
-                        (pixel - mean[c]) / std[c];
-                }
-            }
-        }
+    // 将16帧GPU数据拷贝到连续的输入缓冲区
+    // 布局: [1, 16, 3, 224, 224] = [batch, frames, channels, height, width]
+    for (int i = 0; i < cfg_.num_frames; i++) {
+        void* dst = static_cast<char*>(device_input_) + i * single_frame_size;
+        // 每帧已经由cuda_resize_normalize预处理为NCHW格式
+        // 直接拷贝到输入缓冲区的对应位置
+        cudaMemcpyAsync(dst, gpu_frames[i], single_frame_size, 
+                        cudaMemcpyDeviceToDevice, stream_);
     }
+    cudaStreamSynchronize(stream_);
+    
+    // 设置输入形状
+    nvinfer1::Dims input_dims;
+    input_dims.nbDims = 5;
+    input_dims.d[0] = cfg_.batch_size;
+    input_dims.d[1] = cfg_.num_frames;
+    input_dims.d[2] = 3;
+    input_dims.d[3] = cfg_.input_height;
+    input_dims.d[4] = cfg_.input_width;
+    context_->setInputShape("input", input_dims);
+    
+    // 推理
+    if (!context_->enqueueV3(stream_)) {
+        spdlog::error("enqueueV3 failed for action recognition");
+        return;
+    }
+    cudaStreamSynchronize(stream_);
+    
+    // 拷贝输出
+    std::vector<float> host_output(output_size_ / sizeof(float));
+    cudaMemcpyAsync(host_output.data(), device_output_, output_size_, 
+                    cudaMemcpyDeviceToHost, stream_);
+    cudaStreamSynchronize(stream_);
+    
+    // 后处理
+    result = postprocess(host_output.data(), static_cast<int>(cfg_.action_labels.size()));
+    result.timestamp_ms = utils::TimeUtil::currentTimeMs();
 }
 
-void ActionRecognitionVideoMAENode::infer(const std::vector<cv::Mat>& clip, 
-                                           core::InferenceResultPacket::ActionResult& result) {
+void ActionRecognitionVideoMAENode::inferFromCpu(const std::vector<cv::Mat>& clip, 
+                                                  core::InferenceResultPacket::ActionResult& result) {
     if (static_cast<int>(clip.size()) < cfg_.num_frames) return;
     
-    // 预处理
+    // 预处理：布局转换 (HWC -> NCHW) + 归一化
     std::vector<float> host_input(input_size_ / sizeof(float));
     preprocessClip(clip, host_input.data());
-    
-    // 调试：打印输入数据统计
-    float sum = 0, max_val = -1000, min_val = 1000;
-    int num_elements = input_size_ / sizeof(float);
-    for (int i = 0; i < num_elements; i++) {
-        sum += host_input[i];
-        if (host_input[i] > max_val) max_val = host_input[i];
-        if (host_input[i] < min_val) min_val = host_input[i];
-    }
-    LOG_INFO_FMT("Input stats: mean={}, min={}, max={}, elements={}", 
-                 sum/num_elements, min_val, max_val, num_elements);
     
     // 拷贝到GPU
     cudaError_t err = cudaMemcpyAsync(device_input_, host_input.data(), input_size_, 
@@ -240,12 +317,12 @@ void ActionRecognitionVideoMAENode::infer(const std::vector<cv::Mat>& clip,
     }
     cudaStreamSynchronize(stream_);
     
-    // 设置输入形状 (TensorRT 10.x要求)
+    // 设置输入形状
     nvinfer1::Dims input_dims;
     input_dims.nbDims = 5;
     input_dims.d[0] = cfg_.batch_size;
     input_dims.d[1] = cfg_.num_frames;
-    input_dims.d[2] = 3;  // channels (固定)
+    input_dims.d[2] = 3;
     input_dims.d[3] = cfg_.input_height;
     input_dims.d[4] = cfg_.input_width;
     context_->setInputShape("input", input_dims);
@@ -267,12 +344,34 @@ void ActionRecognitionVideoMAENode::infer(const std::vector<cv::Mat>& clip,
     }
     cudaStreamSynchronize(stream_);
     
-    // 调试：打印输出数据
-    LOG_INFO_FMT("Raw output: [{}, {}, {}]", host_output[0], host_output[1], host_output[2]);
-    
     // 后处理
     result = postprocess(host_output.data(), static_cast<int>(cfg_.action_labels.size()));
     result.timestamp_ms = utils::TimeUtil::currentTimeMs();
+}
+
+void ActionRecognitionVideoMAENode::preprocessClip(const std::vector<cv::Mat>& clip, 
+                                                    float* input_buffer) {
+    // 假设输入已经由预处理节点完成resize+normalize
+    // 这里只做布局转换：HWC -> NCHW
+    
+    int h = cfg_.input_height;
+    int w = cfg_.input_width;
+    int num_frames = static_cast<int>(clip.size());
+    
+    for (int t = 0; t < num_frames; t++) {
+        // 输入是HWC格式的float数据（已归一化）
+        const float* src = reinterpret_cast<const float*>(clip[t].data);
+        
+        // 转换为NCHW格式
+        for (int c = 0; c < 3; c++) {
+            for (int i = 0; i < h; i++) {
+                for (int j = 0; j < w; j++) {
+                    input_buffer[t * 3 * h * w + c * h * w + i * w + j] = 
+                        src[i * w * 3 + j * 3 + c];
+                }
+            }
+        }
+    }
 }
 
 core::InferenceResultPacket::ActionResult ActionRecognitionVideoMAENode::postprocess(
