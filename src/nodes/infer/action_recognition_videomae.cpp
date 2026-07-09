@@ -109,6 +109,8 @@ void ActionRecognitionVideoMAENode::pushData(std::shared_ptr<core::BasePacket> p
             
             if (action_result.confidence >= cfg_.confidence_threshold) {
                 infer_result->action_results.push_back(action_result);
+                LOG_INFO_FMT("[ActionRecognition] Detected action: {} (confidence: {:.4f})", 
+                             action_result.action_label, action_result.confidence);
             }
             
             // 记录耗时
@@ -218,21 +220,55 @@ void ActionRecognitionVideoMAENode::infer(const std::vector<cv::Mat>& clip,
     std::vector<float> host_input(input_size_ / sizeof(float));
     preprocessClip(clip, host_input.data());
     
+    // 调试：打印输入数据统计
+    float sum = 0, max_val = -1000, min_val = 1000;
+    int num_elements = input_size_ / sizeof(float);
+    for (int i = 0; i < num_elements; i++) {
+        sum += host_input[i];
+        if (host_input[i] > max_val) max_val = host_input[i];
+        if (host_input[i] < min_val) min_val = host_input[i];
+    }
+    LOG_INFO_FMT("Input stats: mean={}, min={}, max={}, elements={}", 
+                 sum/num_elements, min_val, max_val, num_elements);
+    
     // 拷贝到GPU
-    cudaMemcpyAsync(device_input_, host_input.data(), input_size_, 
+    cudaError_t err = cudaMemcpyAsync(device_input_, host_input.data(), input_size_, 
                     cudaMemcpyHostToDevice, stream_);
+    if (err != cudaSuccess) {
+        LOG_ERROR_FMT("cudaMemcpy H2D failed: {}", cudaGetErrorString(err));
+        return;
+    }
+    cudaStreamSynchronize(stream_);
+    
+    // 设置输入形状 (TensorRT 10.x要求)
+    nvinfer1::Dims input_dims;
+    input_dims.nbDims = 5;
+    input_dims.d[0] = cfg_.batch_size;
+    input_dims.d[1] = cfg_.num_frames;
+    input_dims.d[2] = 3;  // channels (固定)
+    input_dims.d[3] = cfg_.input_height;
+    input_dims.d[4] = cfg_.input_width;
+    context_->setInputShape("input", input_dims);
     
     // 推理
     if (!context_->enqueueV3(stream_)) {
         spdlog::error("enqueueV3 failed for action recognition");
         return;
     }
+    cudaStreamSynchronize(stream_);
     
     // 拷贝输出
     std::vector<float> host_output(output_size_ / sizeof(float));
-    cudaMemcpyAsync(host_output.data(), device_output_, output_size_, 
+    err = cudaMemcpyAsync(host_output.data(), device_output_, output_size_, 
                     cudaMemcpyDeviceToHost, stream_);
+    if (err != cudaSuccess) {
+        LOG_ERROR_FMT("cudaMemcpy D2H failed: {}", cudaGetErrorString(err));
+        return;
+    }
     cudaStreamSynchronize(stream_);
+    
+    // 调试：打印输出数据
+    LOG_INFO_FMT("Raw output: [{}, {}, {}]", host_output[0], host_output[1], host_output[2]);
     
     // 后处理
     result = postprocess(host_output.data(), static_cast<int>(cfg_.action_labels.size()));
@@ -382,26 +418,46 @@ bool ActionRecognitionVideoMAENode::loadModel() {
 
 void ActionRecognitionVideoMAENode::allocateBuffers() {
     // 获取输入输出tensor名称
-    const char* input_name = engine_->getIOTensorName(0);
-    const char* output_name = engine_->getIOTensorName(1);
+    int nb_io = engine_->getNbIOTensors();
+    LOG_INFO_FMT("[ActionRecognition] Engine has {} I/O tensors", nb_io);
     
-    // 获取输入输出形状
-    auto input_shape = context_->getTensorShape(input_name);
-    auto output_shape = context_->getTensorShape(output_name);
+    const char* input_name = nullptr;
+    const char* output_name = nullptr;
     
-    // 计算输入大小
-    input_size_ = 1;
-    for (int i = 0; i < input_shape.d[0]; i++) {
-        input_size_ *= static_cast<size_t>(input_shape.d[i]);
+    for (int i = 0; i < nb_io; ++i) {
+        const char* name = engine_->getIOTensorName(i);
+        nvinfer1::TensorIOMode mode = engine_->getTensorIOMode(name);
+        nvinfer1::Dims dims = engine_->getTensorShape(name);
+        std::string mode_str = (mode == nvinfer1::TensorIOMode::kINPUT) ? "INPUT" : "OUTPUT";
+        
+        // 计算缓冲区大小 (处理动态维度-1)
+        size_t buf_size = 1;
+        for (int d = 0; d < dims.nbDims; ++d) {
+            buf_size *= (dims.d[d] > 0) ? dims.d[d] : 1;  // -1 替换为 1
+        }
+        buf_size *= sizeof(float);
+        
+        LOG_INFO_FMT("[ActionRecognition]  Tensor[{}]: {} ({}), nbDims={}, dims=[{},{},{},{},{}], size={}bytes",
+                     i, name, mode_str, dims.nbDims, 
+                     dims.d[0], dims.d[1], dims.d[2], dims.d[3], dims.d[4], buf_size);
+        
+        if (mode == nvinfer1::TensorIOMode::kINPUT) {
+            input_name = name;
+            input_size_ = buf_size;
+        } else {
+            output_name = name;
+            output_size_ = buf_size;
+        }
     }
-    input_size_ *= sizeof(float);
     
-    // 计算输出大小
-    output_size_ = 1;
-    for (int i = 0; i < output_shape.d[0]; i++) {
-        output_size_ *= static_cast<size_t>(output_shape.d[i]);
-    }
-    output_size_ *= sizeof(float);
+    // 对于动态batch，使用实际batch大小重新计算
+    // 输入: [batch, 16, 3, 224, 224]
+    input_size_ = cfg_.batch_size * 16 * 3 * cfg_.input_height * cfg_.input_width * sizeof(float);
+    // 输出: [batch, 3]
+    output_size_ = cfg_.batch_size * cfg_.action_labels.size() * sizeof(float);
+    
+    LOG_INFO_FMT("[ActionRecognition] Input name: {}, size: {} bytes", input_name, input_size_);
+    LOG_INFO_FMT("[ActionRecognition] Output name: {}, size: {} bytes", output_name, output_size_);
     
     // 分配GPU内存
     cudaMalloc(&device_input_, input_size_);
