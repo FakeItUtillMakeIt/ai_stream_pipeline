@@ -125,6 +125,10 @@ namespace ai_stream
                 {
                     it->second.status = AlertStatus::ALERT_STATUS_LAST;
                 }
+                if (it->second.status == AlertStatus::ALERT_STATUS_END)
+                {
+                    it->second.status = AlertStatus::ALERT_STATUS_DEFAULT;
+                }
                 if (it->second.duration_ms > alert_duration_ms_ && it->second.status == AlertStatus::ALERT_STATUS_DEFAULT)
                 {
                     // 生成一个告警id
@@ -137,6 +141,7 @@ namespace ai_stream
                     it->second.status = AlertStatus::ALERT_STATUS_END;
                 }
                 it->second.description = getName() + alert_status_map[it->second.status];
+                LOG_INFO_FMT("ClimbingRule::process() zone {} alert status: {}, non_update_count: {}, duration_ms: {}", int(it->first), alert_status_map[it->second.status], int(it->second.non_update_count), int(it->second.duration_ms));
                 it++;
             }
             return RuleStatus::RULE_STATUS_OK;
