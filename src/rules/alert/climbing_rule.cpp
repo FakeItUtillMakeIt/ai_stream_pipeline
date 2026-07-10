@@ -11,6 +11,7 @@ namespace ai_stream
         ClimbingRule::ClimbingRule() : climbing_detector_(ClimbingDetector::Config())
         {
             LOG_INFO("ClimbingRule::ClimbingRule()");
+            action_recognition_mode_ = ActionRecongnitionType::ACTION_RECOGNITION_POSE;
             alert_duration_ms_ = 100;
         }
 
@@ -35,6 +36,19 @@ namespace ai_stream
                         }
                         
                     }
+                }
+                if (config.contains("action_recongnition_mode") && config["action_recongnition_mode"].is_string())
+                {
+                    std::string mode = config.value("action_recongnition_mode", "");
+                    if (mode == "model")
+                    {
+                        action_recognition_mode_ = ActionRecongnitionType::ACTION_RECOGNITION_MODEL;
+                    }
+                    else if (mode == "pose")
+                    {
+                        action_recognition_mode_ = ActionRecongnitionType::ACTION_RECOGNITION_POSE;
+                    }
+                
                 }
             }
             catch (const std::exception &e)
@@ -111,6 +125,10 @@ namespace ai_stream
                 {
                     it->second.status = AlertStatus::ALERT_STATUS_LAST;
                 }
+                if (it->second.status == AlertStatus::ALERT_STATUS_END)
+                {
+                    it->second.status = AlertStatus::ALERT_STATUS_DEFAULT;
+                }
                 if (it->second.duration_ms > alert_duration_ms_ && it->second.status == AlertStatus::ALERT_STATUS_DEFAULT)
                 {
                     // 生成一个告警id
@@ -123,6 +141,7 @@ namespace ai_stream
                     it->second.status = AlertStatus::ALERT_STATUS_END;
                 }
                 it->second.description = getName() + alert_status_map[it->second.status];
+                LOG_INFO_FMT("ClimbingRule::process() zone {} alert status: {}, non_update_count: {}, duration_ms: {}", int(it->first), alert_status_map[it->second.status], int(it->second.non_update_count), int(it->second.duration_ms));
                 it++;
             }
             return RuleStatus::RULE_STATUS_OK;
@@ -147,6 +166,7 @@ namespace ai_stream
         {
             LOG_INFO_FMT("ClimbingRule::rule_logic()");
             std::vector<ai_stream::core::InferenceResultPacket::BBox> person_boxes;
+            std::vector<int> person_track_ids;
             for (const auto &detection : packet->detections)
             {
                 if (detection.class_name == "person")
@@ -158,12 +178,29 @@ namespace ai_stream
             {
                 return RuleStatus::RULE_STATUS_OK;
             }
-
-            std::vector<int> climbing_track_ids;
-            auto climb_result = climbing_detector_.process(person_boxes);
-            if(climb_result.is_climbing)
+            bool is_climbing = false;
+            if (action_recognition_mode_==ActionRecongnitionType::ACTION_RECOGNITION_MODEL)
             {
-                climbing_track_ids = climb_result.active_track_ids;
+                LOG_INFO_FMT("ClimbingRule::rule_logic() using action recognition model:{}", packet->action_results.size());
+                if (packet->action_results.empty())
+                    return RuleStatus::RULE_STATUS_OK;
+                for (const auto &action_result : packet->action_results)
+                {
+                    LOG_INFO_FMT("ClimbingRule::rule_logic() action_result: track_id={}, action_label={}, confidence={}", action_result.track_id, action_result.action_label, action_result.confidence);
+                    if (action_result.action_label != alertTypeMap[AlertType::CLAMBING])
+                        continue;
+                    is_climbing = true;
+                }
+            }
+            if (action_recognition_mode_ == ActionRecongnitionType::ACTION_RECOGNITION_POSE)
+            {// 调用打架检测器
+                auto climb_result = climbing_detector_.process(person_boxes);
+                is_climbing = climb_result.is_climbing;
+                person_track_ids = climb_result.active_track_ids;
+            }
+            
+            if(is_climbing)
+            {
                 auto it = zone_alert_map_.find(zone_no);
                 if (it == zone_alert_map_.end())
                 {
@@ -172,7 +209,7 @@ namespace ai_stream
                     alert_target.zone_no = zone_no;
                     alert_target.non_update_count = 0;
                     alert_target.duration_ms = 0;
-                    alert_target.object_ids = climbing_track_ids;
+                    alert_target.object_ids = person_track_ids;
                     zone_alert_map_.insert(std::make_pair(zone_no, alert_target));
                 }
                 else
@@ -180,7 +217,7 @@ namespace ai_stream
                     auto &alert_target = it->second;
                     alert_target.non_update_count = 0;
                     alert_target.duration_ms = packet->timestamp_ms - alert_target.detect_ms;
-                    alert_target.object_ids = climbing_track_ids;
+                    alert_target.object_ids = person_track_ids;
                 }
             }
             return RuleStatus::RULE_STATUS_OK;

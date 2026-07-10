@@ -49,7 +49,8 @@ namespace rules
         CLAMBING = 11,
         FIGHTING = 12,
         UNLICENSED_VENDOR = 13,
-        PHOTOGRAPHER = 14
+        PHOTOGRAPHER = 14,
+        ACTION_RECOGNITION = 100
     };
 
     inline std::map<AlertType, std::string> alertTypeMap = {
@@ -86,6 +87,13 @@ namespace rules
         {AlertType::FIGHTING, "打架"},
         {AlertType::UNLICENSED_VENDOR, "无证摊贩"},
         {AlertType::PHOTOGRAPHER, "揽拍"}
+    };
+
+    enum class ActionRecongnitionType : uint8_t
+    {
+        ACTION_RECOGNITION_UNKNOWN = 0,
+        ACTION_RECOGNITION_POSE = 1, //使用姿态识别
+        ACTION_RECOGNITION_MODEL = 2,//使用模型识别
     };
 
     enum class AlertItemType : uint8_t
@@ -326,8 +334,20 @@ struct InferenceResultPacket : public BasePacket {
         PoseResult() : person_score(0.0f), matched_det_idx(-1) {}
     };
 
+    /**
+     * @brief 动作识别结果结构
+     */
+    struct ActionResult {
+        int track_id = -1;                    // 关联的目标ID
+        std::string action_label;             // 动作标签
+        float confidence = 0.0f;              // 置信度
+        int64_t timestamp_ms = 0;             // 时间戳
+        std::vector<float> action_scores;     // 所有类别的分数
+    };
+
     std::vector<BBox> detections;                       // 检测结果列表
     std::vector<PoseResult> pose_results;
+    std::vector<ActionResult> action_results;           // 动作识别结果
     std::shared_ptr<VideoFramePacket> source_frame;     // 关联的原始帧，用于后续画框等操作
     std::vector<rules::AlertResult> alert_result;
 };

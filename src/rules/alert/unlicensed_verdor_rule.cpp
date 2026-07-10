@@ -108,6 +108,10 @@ namespace ai_stream
                 {
                     it->second.status = AlertStatus::ALERT_STATUS_LAST;
                 }
+                if (it->second.status == AlertStatus::ALERT_STATUS_END)
+                {
+                    it->second.status = AlertStatus::ALERT_STATUS_DEFAULT;
+                }
                 if (it->second.duration_ms > alert_duration_ms_ && it->second.status == AlertStatus::ALERT_STATUS_DEFAULT)
                 {
                     // 生成一个告警id

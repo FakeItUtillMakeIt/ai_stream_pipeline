@@ -11,6 +11,7 @@
 #include "ai_stream/nodes/i_tracker_node.h"
 #include "ai_stream/nodes/i_draw_node.h"
 #include "ai_stream/nodes/i_preprocess_node.h"
+#include "ai_stream/nodes/i_action_recognition_node.h"
 #include "src/nodes/alert/alert_node.h"
 #include "src/rules/alert/alert_rule_factory.h"
 
@@ -110,10 +111,6 @@ namespace ai_stream
                     if (type.find("resize_normalize") != std::string::npos)
                     { 
                         auto preprocess_node = std::dynamic_pointer_cast<nodes::IPreprocessNode>(node);
-                        // std::vector<float> std = {0.229f, 0.224f, 0.225f};
-                        // std::vector<float> mean = {0.485f, 0.456f, 0.406f};
-                        // preprocess_node->setStd(std);
-                        // preprocess_node->setMean(mean);
                         if (params.contains("output_width") && params.contains("output_height"))
                         {
                             preprocess_node->setTargetSize(params["output_width"].get<int>(), params["output_height"].get<int>());
@@ -125,6 +122,14 @@ namespace ai_stream
                         if (params.contains("keep_aspect_ratio"))
                         {
                             preprocess_node->setKeepAspectRatio(params["keep_aspect_ratio"].get<bool>());
+                        }
+                        if (params.contains("mean"))
+                        {
+                            preprocess_node->setMean(params["mean"].get<std::vector<float>>());
+                        }
+                        if (params.contains("std"))
+                        {
+                            preprocess_node->setStd(params["std"].get<std::vector<float>>());
                         }
                     }
 
@@ -188,6 +193,43 @@ namespace ai_stream
                                 
                             }
 
+                        }
+                    }
+
+                    if (type.find("action_recognition") != std::string::npos)
+                    {
+                        auto action_node = std::dynamic_pointer_cast<nodes::IActionRecognitionNode>(node);
+                        if (action_node)
+                        {
+                            if (params.contains("input_height") && params.contains("input_width"))
+                            {
+                                action_node->setInputSize(params["input_height"].get<int>(), params["input_width"].get<int>());
+                            }
+                            if (params.contains("num_frames") && params.contains("frame_interval"))
+                            {
+                                action_node->setClipParams(params["num_frames"].get<int>(), params["frame_interval"].get<int>());
+                            }
+                            if (params.contains("window_size") && params.contains("stride"))
+                            {
+                                action_node->setSlidingWindow(params["window_size"].get<int>(), params["stride"].get<int>());
+                            }
+                            if (params.contains("action_labels") && params["action_labels"].is_array())
+                            {
+                                std::vector<std::string> labels = params["action_labels"].get<std::vector<std::string>>();
+                                action_node->setActionLabels(labels);
+                            }
+                            if (params.contains("confidence_threshold"))
+                            {
+                                action_node->setConfidenceThreshold(params["confidence_threshold"].get<float>());
+                            }
+                            if (params.contains("batch_size"))
+                            {
+                                action_node->setBatchSize(params["batch_size"].get<int>());
+                            }
+                            if (params.contains("model_path"))
+                            {
+                                action_node->setModelPath(params["model_path"].get<std::string>());
+                            }
                         }
                     }
 

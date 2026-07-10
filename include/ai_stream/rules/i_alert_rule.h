@@ -39,6 +39,7 @@ namespace ai_stream
             virtual RuleStatus rule_logic(
                 const std::shared_ptr<core::InferenceResultPacket> packet,
                 uint8_t zone_no, ZonePoints zone_points) = 0;
+            virtual void setActionRecognitionMode(ActionRecongnitionType type){action_recognition_mode_ = type;}
             std::string getTypeName(){return alertTypeMap[getType()];}
 
             std::map<uint8_t, AlertEvent> zone_alert_map_; // 区域告警事件
@@ -51,6 +52,7 @@ namespace ai_stream
             std::map<uint8_t, ZonePoints> valid_intrusion_zones_;
             mutable std::mutex mutex_;
             std::string alert_name_;
+            ActionRecongnitionType action_recognition_mode_ = ActionRecongnitionType::ACTION_RECOGNITION_UNKNOWN;
         };
 
         using AlertRulePtr = std::shared_ptr<IAlertRule>;
