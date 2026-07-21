@@ -71,6 +71,16 @@ find_package(nlohmann_json REQUIRED)
 find_package(OpenCV REQUIRED COMPONENTS core imgproc videoio)
 find_package(FFmpeg REQUIRED COMPONENTS avcodec avformat avutil swscale)
 
+# FTP上传依赖（可选）
+find_package(CURL QUIET)
+if(CURL_FOUND)
+    message(STATUS "Found CURL: ${CURL_LIBRARIES}")
+    set(WITH_FTP ON)
+else()
+    message(WARNING "CURL not found, FTP upload feature will be disabled")
+    set(WITH_FTP OFF)
+endif()
+
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     # 方法1：允许重复定义（快速修复）
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--allow-multiple-definition")

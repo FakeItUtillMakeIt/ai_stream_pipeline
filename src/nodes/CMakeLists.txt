@@ -116,8 +116,25 @@ if(WITH_ALERT)
     )
 
     target_link_libraries(ai_stream_nodes
-        
+         
         PRIVATE 
             nlohmann_json::nlohmann_json
+    )
+endif()
+
+# Evidence node
+add_subdirectory(evidence)
+target_include_directories(ai_stream_nodes
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/evidence
+)
+target_sources(ai_stream_nodes
+    PRIVATE
+        $<TARGET_OBJECTS:evidence_node>
+)
+if(WITH_FTP)
+    target_link_libraries(ai_stream_nodes
+        PRIVATE
+            CURL::libcurl
     )
 endif()
