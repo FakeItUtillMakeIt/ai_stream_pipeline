@@ -12,6 +12,7 @@
 #include "ai_stream/nodes/i_draw_node.h"
 #include "ai_stream/nodes/i_preprocess_node.h"
 #include "ai_stream/nodes/i_action_recognition_node.h"
+#include "ai_stream/nodes/i_evidence_node.h"
 #include "src/nodes/alert/alert_node.h"
 #include "src/rules/alert/alert_rule_factory.h"
 
@@ -62,9 +63,9 @@ namespace ai_stream
                     if (type.find("source") != std::string::npos)
                     {
                         auto source_node = std::dynamic_pointer_cast<nodes::ISourceNode>(node);
-                        source_node->setUrl(params["url"].get<std::string>());
+                        source_node->setUrl(params.value("url", ""));
                         source_node->setSourceId(id);
-                        source_node->setSkipFrames(params["skip_frames"].get<int>());
+                        source_node->setSkipFrames(params.value("skip_frames", 1));
                     }
 
                     if (type.find("decode") != std::string::npos)
@@ -358,6 +359,40 @@ namespace ai_stream
                                 }
                             }
                         }
+                    }
+
+                    if (type.find("evidence") != std::string::npos)
+                    {
+                        auto evidence_node = std::dynamic_pointer_cast<nodes::IEvidenceNode>(node); 
+                        if (!evidence_node)
+                        { 
+                            continue;
+                        }
+                        evidence_node->setVideoConfig(nodes::EvidenceVideoConfig{
+                            .enabled = params["video"].value("enabled", true),
+                            .pre_frames = params["video"].value("pre_frames", 10),
+                            .post_frames = params["video"].value("post_frames", 10),
+                            .fps = params["video"].value("fps", 30),
+                            .bitrate = params["video"].value("bitrate", 1000),
+                            .output_dir = params["video"].value("output_dir", "./")
+                        });
+                        evidence_node->setSnapshotConfig(nodes::EvidenceSnapshotConfig{
+                            .enabled = params["snapshot"].value("enabled", false),
+                            .output_dir = params["snapshot"].value("output_dir", "./"),
+                        });
+                        evidence_node->setRolloverConfig(nodes::EvidenceRolloverConfig{
+                            .enabled = params["rollover"].value("enabled", false),
+                            .retention_hours = static_cast<uint32_t>(params["rollover"].value("retention_hours", 24)),
+                            .check_interval_min = static_cast<uint32_t>(params["rollover"].value("check_interval_min", 60))
+                        });
+                        evidence_node->setFtpConfig(nodes::EvidenceFtpConfig{
+                            .enabled = params["ftp"].value("enabled", false),
+                            .server = params["ftp"].value("server", ""),
+                            .port = params["ftp"].value("port", 21),
+                            .username = params["ftp"].value("username", ""),
+                            .password = params["ftp"].value("password", ""),
+                            .remote_dir = params["ftp"].value("remote_dir", ""),
+                        });
                     }
 
                     if (type.find("sink") != std::string::npos || type.find("save") != std::string::npos)

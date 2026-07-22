@@ -4,9 +4,18 @@
 #include <curl/curl.h>
 #include <filesystem>
 #include <fstream>
+#include <cstdio>
 
 namespace ai_stream {
 namespace nodes {
+
+static size_t readCallback(char* buffer, size_t size, size_t nitems, void* userdata) {
+    auto* file = static_cast<std::ifstream*>(userdata);
+    if (!file || !file->is_open()) return CURL_READFUNC_ABORT;
+
+    file->read(buffer, static_cast<std::streamsize>(size * nitems));
+    return static_cast<size_t>(file->gcount());
+}
 
 FtpUploader::FtpUploader() = default;
 
@@ -123,6 +132,7 @@ bool FtpUploader::uploadFile(const std::string& local_path) {
     curl_easy_setopt(curl, CURLOPT_USERNAME, config_.username.c_str());
     curl_easy_setopt(curl, CURLOPT_PASSWORD, config_.password.c_str());
     curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
+    curl_easy_setopt(curl, CURLOPT_READFUNCTION, readCallback);
     curl_easy_setopt(curl, CURLOPT_READDATA, &file);
     curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, static_cast<curl_off_t>(file_size));
     curl_easy_setopt(curl, CURLOPT_FTP_CREATE_MISSING_DIRS, CURLFTP_CREATE_DIR);

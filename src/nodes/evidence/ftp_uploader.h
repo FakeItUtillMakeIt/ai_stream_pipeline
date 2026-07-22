@@ -44,7 +44,7 @@ private:
     std::atomic<bool> stop_flag_{false};
 
     std::queue<std::string> upload_queue_;
-    std::mutex queue_mutex_;
+    mutable std::mutex queue_mutex_;
     std::condition_variable queue_cv_;
     std::thread worker_;
 

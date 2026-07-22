@@ -149,13 +149,13 @@ std::vector<rules::AlertResult> AlertNode::process_all_alerts_sequence(std::shar
         std::lock_guard<std::mutex> lock(mutex_);
         for (auto& rule : rules_) {
             rules::AlertResult alert_result = process_single_alert(rule, packet);
-            if (!alert_result.alert_events.empty()) {
-                for (const auto& e : alert_result.alert_events) {
-                    if (e.status == rules::AlertStatus::ALERT_STATUS_OCCUR) {
-                        saveSnapshot(infer, e);
-                    }
-                }
-            }
+            // if (!alert_result.alert_events.empty()) {
+            //     for (const auto& e : alert_result.alert_events) {
+            //         if (e.status == rules::AlertStatus::ALERT_STATUS_OCCUR) {
+            //             saveSnapshot(infer, e);
+            //         }
+            //     }
+            // }
             all_alert_results.push_back(alert_result);
         }
     }
