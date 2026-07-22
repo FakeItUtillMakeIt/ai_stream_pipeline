@@ -8,6 +8,21 @@
 - 帧缓冲和滑动窗口机制
 - TensorRT加速推理
 
+## 训练
+ run_train.sh
+1.conda activate videomae_fune 
+2.python3 tools/split_video.py #视频分割为clip
+3.python3 tools/prepare_dataset.py #准备数据集
+4.python tools/train/videomae_finetune.py \
+  --model_name $MODEL_DIR \
+  --data_dir $DATA_DIR \
+  --num_classes $NUM_CLASSES \
+  --output_dir $OUTPUT_DIR \
+  --num_epochs $NUM_EPOCHS \
+  --batch_size $BATCH_SIZE \
+  --fp16 2>&1 | tee $LOG_FILE
+5.python3 tools/validate.py #验证
+
 ## 模型文件
 
 训练完成后，需要将以下文件复制到项目目录：
