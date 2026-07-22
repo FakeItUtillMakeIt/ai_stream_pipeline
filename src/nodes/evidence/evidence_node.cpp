@@ -82,10 +82,20 @@ bool EvidenceNode::start() {
 }
 
 void EvidenceNode::stop() {
-    running_ = false;
+    if (!running_.exchange(false)) {
+        return;
+    }
 
-    if (recording_) {
-        stopRecording();
+    {
+        std::lock_guard<std::mutex> lock(pending_snapshot_mutex_);
+        pending_snapshot_event_.reset();
+    }
+
+    video_recorder_.stop();
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        recording_ = false;
     }
 
     video_rollover_.stop();
@@ -127,6 +137,8 @@ void EvidenceNode::handleFrame(std::shared_ptr<core::VideoFramePacket> frame) {
         frame_buffer_.push(frame);
     }
 
+    trySavePendingSnapshot(frame);
+
     if (recording_) {
         video_recorder_.enqueueFrame(frame);
         post_frame_count_++;
@@ -146,8 +158,9 @@ void EvidenceNode::handleAlertTrigger(std::shared_ptr<core::InferenceResultPacke
                 LOG_INFO_FMT("[EvidenceNode] Alert triggered: {} ({})",
                              event.alert_name, rules::alertTypeMap[event.alert_type]);
 
-                if (snapshot_config_.enabled && packet->source_frame) {
-                    saveSnapshotImage(packet->source_frame, event);
+                if (snapshot_config_.enabled) {
+                    std::lock_guard<std::mutex> lock(pending_snapshot_mutex_);
+                    pending_snapshot_event_ = event;
                 }
 
                 if (video_config_.enabled) {
@@ -155,6 +168,23 @@ void EvidenceNode::handleAlertTrigger(std::shared_ptr<core::InferenceResultPacke
                 }
             }
         }
+    }
+}
+
+void EvidenceNode::trySavePendingSnapshot(std::shared_ptr<core::VideoFramePacket> frame) {
+    if (!snapshot_config_.enabled || !frame || !frame->mat || frame->mat->empty()) return;
+
+    std::optional<rules::AlertEvent> event;
+    {
+        std::lock_guard<std::mutex> lock(pending_snapshot_mutex_);
+        if (pending_snapshot_event_) {
+            event = pending_snapshot_event_;
+            pending_snapshot_event_.reset();
+        }
+    }
+
+    if (event) {
+        saveSnapshotImage(frame, *event);
     }
 }
 
@@ -184,12 +214,15 @@ void EvidenceNode::startRecording(const rules::AlertEvent& event) {
 }
 
 void EvidenceNode::stopRecording() {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::string filepath;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!recording_) return;
+        filepath = video_recorder_.getCurrentFilePath();
+        recording_ = false;
+    }
 
-    if (!recording_) return;
-
-    std::string filepath = video_recorder_.getCurrentFilePath();
-    recording_ = false;
+    video_recorder_.stop();
 
     LOG_INFO_FMT("[EvidenceNode] Recording complete: {}", filepath);
 

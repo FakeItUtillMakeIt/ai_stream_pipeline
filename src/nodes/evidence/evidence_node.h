@@ -11,6 +11,7 @@
 #include <atomic>
 #include <mutex>
 #include <string>
+#include <optional>
 
 namespace ai_stream {
 namespace nodes {
@@ -40,6 +41,8 @@ private:
     void saveSnapshotImage(std::shared_ptr<core::VideoFramePacket> frame,
                            const rules::AlertEvent& event);
 
+    void trySavePendingSnapshot(std::shared_ptr<core::VideoFramePacket> frame);
+
     std::string generateFilename(const std::string& alert_name, const std::string& ext) const;
     std::string generateTimestamp() const;
 
@@ -60,6 +63,9 @@ private:
     std::atomic<bool> recording_{false};
     std::atomic<size_t> post_frame_count_{0};
     size_t post_frames_target_ = 40;
+
+    std::optional<rules::AlertEvent> pending_snapshot_event_;
+    std::mutex pending_snapshot_mutex_;
 
     mutable std::mutex mutex_;
 };

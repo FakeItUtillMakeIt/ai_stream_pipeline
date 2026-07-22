@@ -5,6 +5,7 @@
 #include <thread>
 #include <atomic>
 #include <mutex>
+#include <condition_variable>
 #include <chrono>
 
 namespace ai_stream {
@@ -36,7 +37,8 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<bool> stop_flag_{false};
     std::thread worker_;
-    mutable std::mutex mutex_;
+    std::mutex mutex_;
+    std::condition_variable cv_;
     size_t deleted_count_ = 0;
 };
 

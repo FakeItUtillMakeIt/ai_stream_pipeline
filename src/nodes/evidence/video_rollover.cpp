@@ -33,13 +33,13 @@ void VideoRollover::start() {
 }
 
 void VideoRollover::stop() {
-    if (!running_) return;
+    if (!running_.exchange(false)) return;
 
     stop_flag_ = true;
+    cv_.notify_all();
     if (worker_.joinable()) {
         worker_.join();
     }
-    running_ = false;
     LOG_INFO("[VideoRollover] Stopped");
 }
 
@@ -51,10 +51,9 @@ void VideoRollover::rolloverLoop() {
     while (!stop_flag_) {
         cleanupExpiredFiles();
 
-        auto interval = std::chrono::minutes(config_.check_interval_min);
-        std::mutex mtx;
-        std::unique_lock<std::mutex> lock(mtx);
-        std::condition_variable().wait_for(lock, interval, [this] { return stop_flag_.load(); });
+        std::unique_lock<std::mutex> lock(mutex_);
+        cv_.wait_for(lock, std::chrono::minutes(config_.check_interval_min),
+                     [this] { return stop_flag_.load(); });
     }
 }
 

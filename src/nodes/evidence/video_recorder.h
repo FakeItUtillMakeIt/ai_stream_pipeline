@@ -24,6 +24,7 @@ public:
     bool startRecording(const std::string& filename,
                        std::deque<std::shared_ptr<core::VideoFramePacket>> pre_frames);
     void enqueueFrame(std::shared_ptr<core::VideoFramePacket> frame);
+    void stop();
     bool isRecording() const;
     std::string getCurrentFilePath() const;
 

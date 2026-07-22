@@ -9,13 +9,7 @@ namespace nodes {
 VideoRecorder::VideoRecorder() = default;
 
 VideoRecorder::~VideoRecorder() {
-    stop_flag_ = true;
-    recording_ = false;
-    queue_cv_.notify_all();
-    if (encode_thread_.joinable()) {
-        encode_thread_.join();
-    }
-    closeEncoder();
+    stop();
 }
 
 bool VideoRecorder::initialize(const std::string& output_dir, int fps, int bitrate) {
@@ -39,7 +33,7 @@ bool VideoRecorder::initialize(const std::string& output_dir, int fps, int bitra
 bool VideoRecorder::startRecording(
     const std::string& filename,
     std::deque<std::shared_ptr<core::VideoFramePacket>> pre_frames) {
-    
+
     std::lock_guard<std::mutex> lock(mutex_);
 
     if (recording_) {
@@ -70,14 +64,14 @@ bool VideoRecorder::startRecording(
     stop_flag_ = false;
     pts_ = 0;
 
-    encode_thread_ = std::thread(&VideoRecorder::encodingLoop, this);
-
     for (auto& frame : pre_frames) {
         if (frame && frame->mat && !frame->mat->empty()) {
             encoder_->encodeFrame(frame->mat->data, frame->width, frame->height,
                                   static_cast<int>(frame->mat->step), pts_++);
         }
     }
+
+    encode_thread_ = std::thread(&VideoRecorder::encodingLoop, this);
 
     LOG_INFO_FMT("[VideoRecorder] Started recording: {} ({} pre-frames written)",
                  current_filepath_, pre_frames.size());
@@ -92,6 +86,27 @@ void VideoRecorder::enqueueFrame(std::shared_ptr<core::VideoFramePacket> frame) 
         frame_queue_.push(std::move(frame));
     }
     queue_cv_.notify_one();
+}
+
+void VideoRecorder::stop() {
+    if (stop_flag_.exchange(true)) {
+        return;
+    }
+
+    recording_ = false;
+    queue_cv_.notify_all();
+
+    if (encode_thread_.joinable()) {
+        encode_thread_.join();
+    }
+
+    if (encoder_) {
+        encoder_->flush();
+        encoder_->close();
+        encoder_.reset();
+    }
+
+    LOG_INFO_FMT("[VideoRecorder] Stopped recording: {}", current_filepath_);
 }
 
 bool VideoRecorder::isRecording() const {
