@@ -50,6 +50,7 @@ namespace rules
         FIGHTING = 12,
         UNLICENSED_VENDOR = 13,
         PHOTOGRAPHER = 14,
+        FIRE_LANE_OCCUPANCY = 15,
         ACTION_RECOGNITION = 100
     };
 
@@ -68,7 +69,8 @@ namespace rules
         {AlertType::CLAMBING, "climbing"},
         {AlertType::FIGHTING, "fighting"},
         {AlertType::UNLICENSED_VENDOR, "unlicensed_vendor"},
-        {AlertType::PHOTOGRAPHER, "photographer"}
+        {AlertType::PHOTOGRAPHER, "photographer"},
+        {AlertType::FIRE_LANE_OCCUPANCY, "fire_lane_occupancy"}
     };
 
     inline std::map<AlertType, std::string> alertTypeChMap = {
@@ -86,7 +88,8 @@ namespace rules
         {AlertType::CLAMBING, "攀爬"},
         {AlertType::FIGHTING, "打架"},
         {AlertType::UNLICENSED_VENDOR, "无证摊贩"},
-        {AlertType::PHOTOGRAPHER, "揽拍"}
+        {AlertType::PHOTOGRAPHER, "揽拍"},
+        {AlertType::FIRE_LANE_OCCUPANCY, "消防通道占用"}
     };
 
     enum class ActionRecongnitionType : uint8_t
