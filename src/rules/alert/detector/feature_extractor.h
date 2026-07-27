@@ -1,4 +1,4 @@
-// src/rules/alert/feature_extractor.h
+// src/rules/alert/detector/feature_extractor.h
 #pragma once
 
 #include <opencv2/core/mat.hpp>
@@ -23,24 +23,22 @@ public:
         FeatureVector feat;
         if (frame.empty()) return feat;
 
+        cv::Mat roi, mask;
         if (zone.size() < 3) {
-            cv::Mat mask = cv::Mat::ones(frame.rows, frame.cols, CV_8UC1) * 255;
-            feat.color_hist = extractColorHist(frame, mask);
-            feat.grad_hist = extractGradHist(frame, mask);
-            extractPixelStats(frame, mask, feat.mean, feat.stddev);
-            feat.valid = true;
-            return feat;
+            roi = frame;
+            mask = cv::Mat::ones(frame.rows, frame.cols, CV_8UC1) * 255;
+        } else {
+            mask = createZoneMask(frame.cols, frame.rows, zone);
+            frame.copyTo(roi, mask);
         }
 
-        cv::Mat mask = createZoneMask(frame.cols, frame.rows, zone);
-        cv::Mat roi;
-        frame.copyTo(roi, mask);
+        cv::Mat resized;
+        cv::resize(roi, resized, cv::Size(target_size_, target_size_), 0, 0, cv::INTER_LINEAR);
+        cv::Mat resized_mask;
+        cv::resize(mask, resized_mask, cv::Size(target_size_, target_size_), 0, 0, cv::INTER_NEAREST);
 
-        feat.color_hist = extractColorHist(roi, mask);
-        feat.grad_hist = extractGradHist(roi, mask);
-        extractPixelStats(roi, mask, feat.mean, feat.stddev);
+        extractFeatures(resized, resized_mask, feat);
         feat.valid = true;
-
         return feat;
     }
 
@@ -105,6 +103,8 @@ public:
     }
 
 private:
+    static constexpr int target_size_ = 256;
+
     static cv::Mat createZoneMask(int width, int height, const std::vector<PixelPoint>& zone) {
         cv::Mat mask = cv::Mat::zeros(height, width, CV_8UC1);
         std::vector<cv::Point> pts;
@@ -115,10 +115,17 @@ private:
         return mask;
     }
 
-    static std::vector<float> extractColorHist(const cv::Mat& roi, const cv::Mat& mask) {
-        cv::Mat hsv;
+    static void extractFeatures(const cv::Mat& roi, const cv::Mat& mask, FeatureVector& feat) {
+        cv::Mat hsv, gray;
         cv::cvtColor(roi, hsv, cv::COLOR_BGR2HSV);
+        cv::cvtColor(roi, gray, cv::COLOR_BGR2GRAY);
 
+        feat.color_hist = extractColorHist(hsv, mask);
+        feat.grad_hist = extractGradHist(gray, mask);
+        extractPixelStats(roi, mask, feat.mean, feat.stddev);
+    }
+
+    static std::vector<float> extractColorHist(const cv::Mat& hsv, const cv::Mat& mask) {
         int h_bins = 16, s_bins = 8;
         int hist_size[] = {h_bins, s_bins};
         float h_ranges[] = {0, 180};
@@ -130,38 +137,39 @@ private:
         cv::calcHist(&hsv, 1, channels, mask, hist, 2, hist_size, ranges);
         cv::normalize(hist, hist, 0, 1, cv::NORM_MINMAX);
 
-        std::vector<float> result(h_bins * s_bins);
-        for (int h = 0; h < h_bins; ++h) {
-            for (int s = 0; s < s_bins; ++s) {
-                result[h * s_bins + s] = hist.at<float>(h, s);
-            }
-        }
-        return result;
+        return std::vector<float>(hist.begin<float>(), hist.end<float>());
     }
 
-    static std::vector<float> extractGradHist(const cv::Mat& roi, const cv::Mat& mask) {
-        cv::Mat gray;
-        cv::cvtColor(roi, gray, cv::COLOR_BGR2GRAY);
-
+    static std::vector<float> extractGradHist(const cv::Mat& gray, const cv::Mat& mask) {
         cv::Mat grad_x, grad_y;
-        cv::Sobel(gray, grad_x, CV_32F, 1, 0);
-        cv::Sobel(gray, grad_y, CV_32F, 0, 1);
+        cv::Sobel(gray, grad_x, CV_16S, 1, 0, 1);
+        cv::Sobel(gray, grad_y, CV_16S, 0, 1, 1);
 
-        cv::Mat mag, angle;
-        cv::cartToPolar(grad_x, grad_y, mag, angle, true);
+        cv::Mat mag_f, angle_f;
+        cv::Mat mag_i, angle_i;
+        cv::convertScaleAbs(grad_x, grad_x);
+        cv::convertScaleAbs(grad_y, grad_y);
 
         int bins = 9;
         std::vector<float> hist(bins, 0.0f);
         float total = 0.0f;
 
+        cv::Mat grad_x_f, grad_y_f;
+        grad_x.convertTo(grad_x_f, CV_32F);
+        grad_y.convertTo(grad_y_f, CV_32F);
+
+        cv::Mat mag, angle;
+        cv::cartToPolar(grad_x_f, grad_y_f, mag, angle, true);
+
         for (int y = 0; y < gray.rows; ++y) {
+            const float* mag_row = mag.ptr<float>(y);
+            const float* angle_row = angle.ptr<float>(y);
+            const uchar* mask_row = mask.ptr<uchar>(y);
             for (int x = 0; x < gray.cols; ++x) {
-                if (mask.at<uchar>(y, x) == 0) continue;
-                float a = angle.at<float>(y, x);
-                float m = mag.at<float>(y, x);
-                int bin = static_cast<int>(a / 20.0f) % bins;
-                hist[bin] += m;
-                total += m;
+                if (mask_row[x] == 0) continue;
+                int bin = static_cast<int>(angle_row[x] / 20.0f) % bins;
+                hist[bin] += mag_row[x];
+                total += mag_row[x];
             }
         }
 
