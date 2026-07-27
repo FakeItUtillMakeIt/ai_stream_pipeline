@@ -108,11 +108,13 @@ if(WITH_ALERT)
     target_include_directories(ai_stream_nodes
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/alert
+            ${CMAKE_CURRENT_SOURCE_DIR}/../rules/alert
     )
 
     target_sources(ai_stream_nodes
         PRIVATE 
             $<TARGET_OBJECTS:alert_node>
+            $<TARGET_OBJECTS:alert_rules>
     )
 
     target_link_libraries(ai_stream_nodes

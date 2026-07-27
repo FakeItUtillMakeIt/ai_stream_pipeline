@@ -13,6 +13,7 @@
 #include "rules/alert/phone_call_rule.h"
 #include "rules/alert/sleeping_on_duty_rule.h"
 #include "rules/alert/smoking_rule.h"
+#include "rules/alert/fire_lane_occupancy_rule.h"
 
 #include "3rd_party/log_mgr/log_mgr.h"
 #include <opencv2/opencv.hpp>
