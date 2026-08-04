@@ -157,7 +157,7 @@ private:
     std::vector<std::string> class_names_ = {
         "person", "head", "helmet", "clothes_red", "clothes_gray",
         "clothes_yellow", "clothes_blue", "clothes_similar",
-        "clothes_reflective", "phone", "smoking", "fall",
+        "clothes_reflective", "phone", "smoking", "fall_down",
         "safety_belt", "sleeping", "toy", "pad", "camera", "ring_light"
     };
 

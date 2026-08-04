@@ -167,26 +167,17 @@ namespace ai_stream
                 }
             }
 
-            if (person_boxes.empty() || fall_down_boxes.empty())
+            if (person_boxes.empty() && fall_down_boxes.empty())
             {
                 return RuleStatus::RULE_STATUS_OK;
             }
             // 跌倒框中心是否在人体框中
-            for (const auto &detection : person_boxes)
+            for (const auto &fall_down_box : fall_down_boxes)
             {
-                std::vector<PixelPoint> person_zone{PixelPoint(detection.x, detection.y), PixelPoint(detection.x + detection.w, detection.y), PixelPoint(detection.x + detection.w, detection.y + detection.h), PixelPoint(detection.x, detection.y + detection.h)};
-                for (const auto &fall_down_box : fall_down_boxes)
-                {
-                    if (ZoneValidator::pointInPolygon(
-                            PixelPoint(fall_down_box.x + fall_down_box.w / 2, fall_down_box.y + fall_down_box.h / 2),
-                            person_zone))
-                    {
-                        person_fall_down_count++;
-                        fall_down_track_ids.push_back(detection.track_id);
-                        break;
-                    }
-                }
+                person_fall_down_count++;
+                fall_down_track_ids.push_back(fall_down_box.track_id);
             }
+            
             if (person_fall_down_count <= 0)
             {
                 return RuleStatus::RULE_STATUS_OK;
