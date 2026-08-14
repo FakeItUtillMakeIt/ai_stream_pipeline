@@ -85,14 +85,21 @@ public:
         // ============================================================
         std::vector<rules::AlertEvent> person_behaviors;
         std::vector<rules::AlertEvent> safety_items;
+        std::vector<rules::AlertEvent> scene_recognitions;
         
         for (const auto& alert : alert_results) {
             for (const auto& alert_event : alert.alert_events) { 
+                LOG_INFO_FMT("[IDrawNode] Alert: {}, Type: {}", alert_event.alert_name, static_cast<int>(alert_event.alert_type));
                 // 根据实际业务调整分类；示例：ALERT_UNKNOWN 归为劳保，其他为人员行为
-                if (alert_event.alert_type == rules::AlertType::ALERT_UNKNOWN) {
+                if (alert_event.alert_item_type == rules::AlertItemType::ITEM_SAFETY_ITEM) {
                     safety_items.push_back(alert_event);
-                } else {
+                }
+                else if(alert_event.alert_item_type == rules::AlertItemType::ITEM_PERSON_BEHAVIOR)
+                {
                     person_behaviors.push_back(alert_event);
+                }
+                else if (alert_event.alert_item_type == rules::AlertItemType::ITEM_SCENE_RECOGNITION){
+                    scene_recognitions.push_back(alert_event);
                 }
             }
         }
@@ -132,9 +139,11 @@ public:
         int total_lines = 0;
         int person_rows = static_cast<int>((person_behaviors.size() + 3 - 1) / 3);
         int safety_rows = static_cast<int>((safety_items.size() + 2 - 1) / 2);
+        int scene_rows = static_cast<int>((scene_recognitions.size() + 2 - 1) / 2);
 
         if (!person_behaviors.empty()) total_lines += person_rows + 2;
         if (!safety_items.empty())     total_lines += safety_rows + 2;
+        if (!scene_recognitions.empty()) total_lines += scene_rows + 2;
         if (total_lines == 0)          total_lines = 2;
 
         int logo_lines = (logo_area_h + line_height - 1) / line_height + 1;
@@ -232,8 +241,8 @@ public:
                 if (rules::alertTypeChMap.find(item.alert_type) != rules::alertTypeChMap.end()) {
                     text = rules::alertTypeChMap.at(item.alert_type);
                 } else {
-                    LOG_INFO_FMT("[OSDDraw] Unknown alert type: {}", static_cast<int>(item.alert_type));
-                    text = "Alert_" + std::to_string(static_cast<int>(item.alert_type));
+                    LOG_INFO_FMT("[OSDDraw] Unknown alert type: {}", static_cast<uint8_t>(item.alert_type));
+                    text = "Alert_" + std::to_string(static_cast<uint8_t>(item.alert_type));
                 }
                 
                 // 告警状态非默认时红色，否则绿色
@@ -264,6 +273,7 @@ public:
         //             person_behaviors.size(), safety_items.size());
         drawCategory(person_behaviors, "人员行为", 3, 8);
         drawCategory(safety_items, "劳保用品", 2, 12);
+        drawCategory(scene_recognitions, "场景识别", 2, 12);
 
         // ============================================================
         // 8. 半透明叠加到原图

@@ -24,6 +24,7 @@ namespace ai_stream
                 int64_t current_time_ms = 0) override;
 
             AlertType getType() const override { return AlertType::FIRE_LANE_OCCUPANCY; }
+            AlertItemType getAlertItemType() const override { return AlertItemType::ITEM_SCENE_RECOGNITION; }
             void reset() override;
             nlohmann::json getStatistics() const override;
 

@@ -23,6 +23,7 @@ namespace ai_stream
                 int64_t current_time_ms) override;
 
             AlertType getType() const override { return AlertType::FIGHTING; }
+            AlertItemType getAlertItemType() const override { return AlertItemType::ITEM_SCENE_RECOGNITION; }
             void reset() override;
             nlohmann::json getStatistics() const override;
 

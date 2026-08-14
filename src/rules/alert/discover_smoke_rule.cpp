@@ -1,5 +1,5 @@
 // src/rules/alert/discover_smoking_rule.cpp
-#include "discover_smoking_rule.h"
+#include "discover_smoke_rule.h"
 #include "alert_rule_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 
@@ -116,14 +116,13 @@ namespace ai_stream
                 {
                     // 生成一个告警id
                     it->second.status = AlertStatus::ALERT_STATUS_OCCUR;
+                    it->second.alert_item_type = getAlertItemType();
                     it->second.alert_name = getName();
                     it->second.alert_type = getType();
                 }
                 if (it->second.status != AlertStatus::ALERT_STATUS_DEFAULT && it->second.non_update_count == max_disappear_count_)
                 {
                     it->second.status = AlertStatus::ALERT_STATUS_END;
-                    it->second.alert_name = getName();
-                    it->second.alert_type = getType();
                 }
                 it->second.description = getName() + alert_status_map[it->second.status];
                 it++;
@@ -189,6 +188,6 @@ namespace ai_stream
             return RuleStatus::RULE_STATUS_OK;
         }
 
-        REGISTER_ALERT_RULE("discover_smoking", DiscoverSmokeRule)
+        REGISTER_ALERT_RULE("discover_smoke", DiscoverSmokeRule)
     }
 }

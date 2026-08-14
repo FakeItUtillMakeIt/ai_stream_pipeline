@@ -59,7 +59,10 @@ public:
     /**
      * @brief 获取或创建指定 stream_id 的解码器
      */
-    std::shared_ptr<DecoderContext> getDecoder(uint32_t stream_id, int codec_id = 0,bool use_hw = false);
+    std::shared_ptr<DecoderContext> getDecoder(uint32_t stream_id, int codec_id = 0,
+                                                bool use_hw = false,
+                                                const uint8_t* extradata = nullptr,
+                                                int extradata_size = 0);
 
     /**
      * @brief 释放指定 stream_id 的解码器
@@ -77,7 +80,9 @@ public:
     void clear();
 
 private:
-    std::shared_ptr<DecoderContext> createDecoder(int codec_id,bool use_hw=false);
+    std::shared_ptr<DecoderContext> createDecoder(int codec_id, bool use_hw=false,
+                                                  const uint8_t* extradata = nullptr,
+                                                  int extradata_size = 0);
     void destroyDecoder(std::shared_ptr<DecoderContext> ctx);
 
     std::unordered_map<uint32_t, std::shared_ptr<DecoderContext>> decoders_;

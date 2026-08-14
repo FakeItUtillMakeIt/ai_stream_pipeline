@@ -118,12 +118,11 @@ namespace ai_stream
                     it->second.status = AlertStatus::ALERT_STATUS_OCCUR;
                     it->second.alert_name = getName();
                     it->second.alert_type = getType();
+                    it->second.alert_item_type = getAlertItemType();
                 }
                 if (it->second.status != AlertStatus::ALERT_STATUS_DEFAULT && it->second.non_update_count == max_disappear_count_)
                 {
                     it->second.status = AlertStatus::ALERT_STATUS_END;
-                    it->second.alert_name = getName();
-                    it->second.alert_type = getType();
                 }
                 it->second.description = getName() + alert_status_map[it->second.status];
                 it++;

@@ -113,14 +113,14 @@ namespace rules
 
     enum class AlertItemType : uint8_t
     {
-        ITEM_UNKNOWN = 0,
+        ITEM_MASTER_UNKNOWN = 0,
         ITEM_PERSON_BEHAVIOR = 1,
         ITEM_SAFETY_ITEM = 2,
         ITEM_SCENE_RECOGNITION = 3
     };
 
     inline std::map<AlertType, AlertItemType> alertItemTypeMap = {
-        {AlertType::ALERT_UNKNOWN, AlertItemType::ITEM_UNKNOWN},
+        {AlertType::ALERT_UNKNOWN, AlertItemType::ITEM_MASTER_UNKNOWN},
         {AlertType::PERSON_INTRUSION, AlertItemType::ITEM_PERSON_BEHAVIOR},
         {AlertType::MISSING_HELMET, AlertItemType::ITEM_SAFETY_ITEM},
         {AlertType::MISSING_WORK_CLOTHES, AlertItemType::ITEM_SAFETY_ITEM},
@@ -172,6 +172,7 @@ namespace rules
 
         AlertLevel level;
         std::string alert_name;
+        AlertItemType alert_item_type;
         AlertType alert_type;
         std::string description;
         AlertStatus status;
@@ -265,10 +266,11 @@ struct BasePacket {
  */
 struct RawVideoPacket : public BasePacket {
     RawVideoPacket() { type = PacketType::RAW_VIDEO; }
-    
+
     std::vector<uint8_t> data;          // 编码数据缓冲区
     bool is_key_frame = false;          // 是否为关键帧
     int codec_id = 0;                   // 编码格式 ID（如 AV_CODEC_ID_H264）
+    std::vector<uint8_t> extradata;     // 编码器 extradata (SPS/PPS/VPS)
 };
 
 /**

@@ -34,6 +34,7 @@ namespace ai_stream
             virtual void setName(const std::string& name) {alert_name_=name;}
             virtual std::string getName() const { return alert_name_.empty()?alertTypeMap[getType()]:alert_name_; };
             virtual AlertType getType() const = 0;
+            virtual AlertItemType getAlertItemType() const = 0;
             virtual void reset() = 0;
             virtual nlohmann::json getStatistics() const = 0;
             virtual RuleStatus rule_logic(

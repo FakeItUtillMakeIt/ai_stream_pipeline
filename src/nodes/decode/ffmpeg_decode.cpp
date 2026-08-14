@@ -100,7 +100,9 @@ void FFmpegDecodeNode::pushData(std::shared_ptr<core::BasePacket> packet) {
     
     uint32_t stream_id = raw_pkt->stream_id;
 
-    auto decoder_ctx = pool_.getDecoder(stream_id, raw_pkt->codec_id, use_hw_);
+    auto decoder_ctx = pool_.getDecoder(stream_id, raw_pkt->codec_id, use_hw_,
+                                           raw_pkt->extradata.data(),
+                                           static_cast<int>(raw_pkt->extradata.size()));
     if (!decoder_ctx) {
         LOG_ERROR_FMT("[FFmpegDecode] Failed to get decoder for stream {}", stream_id);
         return;

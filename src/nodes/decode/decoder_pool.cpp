@@ -51,16 +51,19 @@ DecoderPool::~DecoderPool() {
     LOG_DEBUG_FMT("[DecoderPool] Destroyed");
 }
 
-std::shared_ptr<DecoderContext> DecoderPool::getDecoder(uint32_t stream_id, int codec_id, bool use_hw) {
+std::shared_ptr<DecoderContext> DecoderPool::getDecoder(uint32_t stream_id, int codec_id,
+                                                          bool use_hw,
+                                                          const uint8_t* extradata,
+                                                          int extradata_size) {
     std::lock_guard<std::mutex> lock(mutex_);
-    
+
     auto it = decoders_.find(stream_id);
     if (it != decoders_.end()) {
         return it->second;
     }
-    
+
     // 创建新的解码器
-    auto ctx = createDecoder(codec_id,use_hw);
+    auto ctx = createDecoder(codec_id, use_hw, extradata, extradata_size);
     if (ctx) {
         decoders_[stream_id] = ctx;
         LOG_INFO_FMT("[DecoderPool] Created decoder for stream_id={}, codec_id={}", stream_id, codec_id);
@@ -88,7 +91,9 @@ void DecoderPool::clear() {
     decoders_.clear();
 }
 
-std::shared_ptr<DecoderContext> DecoderPool::createDecoder(int codec_id, bool use_hw) {
+std::shared_ptr<DecoderContext> DecoderPool::createDecoder(int codec_id, bool use_hw,
+                                                              const uint8_t* extradata,
+                                                              int extradata_size) {
     auto ctx = std::make_shared<DecoderContext>();
     ctx->codec_id = codec_id;
     ctx->use_hw = use_hw;
@@ -125,9 +130,18 @@ std::shared_ptr<DecoderContext> DecoderPool::createDecoder(int codec_id, bool us
         return nullptr;
     }
     
+    if (extradata && extradata_size > 0) {
+        ctx->codec_ctx->extradata = (uint8_t*)av_mallocz(extradata_size + AV_INPUT_BUFFER_PADDING_SIZE);
+        if (ctx->codec_ctx->extradata) {
+            memcpy(ctx->codec_ctx->extradata, extradata, extradata_size);
+            ctx->codec_ctx->extradata_size = extradata_size;
+            LOG_INFO_FMT("[DecoderPool] Set extradata: {} bytes", extradata_size);
+        }
+    }
+
     if (ctx->use_hw) {
         // 初始化 CUDA 设备上下文
-        int ret = av_hwdevice_ctx_create(&ctx->hw_device_ctx, AV_HWDEVICE_TYPE_CUDA, 
+        int ret = av_hwdevice_ctx_create(&ctx->hw_device_ctx, AV_HWDEVICE_TYPE_CUDA,
                                           nullptr, nullptr, 0);
         if (ret < 0) {
             char errbuf[256];

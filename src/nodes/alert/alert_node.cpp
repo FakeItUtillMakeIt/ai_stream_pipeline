@@ -14,6 +14,10 @@
 #include "rules/alert/sleeping_on_duty_rule.h"
 #include "rules/alert/smoking_rule.h"
 #include "rules/alert/fire_lane_occupancy_rule.h"
+#include "rules/alert/discover_crystal_rule.h"
+#include "rules/alert/discover_visible_fire_rule.h"
+#include "rules/alert/discover_smoke_rule.h"
+#include "rules/alert/discover_hose_cutoff_rule.h"
 
 #include "3rd_party/log_mgr/log_mgr.h"
 #include <opencv2/opencv.hpp>
