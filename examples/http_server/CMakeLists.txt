@@ -19,6 +19,7 @@ if(TARGET ai_stream_core)
             PRIVATE
                 nlohmann_json::nlohmann_json
                 spdlog::spdlog
+                ${OpenCV_LIBS}
                 -Wl,--no-as-needed
                 ai_stream_nodes
                 ai_stream_core
@@ -30,6 +31,7 @@ if(TARGET ai_stream_core)
             PRIVATE
                 nlohmann_json::nlohmann_json
                 spdlog::spdlog
+                ${OpenCV_LIBS}
                 -Wl,--no-as-needed
                 ai_stream_nodes
                 ai_stream_core

@@ -1,7 +1,8 @@
 find_package(nlohmann_json REQUIRED)
 find_package(spdlog REQUIRED)
+find_package(OpenCV REQUIRED)
 
-add_executable(simple_detection 
+add_executable(simple_detection
     ${PROJECT_SOURCE_DIR}/3rd_party/log_mgr/log_mgr.cpp
     main.cpp
 )
@@ -13,6 +14,7 @@ if(TARGET ai_stream_core)
             PRIVATE
                 nlohmann_json::nlohmann_json
                 spdlog::spdlog
+                ${OpenCV_LIBS}
                 -Wl,--no-as-needed
                 ai_stream_nodes
                 ai_stream_core
@@ -24,6 +26,7 @@ if(TARGET ai_stream_core)
             PRIVATE
                 nlohmann_json::nlohmann_json
                 spdlog::spdlog
+                ${OpenCV_LIBS}
                 -Wl,--no-as-needed
                 ai_stream_nodes
                 ai_stream_core
