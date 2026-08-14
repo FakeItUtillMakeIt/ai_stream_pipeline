@@ -33,6 +33,7 @@ public:
     void setBatchSize(int batch_size) override;
     void setInputSize(int width, int height) override { input_width_ = width; input_height_ = height;}
     std::pair<int, int> getInputSize() const override;
+    void setClassNames(const std::vector<std::string>& names) override { class_names_ = names; }
     std::vector<std::string> getClassNames() const override;
 
     void setDetectorType(DetectorType type) override { detector_type_ = type; }

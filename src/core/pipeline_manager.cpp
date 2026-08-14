@@ -191,7 +191,11 @@ namespace ai_stream
                                         return false;
                                     }
                                 }
-                                
+                                if (detector_config.contains("model_class_names"))
+                                {
+                                    std::vector<std::string> class_names = detector_config.value("model_class_names", std::vector<std::string>{});
+                                    infer_node->setClassNames(class_names);
+                                }
                             }
 
                         }

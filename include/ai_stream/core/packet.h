@@ -51,6 +51,10 @@ namespace rules
         UNLICENSED_VENDOR = 13,
         PHOTOGRAPHER = 14,
         FIRE_LANE_OCCUPANCY = 15,
+        DISCOVER_CRYSTAL = 16,
+        DISCOVER_VISIBLE_FIRE = 17,
+        DISCOVER_SMOKE = 18,
+        DISCOVER_HOSE_CUTOFF = 19,
         ACTION_RECOGNITION = 100
     };
 
@@ -70,7 +74,11 @@ namespace rules
         {AlertType::FIGHTING, "fighting"},
         {AlertType::UNLICENSED_VENDOR, "unlicensed_vendor"},
         {AlertType::PHOTOGRAPHER, "photographer"},
-        {AlertType::FIRE_LANE_OCCUPANCY, "fire_lane_occupancy"}
+        {AlertType::FIRE_LANE_OCCUPANCY, "fire_lane_occupancy"},
+        {AlertType::DISCOVER_CRYSTAL, "discover_crystal"},
+        {AlertType::DISCOVER_VISIBLE_FIRE, "discover_visible_fire"},
+        {AlertType::DISCOVER_SMOKE, "discover_smoke"},
+        {AlertType::DISCOVER_HOSE_CUTOFF, "discover_hose_cutoff"}
     };
 
     inline std::map<AlertType, std::string> alertTypeChMap = {
@@ -89,7 +97,11 @@ namespace rules
         {AlertType::FIGHTING, "打架"},
         {AlertType::UNLICENSED_VENDOR, "无证摊贩"},
         {AlertType::PHOTOGRAPHER, "揽拍"},
-        {AlertType::FIRE_LANE_OCCUPANCY, "消防通道占用"}
+        {AlertType::FIRE_LANE_OCCUPANCY, "消防通道占用"},
+        {AlertType::DISCOVER_CRYSTAL, "发现结晶"},
+        {AlertType::DISCOVER_VISIBLE_FIRE, "发现火焰"},
+        {AlertType::DISCOVER_SMOKE, "发现烟雾"},
+        {AlertType::DISCOVER_HOSE_CUTOFF, "发现软管断流"}
     };
 
     enum class ActionRecongnitionType : uint8_t
@@ -104,6 +116,7 @@ namespace rules
         ITEM_UNKNOWN = 0,
         ITEM_PERSON_BEHAVIOR = 1,
         ITEM_SAFETY_ITEM = 2,
+        ITEM_SCENE_RECOGNITION = 3
     };
 
     inline std::map<AlertType, AlertItemType> alertItemTypeMap = {
@@ -121,7 +134,12 @@ namespace rules
         {AlertType::CLAMBING, AlertItemType::ITEM_PERSON_BEHAVIOR},
         {AlertType::FIGHTING, AlertItemType::ITEM_PERSON_BEHAVIOR},
         {AlertType::UNLICENSED_VENDOR, AlertItemType::ITEM_PERSON_BEHAVIOR},
-        {AlertType::PHOTOGRAPHER, AlertItemType::ITEM_PERSON_BEHAVIOR}
+        {AlertType::PHOTOGRAPHER, AlertItemType::ITEM_PERSON_BEHAVIOR},
+        {AlertType::FIRE_LANE_OCCUPANCY, AlertItemType::ITEM_SCENE_RECOGNITION},
+        {AlertType::DISCOVER_CRYSTAL, AlertItemType::ITEM_SCENE_RECOGNITION},
+        {AlertType::DISCOVER_VISIBLE_FIRE, AlertItemType::ITEM_SCENE_RECOGNITION},
+        {AlertType::DISCOVER_SMOKE, AlertItemType::ITEM_SCENE_RECOGNITION},
+        {AlertType::DISCOVER_HOSE_CUTOFF, AlertItemType::ITEM_SCENE_RECOGNITION}
     };
 
     enum class AlertStatus : uint8_t

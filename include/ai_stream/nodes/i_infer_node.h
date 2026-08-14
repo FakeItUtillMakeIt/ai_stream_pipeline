@@ -61,6 +61,12 @@ public:
     virtual std::pair<int, int> getInputSize() const = 0;
 
     /**
+     * @brief 设置模型类别名称列表
+     * @param names 类别名称列表
+     */
+    virtual void setClassNames(const std::vector<std::string>& names) = 0;
+
+    /**
      * @brief 获取模型类别名称列表
      */
     virtual std::vector<std::string> getClassNames() const = 0;
