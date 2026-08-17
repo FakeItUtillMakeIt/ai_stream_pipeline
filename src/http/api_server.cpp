@@ -41,13 +41,13 @@ void ApiServer::setupRoutes() {
     server_.Post("/api/v1/pipeline/stop", [this](const auto& req, auto& res) {
         handlePipelineStop(req, res);
     });
-    server_.Delete("/api/v1/pipeline/:id", [this](const auto& req, auto& res) {
+    server_.Delete("/api/v1/pipeline/delete", [this](const auto& req, auto& res) {
         handlePipelineDestroy(req, res);
     });
     server_.Get("/api/v1/pipeline/list", [this](const auto& req, auto& res) {
         handlePipelineList(req, res);
     });
-    server_.Get("/api/v1/pipeline/:id/status", [this](const auto& req, auto& res) {
+    server_.Post("/api/v1/pipeline/status", [this](const auto& req, auto& res) {
         handlePipelineStatus(req, res);
     });
 
@@ -63,7 +63,7 @@ void ApiServer::setupRoutes() {
     server_.Get("/api/v1/metrics", [this](const auto& req, auto& res) {
         handleMetricsJson(req, res);
     });
-    server_.Get("/api/v1/metrics/:pipeline_id", [this](const auto& req, auto& res) {
+    server_.Post("/api/v1/metrics", [this](const auto& req, auto& res) {
         handleMetricsPipeline(req, res);
     });
 }
@@ -203,7 +203,8 @@ void ApiServer::handlePipelineStop(const httplib::Request& req, httplib::Respons
 
 void ApiServer::handlePipelineDestroy(const httplib::Request& req, httplib::Response& res) {
     try {
-        std::string pipeline_id = req.path_params.at("id");
+        json body = json::parse(req.body);
+        std::string pipeline_id = body.value("id", "");
         
         std::lock_guard<std::mutex> lock(pipelines_mutex_);
         auto it = pipelines_.find(pipeline_id);
@@ -247,13 +248,15 @@ void ApiServer::handlePipelineList(const httplib::Request& /*req*/, httplib::Res
 
 void ApiServer::handlePipelineStatus(const httplib::Request& req, httplib::Response& res) {
     try {
-        std::string pipeline_id = req.path_params.at("id");
+        json body = json::parse(req.body);
+        std::string pipeline_id = body.value("id", "");
         
         std::lock_guard<std::mutex> lock(pipelines_mutex_);
         auto it = pipelines_.find(pipeline_id);
         if (it == pipelines_.end()) {
             res.status = 404;
-            res.set_content(R"({"error":"Pipeline not found"})", "application/json");
+            json response = {{"status", "error"}, {"message", "Pipeline not found"},{"id", pipeline_id}};
+            res.set_content(response.dump(), "application/json");
             return;
         }
 
@@ -320,7 +323,8 @@ void ApiServer::handleMetricsJson(const httplib::Request& /*req*/, httplib::Resp
 
 void ApiServer::handleMetricsPipeline(const httplib::Request& req, httplib::Response& res) {
     try{
-        std::string pipeline_id = req.path_params.at("pipeline_id");
+        json body = json::parse(req.body);
+        std::string pipeline_id = body.value("id", "");
 
         auto& mc = core::MetricsCollector::instance();
         auto nodes = mc.getPipelineMetrics(pipeline_id);
