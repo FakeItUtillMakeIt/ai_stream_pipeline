@@ -367,22 +367,20 @@ void GpuOSDDrawNode::pushData(std::shared_ptr<core::BasePacket> packet) {
 
         CUDA_CHECK(cudaStreamSynchronize(stream_));
 
-        new_frame->d_ptr = d_output;
-        new_frame->d_pitch = source_frame->d_bgr_pitch;
-        new_frame->is_gpu = true;
         cv::Mat cpu_mat(source_frame->d_bgr_height, source_frame->d_bgr_width, CV_8UC3);
         CUDA_CHECK(cudaMemcpy2D(cpu_mat.data, cpu_mat.step,
                                 d_output, source_frame->d_bgr_pitch,
                                 source_frame->d_bgr_width * 3, source_frame->d_bgr_height,
                                 cudaMemcpyDeviceToHost));
-        addPanel(cpu_mat, infer_result->alert_result); // 在快照上添加面板信息
+        cudaFree(d_output);
+        addPanel(cpu_mat, infer_result->alert_result);
         new_frame->mat = std::make_shared<cv::Mat>(cpu_mat.clone());
         new_frame->stream_id = infer_result->stream_id;
         new_frame->timestamp_ms = infer_result->timestamp_ms;
         new_frame->width = cpu_mat.cols;
         new_frame->height = cpu_mat.rows;
         new_frame->channels = cpu_mat.channels();
-        
+
         broadcast(new_frame);
         frame_count_++;
         if (snapshot_enabled_ && frame_count_ % snapshot_interval_ == 0) {
