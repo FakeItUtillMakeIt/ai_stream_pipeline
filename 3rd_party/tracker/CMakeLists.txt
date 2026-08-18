@@ -27,8 +27,8 @@ target_link_libraries(ocsort
         Eigen3::Eigen
 )
 
-# 添加头文件到目标（仅用于 IDE 显示，不影响编译）
-target_sources(ocsort INTERFACE ${OCSORT_HEADERS})
+# 注：头文件不加入 INTERFACE_SOURCES（会导致 install(EXPORT) 失败），
+# IDE 浏览可直接查看 3rd_party/tracker/OCSort 目录
 
 # ============================================================
 # ByteTrack 库（有源文件，编译为 SHARED）
@@ -47,9 +47,10 @@ add_library(bytetrack SHARED ${BYTETRACK_SOURCES} ${BYTETRACK_HEADERS})
 
 target_include_directories(bytetrack
     PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/ByteTrack
-        ${CMAKE_CURRENT_SOURCE_DIR}/ByteTrack/common
-        ${EIGEN3_INCLUDE_DIR}
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/ByteTrack>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/ByteTrack/common>
+        $<BUILD_INTERFACE:${EIGEN3_INCLUDE_DIR}>
+        $<INSTALL_INTERFACE:include>
 )
 
 target_link_libraries(bytetrack
@@ -65,4 +66,10 @@ target_compile_features(bytetrack PRIVATE cxx_std_14)
 set_target_properties(bytetrack PROPERTIES
     VERSION 1.0.0
     SOVERSION 1
+)
+
+# 安装头文件（供 INSTALL_INTERFACE 包含目录使用）
+install(DIRECTORY ByteTrack/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/ByteTrack
+    FILES_MATCHING PATTERN "*.h" PATTERN "*.hpp"
 )

@@ -1,17 +1,21 @@
 # cmake/ai_stream_pipelineConfig.cmake.in
 @PACKAGE_INIT@
 
+# 自定义 Find 模块（FindFFmpeg/FindTensorRT）随包安装
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
+
 include(CMakeFindDependencyMacro)
 find_dependency(spdlog)
 find_dependency(nlohmann_json)
-find_dependency(OpenCV COMPONENTS core imgproc)
+find_dependency(OpenCV COMPONENTS core imgproc videoio)
 find_dependency(FFmpeg COMPONENTS avcodec avformat avutil swscale)
+
+if(@WITH_TRACK@)
+    find_dependency(Eigen3)
+endif()
 
 if(@WITH_TENSORRT@)
     find_dependency(TensorRT)
-endif()
-if(@WITH_ONNX@)
-    find_dependency(ONNXRuntime)
 endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/ai_stream_pipelineTargets.cmake")
