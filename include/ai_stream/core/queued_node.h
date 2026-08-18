@@ -113,6 +113,9 @@ protected:
     // 派生类的实际处理逻辑，在 worker 线程中串行执行（原 pushData 逻辑迁移至此）
     virtual void processPacket(std::shared_ptr<BasePacket> packet) = 0;
 
+    // 队列空闲（pop 超时）时回调，用于周期性维护任务（如 fusion 的超时合并）
+    virtual void onIdle() {}
+
     // 生命周期钩子：资源初始化/释放（对应原 start/stop 中的非线程逻辑）
     virtual bool onStartup() { return true; }
     virtual void onShutdown() {}
@@ -126,7 +129,10 @@ private:
     void workerLoop() {
         while (this->running_.load()) {
             std::shared_ptr<BasePacket> packet;
-            if (!queue_.pop(packet, std::chrono::milliseconds(100))) continue;
+            if (!queue_.pop(packet, std::chrono::milliseconds(100))) {
+                onIdle();
+                continue;
+            }
             this->in_time_ms_ = utils::TimeUtil::currentTimeMs();
             processPacket(std::move(packet));
         }

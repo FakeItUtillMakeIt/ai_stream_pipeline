@@ -61,6 +61,9 @@ namespace ai_stream
                         return false;
                     }
 
+                    // 节点名统一为配置 id：日志/指标/producer_id 均以此区分同类节点实例
+                    node->setName(id);
+
                     nodes_[id] = node;
                     LOG_INFO_FMT("[Pipeline {}] Created node: {} (type: {})", id_, id, type);
                 }

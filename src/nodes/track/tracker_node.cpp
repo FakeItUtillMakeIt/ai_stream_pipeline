@@ -66,6 +66,7 @@ void TrackerNode::onShutdown() {
     if (tracker_) {
         tracker_->reset();
     }
+    track_class_names_.clear();
     LOG_INFO_FMT("[TrackerNode] Stopped");
 }
 
@@ -99,6 +100,30 @@ void TrackerNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
         
     // 执行跟踪
     auto tracks = tracker_->update(infer_result->detections);
+
+    // 为新轨迹绑定 class_name（按 IoU 找到产生该轨迹的检测框）。
+    // 轨迹身份与语义类别绑定后，匹配不再依赖 class_id（多模型 id 冲突安全）
+    for (const auto& track : tracks) {
+        if (track_class_names_.count(track.track_id)) continue;
+        float best_iou = 0.0f;
+        std::string best_name;
+        for (const auto& det : infer_result->detections) {
+            float ix1 = std::max(det.x, track.x);
+            float iy1 = std::max(det.y, track.y);
+            float ix2 = std::min(det.x + det.w, track.x + track.w);
+            float iy2 = std::min(det.y + det.h, track.y + track.h);
+            if (ix2 <= ix1 || iy2 <= iy1) continue;
+            float inter = (ix2 - ix1) * (iy2 - iy1);
+            float iou = inter / (det.w * det.h + track.w * track.h - inter);
+            if (iou > best_iou) {
+                best_iou = iou;
+                best_name = det.class_name;
+            }
+        }
+        if (best_iou > 0.3f) {
+            track_class_names_[track.track_id] = best_name;
+        }
+    }
     LOG_DEBUG_FMT("[TrackerNode] Tracks: {}", tracks.size());
     // 更新检测框的跟踪信息
     matchAndUpdateDetections(infer_result->detections, tracks);
@@ -145,8 +170,18 @@ void TrackerNode::matchAndUpdateDetections(
             float area_det = det.w * det.h;
             float area_track = track.w * track.h;
             float iou = intersection / (area_det + area_track - intersection);
-            
-            if (iou > 0.5f && track.class_id == det.class_id) {
+
+            // 类别匹配：优先按轨迹绑定的 class_name（多推理源融合场景下
+            // class_id 可能冲突），无绑定或名称缺失时回退 class_id 比较
+            bool class_match;
+            auto name_it = track_class_names_.find(track.track_id);
+            if (name_it != track_class_names_.end() && !name_it->second.empty() && !det.class_name.empty()) {
+                class_match = (name_it->second == det.class_name);
+            } else {
+                class_match = (track.class_id == det.class_id);
+            }
+
+            if (iou > 0.5f && class_match) {
                 det.track_id = track.track_id;
                 det.track_age = track.age;
                 det.track_active = track.active;

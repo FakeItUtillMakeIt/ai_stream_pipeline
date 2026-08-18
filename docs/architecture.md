@@ -98,12 +98,45 @@ worker 内自停已做 join 死锁防护。
 | DetectionPostProcessNode / GPU 版 | `detection_post` / `gpu_detection_post` | QueuedNode |
 | TrackerNode（OCSort/ByteTrack） | `tracker` | QueuedNode |
 | AlertNode | `alert` | QueuedNode（规则可并行 std::async） |
-| FusionNodeImpl | `fusion` | QueuedNode |
+| FusionNodeImpl | `fusion` | QueuedNode（双模式见下） |
 | OSDDrawNode / GpuOSDDrawNode | `osd_draw` / `gpu_osd_draw` | QueuedNode |
 | EvidenceNode | `evidence` | 同步轻分发（内部组件各自带队列） |
 | RTMPSinkNode / MP4SaveNode | `rtmp_sink` / `mp4_save` | 自持 BoundedQueue + 编码线程（drop_oldest） |
 
-## 4. 告警规则体系
+> 跟踪匹配说明：TrackerNode 将检测框关联到轨迹时，优先按轨迹绑定的 `class_name`
+> 匹配（轨迹诞生时按 IoU 绑定类别名），名称缺失时回退 `class_id` 比较。
+> 这保证了多推理源融合（class_id 可能冲突）场景下不会跨类别错配轨迹。
+
+## 4. 多推理源融合（Fusion）
+
+FusionNode 支持两种模式（`params.mode`）：
+
+**`action`（默认，原有行为）**：缓存动作识别结果，按时间戳阈值附加到检测包。
+
+**`detection_merge`**：同一视频流喂给多个推理节点时，按 `(stream_id, frame_id)`
+配对合并多路检测框：
+
+```json
+{
+  "mode": "detection_merge",
+  "detection_sources": ["infer1", "infer2"],
+  "class_offsets": { "infer2": 14 },
+  "wait_timeout_ms": 200,
+  "cross_nms": false
+}
+```
+
+- **来源识别**：依赖 `BasePacket.producer_id`（Node::broadcast 自动打戳为节点名，
+  Pipeline 构建时节点名统一为配置 id）
+- **帧配对**：全部来源到齐立即合并广播；超时（默认 200ms）广播部分合并，不阻塞后续帧
+- **类别处理**：`class_offsets` 可选（默认不重映射）；class_name 始终保留。
+  跟踪与告警均按 class_name 匹配，id 冲突不影响正确性；仅当下游有按 class_id
+  消费的环节（draw class_filter / detection_post NMS / pose_infer）时才需配置偏移
+- **跨源 NMS**：`cross_nms` 开关（默认关），同名类别框按 IoU 去重
+- 兼容动作融合：合并结果仍会附加时间戳匹配的动作识别缓存
+- STREAM_END：排空所有待合并帧后自停并转发
+
+## 5. 告警规则体系
 
 - `IAlertRule`（`include/ai_stream/rules/i_alert_rule.h`）：`initialize/process/reset/getStatistics`，
   支持多区域（`rule_zones`）与动作识别双模式（姿态/模型）
@@ -113,7 +146,7 @@ worker 内自停已做 join 死锁防护。
 - 具体规则 20+ 种（人员入侵、安全帽、吸烟、攀爬、打架、火焰/烟雾/结晶等场景识别），
   位于 `src/rules/alert/`，复杂检测器在 `src/rules/alert/detector/`
 
-## 5. 证据链（Evidence）
+## 6. 证据链（Evidence）
 
 `EvidenceNode` 接收告警结果与画框帧：
 - `FrameBuffer`：前 N 帧环形缓冲（pre_frames）
@@ -121,14 +154,14 @@ worker 内自停已做 join 死锁防护。
 - `VideoRollover`：按保留时长清理
 - `FtpUploader`：证据上传（BoundedQueue 阻塞策略，证据不丢弃，带重试）
 
-## 6. 指标与监控
+## 7. 指标与监控
 
 `MetricsCollector` 单例（`include/ai_stream/core/metrics.h`）：
 - 每节点 total/dropped/latency(min/max/avg/last)/fps 窗口统计
 - 系统级 GPU 显存/CPU/管道数（由 AsyncPipelineManager 监控线程喂入）
 - 输出：`/metrics`（Prometheus）、`/api/v1/metrics`（JSON）、`/api/v1/metrics`（POST 按管道查询）
 
-## 7. HTTP 服务（双模式）
+## 8. HTTP 服务（双模式）
 
 `ApiServer`（`src/http/api_server.*`）构造时选择模式（`http_server [host] [port] [--async]`）：
 

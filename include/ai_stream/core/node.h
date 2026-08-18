@@ -40,6 +40,9 @@ public:
 
     // 节点名称
     const std::string& getName() const { return name_; }
+
+    // 设置节点名称（Pipeline 构建时设为配置中的节点 id）
+    void setName(const std::string& name) { name_ = name; }
     
     // 添加下游节点 (一流多用的关键)
     void addDownstream(std::shared_ptr<Node> downstream) {

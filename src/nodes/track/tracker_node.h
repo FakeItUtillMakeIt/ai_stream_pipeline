@@ -6,6 +6,8 @@
 #include "base_tracker.h"
 #include <atomic>
 #include <memory>
+#include <string>
+#include <unordered_map>
 
 namespace ai_stream {
 namespace nodes {
@@ -43,6 +45,11 @@ private:
     std::string tracker_id_;
     ByteTrackConfig bytetrack_config_;
     TrackerPtr tracker_;
+
+    // track_id -> class_name 绑定（轨迹诞生时按 IoU 绑定，终身不变）。
+    // 用于按名称匹配：多推理源融合场景下不同模型的 class_id 可能冲突，
+    // 而轨迹身份与语义类别绑定才正确
+    std::unordered_map<int, std::string> track_class_names_;
 };
 
 } // namespace nodes

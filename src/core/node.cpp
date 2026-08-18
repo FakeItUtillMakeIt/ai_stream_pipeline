@@ -11,6 +11,8 @@ void Node::broadcast(std::shared_ptr<BasePacket> packet) {
     if (it != packet->cost_time_map.end()) {
         recordMetricsImpl(it->second, false);
     }
+    // 打戳生产者：下游可据此区分数据来源（如 fusion 区分多路推理结果）
+    packet->producer_id = name_;
     bool has_expired = false;
     for (auto& weak_down : downstreams_) {
         if (auto down = weak_down.lock()) {

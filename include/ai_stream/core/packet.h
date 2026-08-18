@@ -296,6 +296,7 @@ struct BasePacket {
     int64_t timestamp_ms = 0;          // 毫秒时间戳
     uint32_t stream_id = 0;            // 多流并行的关键：用于区分不同的源流
     std::string source_id;             // 可选的源标识符
+    std::string producer_id;           // 最近一次 broadcast 该包的节点名（用于下游区分数据来源）
     int64_t frame_id = 0;
     uint64_t cost_ms = 0;
     std::map<std::string,uint64_t> cost_time_map;

@@ -14,8 +14,9 @@ namespace nodes {
  * @brief 融合模式枚举
  */
 enum class FusionMode {
-    FRAME_LEVEL,    // 帧级别融合：动作识别结果附加到整个帧
-    OBJECT_LEVEL    // 目标级别融合：动作识别结果关联到特定目标（需要track_id）
+    FRAME_LEVEL,      // 帧级别融合：动作识别结果附加到整个帧
+    OBJECT_LEVEL,     // 目标级别融合：动作识别结果关联到特定目标（需要track_id）
+    DETECTION_MERGE   // 多推理源检测框融合：按 (stream_id, frame_id) 配对合并多路检测结果
 };
 
 /**
