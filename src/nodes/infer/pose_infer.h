@@ -2,7 +2,7 @@
 #pragma once
 
 #include "ai_stream/nodes/i_infer_node.h"
-#include "src/core/frame_queue.h"
+#include "ai_stream/core/bounded_queue.h"
 
 #include <NvInfer.h>
 #include <cuda_runtime_api.h>
@@ -104,7 +104,7 @@ private:
     int input_height_ = 640;
     int batch_size_ = 8;   // 单帧最大人数
     std::string precision_ = "fp16";
-    DetectorType detector_type_ = DetectorType::DETECTION;
+    DetectorType detector_type_ = DetectorType::POSE;
 
     // 过滤参数
     float conf_thresh_ = 0.25f;      // person 置信度阈值

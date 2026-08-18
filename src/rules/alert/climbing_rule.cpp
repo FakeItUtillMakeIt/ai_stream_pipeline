@@ -188,7 +188,7 @@ namespace ai_stream
                 for (const auto &action_result : packet->action_results)
                 {
                     LOG_INFO_FMT("ClimbingRule::rule_logic() action_result: track_id={}, action_label={}, confidence={}", action_result.track_id, action_result.action_label, action_result.confidence);
-                    if (action_result.action_label != alertTypeMap[AlertType::CLAMBING])
+                    if (action_result.action_label != alertTypeMap[AlertType::CLIMBING])
                         continue;
                     is_climbing = true;
                 }
@@ -224,6 +224,8 @@ namespace ai_stream
             return RuleStatus::RULE_STATUS_OK;
         }
 
+        REGISTER_ALERT_RULE("climbing", ClimbingRule)
+        // 兼容历史拼写错误的旧配置名
         REGISTER_ALERT_RULE("clambing", ClimbingRule)
     }
 }

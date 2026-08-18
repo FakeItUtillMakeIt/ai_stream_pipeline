@@ -29,6 +29,7 @@ bool FtpUploader::initialize(const FtpConfig& config) {
     curl_global_init(CURL_GLOBAL_DEFAULT);
     running_ = true;
     stop_flag_ = false;
+    upload_queue_.reset();
     worker_ = std::thread(&FtpUploader::uploadLoop, this);
 
     LOG_INFO_FMT("[FtpUploader] Initialized: server={}, port={}, remote_dir={}",
@@ -40,7 +41,7 @@ void FtpUploader::shutdown() {
     if (!running_) return;
 
     stop_flag_ = true;
-    queue_cv_.notify_all();
+    upload_queue_.stop();
     if (worker_.joinable()) {
         worker_.join();
     }
@@ -52,29 +53,25 @@ void FtpUploader::shutdown() {
 void FtpUploader::enqueue(const std::string& local_path) {
     if (!running_ || local_path.empty()) return;
 
-    {
-        std::lock_guard<std::mutex> lock(queue_mutex_);
-        upload_queue_.push(local_path);
+    // 证据文件不允许丢弃，队列满时阻塞等待（超时则报错）
+    if (!upload_queue_.push(local_path, std::chrono::seconds(5))) {
+        LOG_ERROR_FMT("[FtpUploader] Upload queue full, failed to enqueue: {}", local_path);
+        return;
     }
-    queue_cv_.notify_one();
     LOG_INFO_FMT("[FtpUploader] Enqueued: {}", local_path);
 }
 
 size_t FtpUploader::queueSize() const {
-    std::lock_guard<std::mutex> lock(queue_mutex_);
     return upload_queue_.size();
 }
 
 void FtpUploader::uploadLoop() {
-    while (!stop_flag_) {
+    while (true) {
         std::string local_path;
-        {
-            std::unique_lock<std::mutex> lock(queue_mutex_);
-            queue_cv_.wait(lock, [this] { return !upload_queue_.empty() || stop_flag_; });
-            if (stop_flag_ && upload_queue_.empty()) break;
-            if (upload_queue_.empty()) continue;
-            local_path = std::move(upload_queue_.front());
-            upload_queue_.pop();
+        if (!upload_queue_.pop(local_path, std::chrono::milliseconds(100))) {
+            // shutdown() 后队列排空则退出；运行中仅为超时，继续等待
+            if (stop_flag_) break;
+            continue;
         }
 
         if (!local_path.empty()) {

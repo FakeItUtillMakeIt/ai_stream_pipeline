@@ -10,27 +10,22 @@ namespace ai_stream
     namespace nodes
     {
 
-        FusionNodeImpl::FusionNodeImpl() : IFusionNode("Fusion") {}
+        FusionNodeImpl::FusionNodeImpl() : core::QueuedNode<IFusionNode>("Fusion") {}
 
-        bool FusionNodeImpl::start()
+        bool FusionNodeImpl::onStartup()
         {
-            running_ = true;
             LOG_INFO_FMT("[Fusion] Started with mode: {}",
                          fusion_mode_ == FusionMode::FRAME_LEVEL ? "FRAME_LEVEL" : "OBJECT_LEVEL");
             return true;
         }
 
-        void FusionNodeImpl::stop()
+        void FusionNodeImpl::onShutdown()
         {
-            running_ = false;
             LOG_INFO_FMT("[Fusion] Stopped");
         }
 
-        void FusionNodeImpl::pushData(std::shared_ptr<core::BasePacket> packet)
+        void FusionNodeImpl::processPacket(std::shared_ptr<core::BasePacket> packet)
         {
-            if (!running_)
-                return;
-
             auto result = std::dynamic_pointer_cast<core::InferenceResultPacket>(packet);
             if (!result)
             {

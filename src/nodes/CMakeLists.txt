@@ -8,8 +8,10 @@ set(NODES_SOURCES
     registry/node_registry.cpp
     decode/decoder_pool.cpp
     source/rtsp_source.cpp
+    source/file_source.cpp
     decode/ffmpeg_decode.cpp
     draw/osd_draw.cpp
+    draw/draw_panel.cpp
     sink/rtmp_sink.cpp
     sink/mp4_save.cpp
     sink/encoder_base.cpp

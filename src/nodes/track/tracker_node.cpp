@@ -10,7 +10,7 @@
 namespace ai_stream {
 namespace nodes {
 
-TrackerNode::TrackerNode() : ITrackerNode("TrackerNode") {
+TrackerNode::TrackerNode() : core::QueuedNode<ITrackerNode>("TrackerNode") {
     LOG_DEBUG("[TrackerNode] Constructor");
 }
 
@@ -49,29 +49,27 @@ int TrackerNode::getActiveTrackCount() const {
     return tracker_ ? tracker_->getActiveCount() : 0;
 }
 
-bool TrackerNode::start() {
+bool TrackerNode::onStartup() {
     // 通过工厂创建跟踪器
     tracker_ = TrackerFactory::instance().create(tracker_type_);
     if (!tracker_) {
         LOG_ERROR_FMT("[TrackerNode] Failed to create tracker");
         return false;
     }
-    
-    running_ = true;
-    LOG_INFO_FMT("[TrackerNode] Started with {} tracker", 
+
+    LOG_INFO_FMT("[TrackerNode] Started with {} tracker",
                  tracker_type_ == TrackerType::OCSORT ? "OCSORT" : "BYTETRACK");
     return true;
 }
 
-void TrackerNode::stop() {
-    running_ = false;
+void TrackerNode::onShutdown() {
     if (tracker_) {
         tracker_->reset();
     }
     LOG_INFO_FMT("[TrackerNode] Stopped");
 }
 
-void TrackerNode::pushData(std::shared_ptr<core::BasePacket> packet) {
+void TrackerNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
     if (packet->type == core::PacketType::STREAM_END)
     {
         LOG_INFO_FMT("[Tracker] Received stream end");
@@ -80,8 +78,7 @@ void TrackerNode::pushData(std::shared_ptr<core::BasePacket> packet) {
         return;
     }
     in_time_ms_ = utils::TimeUtil::currentTimeMs();
-    if (!running_) return;
-    
+
     if (packet->type != core::PacketType::META_DATA) {
         broadcast(packet);
         return;

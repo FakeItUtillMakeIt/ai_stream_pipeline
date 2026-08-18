@@ -2,6 +2,7 @@
 #pragma once
 
 #include "ai_stream/core/node.h"
+#include "3rd_party/log_mgr/log_mgr.h"
 #include <string>
 #include <vector>
 
@@ -82,6 +83,32 @@ public:
      * @return 检测器类型枚举值
      */
     virtual DetectorType getDetectorType() const = 0;
+
+    bool configure(const std::string& node_id, const nlohmann::json& params) override {
+        (void)node_id;
+        if (!params.contains("detector_config")) {
+            return true;
+        }
+        const auto& detector_config = params["detector_config"];
+        if (detector_config.contains("input_size")) {
+            const auto& input_size = detector_config["input_size"];
+            setInputSize(input_size.value("width", 640), input_size.value("height", 640));
+        }
+        if (detector_config.contains("batch_size")) {
+            setBatchSize(detector_config["batch_size"].get<int>());
+        }
+        if (detector_config.contains("model_path")) {
+            std::string model_path = detector_config["model_path"].get<std::string>();
+            if (!loadModel(model_path)) {
+                LOG_ERROR_FMT("[IInferNode] Failed to load model: {}", model_path);
+                return false;
+            }
+        }
+        if (detector_config.contains("model_class_names")) {
+            setClassNames(detector_config["model_class_names"].get<std::vector<std::string>>());
+        }
+        return true;
+    }
 };
 
 } // namespace nodes

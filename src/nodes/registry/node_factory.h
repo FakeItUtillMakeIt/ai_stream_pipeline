@@ -29,24 +29,16 @@ public:
     }
 
     std::shared_ptr<Node> create(const std::string& type, const nlohmann::json& params) {
-        if (auto logger = spdlog::get("ai_stream")) {
-            LOG_INFO_FMT("[NodeFactory] Creating node type: {}", type);
-            LOG_INFO_FMT("[NodeFactory] Registered node types count: {}", creators_.size());
-            for (const auto& [key, value] : creators_) {
-                LOG_INFO_FMT("[NodeFactory]   Registered: {}", key);
-            }
-        }
-
         auto it = creators_.find(type);
         if (it != creators_.end()) {
-            if (auto logger = spdlog::get("ai_stream")) {
-                LOG_INFO_FMT("[NodeFactory] Found creator for type: {}", type);
-            }
             return it->second(params);
         }
 
         if (auto logger = spdlog::get("ai_stream")) {
-            LOG_ERROR_FMT("[NodeFactory] Node type not found: {}", type);
+            LOG_ERROR_FMT("[NodeFactory] Node type not found: {} (registered types: {})", type, creators_.size());
+            for (const auto& [key, value] : creators_) {
+                LOG_DEBUG_FMT("[NodeFactory]   Registered: {}", key);
+            }
         }
         return nullptr;
     }
@@ -70,8 +62,10 @@ public:
 } // namespace ai_stream
 
 // 注册宏 - 放在匿名命名空间中，避免符号冲突
-// 每个 .cpp 文件只有一个注册，使用固定名称即可
+// 变量名按行号拼接，支持同一 .cpp 文件内注册多个节点
+#define NODE_REGISTRAR_VAR_IMPL(line) _node_registrar_##line
+#define NODE_REGISTRAR_VAR(line) NODE_REGISTRAR_VAR_IMPL(line)
 #define REGISTER_NODE(type, full_class_name) \
     namespace { \
-        static ai_stream::core::NodeRegistrar<full_class_name> _node_registrar(type); \
+        static ai_stream::core::NodeRegistrar<full_class_name> NODE_REGISTRAR_VAR(__LINE__)(type); \
     }

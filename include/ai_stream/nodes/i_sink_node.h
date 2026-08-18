@@ -2,6 +2,7 @@
 #pragma once
 
 #include "ai_stream/core/node.h"
+#include "3rd_party/log_mgr/log_mgr.h"
 #include <string>
 
 namespace ai_stream {
@@ -41,6 +42,17 @@ public:
      * @brief 获取当前输出是否连接正常（仅对网络流有效）
      */
     virtual bool isConnected() const = 0;
+
+    bool configure(const std::string& node_id, const nlohmann::json& params) override {
+        std::string output_url = params.value("output_url", "");
+        if (output_url.empty()) {
+            LOG_ERROR_FMT("[ISinkNode] Node '{}' missing required param 'output_url'", node_id);
+            return false;
+        }
+        setTarget(output_url);
+        setOutputSize(params.value("output_width", 0), params.value("output_height", 0));
+        return true;
+    }
 };
 
 } // namespace nodes

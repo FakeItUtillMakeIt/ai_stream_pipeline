@@ -55,7 +55,7 @@ __global__ void nmsKernel(float* boxes, float* scores, int* class_ids,
 } // namespace
 
 GPUDetectionPostProcessNode::GPUDetectionPostProcessNode()
-    : IGpuPostprocessNode("GPUDetectionPostProcess"),
+    : core::QueuedNode<IGpuPostprocessNode>("GPUDetectionPostProcess"),
       device_id_(0),
       batch_size_(1),
       stream_(nullptr),
@@ -91,25 +91,16 @@ GPUDetectionPostProcessNode::~GPUDetectionPostProcessNode() {
     LOG_INFO_FMT("[GPUDetectionPostProcess] Node destroyed");
 }
 
-bool GPUDetectionPostProcessNode::start() {
-    if (!IGpuPostprocessNode::start()) {
-        return false;
-    }
-
+bool GPUDetectionPostProcessNode::onStartup() {
     if (!stream_) {
         CUDA_CHECK_BOOL(cudaStreamCreate(&stream_));
     }
 
-    running_ = true;
     LOG_INFO_FMT("[GPUDetectionPostProcess] Node started");
     return true;
 }
 
-void GPUDetectionPostProcessNode::stop() {
-    if (!running_) return;
-
-    running_ = false;
-
+void GPUDetectionPostProcessNode::onShutdown() {
     if (stream_) {
         cudaStreamSynchronize(stream_);
     }
@@ -117,15 +108,11 @@ void GPUDetectionPostProcessNode::stop() {
     LOG_INFO_FMT("[GPUDetectionPostProcess] Node stopped");
 }
 
-void GPUDetectionPostProcessNode::pushData(std::shared_ptr<core::BasePacket> packet) {
+void GPUDetectionPostProcessNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
     if (packet->type == core::PacketType::STREAM_END)
     {
         LOG_INFO_FMT("[GpuDetectionPostProcess] Received stream end");
         stop();
-        broadcast(packet);
-        return;
-    }
-    if (!running_) {
         broadcast(packet);
         return;
     }

@@ -2,6 +2,7 @@
 #pragma once
 
 #include "ai_stream/nodes/i_gpu_postprocess_node.h"
+#include "ai_stream/core/queued_node.h"
 
 namespace ai_stream {
 namespace nodes {
@@ -12,16 +13,15 @@ namespace nodes {
  * 使用 CUDA 实现高性能的 NMS、置信度过滤等后处理操作。
  * 适合大规模推理场景。
  */
-class GPUDetectionPostProcessNode : public IGpuPostprocessNode {
+class GPUDetectionPostProcessNode : public core::QueuedNode<IGpuPostprocessNode> {
 public:
     GPUDetectionPostProcessNode();
     ~GPUDetectionPostProcessNode() override;
 
-    // Node 接口
-    bool start() override;
-    void stop() override;
-    bool isRunning() const override{return running_.load();}
-    void pushData(std::shared_ptr<core::BasePacket> packet) override;
+    // QueuedNode 接口
+    void processPacket(std::shared_ptr<core::BasePacket> packet) override;
+    bool onStartup() override;
+    void onShutdown() override;
 
     // IPostprocessNode 接口
     void setConfidenceThreshold(float threshold){conf_thresh_ = threshold;}

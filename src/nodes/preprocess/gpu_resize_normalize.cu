@@ -33,7 +33,7 @@ __global__ void normalizeKernel(float* dst, const unsigned char* src,
 } // namespace
 
 GPUResizeNormalizeNode::GPUResizeNormalizeNode()
-    : IGpuPreprocessNode("GPUResizeNormalize"),
+    : core::QueuedNode<IGpuPreprocessNode>("GPUResizeNormalize"),
       device_id_(0),
       async_processing_(false),
       stream_(nullptr),
@@ -78,26 +78,17 @@ GPUResizeNormalizeNode::~GPUResizeNormalizeNode() {
     LOG_INFO_FMT("[GPUResizeNormalize] Node destroyed");
 }
 
-bool GPUResizeNormalizeNode::start() {
-    if (!IGpuPreprocessNode::start()) {
-        return false;
-    }
-
+bool GPUResizeNormalizeNode::onStartup() {
     // 创建 CUDA 流（如果未设置）
     if (!stream_) {
         CUDA_CHECK_BOOL(cudaStreamCreate(&stream_));
     }
 
-    running_ = true;
     LOG_INFO_FMT("[GPUResizeNormalize] Node started");
     return true;
 }
 
-void GPUResizeNormalizeNode::stop() {
-    if (!running_) return;
-
-    running_ = false;
-
+void GPUResizeNormalizeNode::onShutdown() {
     // 同步所有 CUDA 操作
     if (stream_) {
         cudaStreamSynchronize(stream_);
@@ -106,15 +97,11 @@ void GPUResizeNormalizeNode::stop() {
     LOG_INFO_FMT("[GPUResizeNormalize] Node stopped");
 }
 
-void GPUResizeNormalizeNode::pushData(std::shared_ptr<core::BasePacket> packet) {
+void GPUResizeNormalizeNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
     if (packet->type == core::PacketType::STREAM_END)
     {
         LOG_INFO_FMT("[GpuResizeNormalize] Received stream end");
         stop();
-        broadcast(packet);
-        return;
-    }
-    if (!running_) {
         broadcast(packet);
         return;
     }

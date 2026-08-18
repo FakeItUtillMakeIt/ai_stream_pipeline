@@ -26,7 +26,7 @@
 namespace ai_stream {
 namespace nodes {
 
-AlertNode::AlertNode() : core::Node("AlertNode") {
+AlertNode::AlertNode() : core::QueuedNode<core::Node>("AlertNode") {
     LOG_INFO("[AlertNode] Constructor");
 }
 
@@ -35,9 +35,8 @@ AlertNode::~AlertNode() {
     LOG_DEBUG("[AlertNode] Destructor");
 }
 
-bool AlertNode::start() {
+bool AlertNode::onStartup() {
     std::lock_guard<std::mutex> lock(mutex_);
-    running_ = true;
     if (!snapshot_dir_.empty()) {
         std::filesystem::create_directories(snapshot_dir_);
     }
@@ -45,16 +44,43 @@ bool AlertNode::start() {
     return true;
 }
 
-void AlertNode::stop() {
-    running_ = false;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        for (auto& r : rules_) r->reset();
-    }
+void AlertNode::onShutdown() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& r : rules_) r->reset();
     LOG_INFO("[AlertNode] Stopped");
 }
 
-void AlertNode::pushData(std::shared_ptr<core::BasePacket> packet) {
+bool AlertNode::configureImpl(const std::string& node_id, const nlohmann::json& params) {
+    if (params.contains("process_type")) {
+        enable_parallel_ = (params["process_type"].get<std::string>() == "parallel");
+    }
+
+    if (!params.contains("rules") || !params["rules"].is_array()) {
+        return true;
+    }
+
+    for (const auto& rule_cfg : params["rules"]) {
+        std::string alert_type = rule_cfg.value("type", "");
+        if (alert_type.empty()) {
+            LOG_ERROR_FMT("[AlertNode {}] Alert rule missing 'type'", node_id);
+            continue;
+        }
+        try {
+            auto rule = rules::AlertRuleFactory::instance().create(alert_type);
+            if (rule == nullptr) {
+                LOG_ERROR_FMT("[AlertNode {}] No factory found for alert rule type: {}", node_id, alert_type);
+                continue;
+            }
+            rule->initialize(rule_cfg.value("params", nlohmann::json::object()));
+            addRule(rule);
+        } catch (const std::exception& e) {
+            LOG_ERROR_FMT("[AlertNode {}] Exception while creating alert rule: {}", node_id, e.what());
+        }
+    }
+    return true;
+}
+
+void AlertNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
     if (packet->type == core::PacketType::STREAM_END)
     {
         LOG_INFO_FMT("[Alert] Received stream end");
@@ -62,13 +88,13 @@ void AlertNode::pushData(std::shared_ptr<core::BasePacket> packet) {
         broadcast(packet);
         return;
     }
-    
 
-    if (!running_) return;
     if (packet->type != core::PacketType::META_DATA) return;
 
     auto infer_packet = std::dynamic_pointer_cast<core::InferenceResultPacket>(packet);
-    auto all_alert_results =process_all_alerts_sequence(infer_packet);
+    auto all_alert_results = enable_parallel_.load()
+        ? process_all_alerts_parallel(infer_packet)
+        : process_all_alerts_sequence(infer_packet);
     for (auto& r : all_alert_results) {
         if (r.alert_events.empty()) continue;
         for (auto& e : r.alert_events) {

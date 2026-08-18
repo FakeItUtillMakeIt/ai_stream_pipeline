@@ -2,13 +2,14 @@
 #pragma once
 
 #include "ai_stream/nodes/i_draw_node.h"
+#include "ai_stream/core/queued_node.h"
 #include <opencv2/core/mat.hpp>
 #include <opencv2/freetype.hpp>
 
 namespace ai_stream {
 namespace nodes {
 
-class OSDDrawNode : public IDrawNode {
+class OSDDrawNode : public core::QueuedNode<IDrawNode> {
 public:
     OSDDrawNode();
     ~OSDDrawNode() override = default;
@@ -19,11 +20,9 @@ public:
     void setShowConfidence(bool show) override;
     void setClassFilter(const std::vector<int>& class_ids) override;
 
-    // Node 接口
-    bool start() override;
-    void stop() override {}
-    bool isRunning() const override{return running_.load();}
-    void pushData(std::shared_ptr<core::BasePacket> packet) override;
+    // QueuedNode 接口
+    void processPacket(std::shared_ptr<core::BasePacket> packet) override;
+    bool onStartup() override;
     void setSnapshotEnabled(bool enabled) override;
     void setSnapshotInterval(int interval) override;
     void setSnapshotDir(const std::string& dir) override;

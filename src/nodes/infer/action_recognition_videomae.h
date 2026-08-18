@@ -2,6 +2,7 @@
 #pragma once
 
 #include "ai_stream/nodes/i_action_recognition_node.h"
+#include "ai_stream/core/queued_node.h"
 #include <NvInfer.h>
 #include <cuda_runtime_api.h>
 #include <opencv2/opencv.hpp>
@@ -19,7 +20,7 @@ namespace nodes {
  * 使用轻量化VideoMAE模型进行动作识别
  * 支持帧缓冲和滑动窗口机制
  */
-class ActionRecognitionVideoMAENode : public IActionRecognitionNode {
+class ActionRecognitionVideoMAENode : public core::QueuedNode<IActionRecognitionNode> {
 public:
     struct Config {
         std::string model_path;           // 模型路径
@@ -37,11 +38,11 @@ public:
     ActionRecognitionVideoMAENode();
     explicit ActionRecognitionVideoMAENode(const Config& cfg);
     ~ActionRecognitionVideoMAENode();
-    
-    // Node接口实现
-    bool start() override;
-    void stop() override;
-    void pushData(std::shared_ptr<core::BasePacket> packet) override;
+
+    // QueuedNode接口实现
+    void processPacket(std::shared_ptr<core::BasePacket> packet) override;
+    bool onStartup() override;
+    void onShutdown() override;
     
     // IActionRecognitionNode接口实现
     void setModelPath(const std::string& model_path) override;

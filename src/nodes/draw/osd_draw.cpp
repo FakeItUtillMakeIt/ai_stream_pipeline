@@ -10,7 +10,7 @@
 namespace ai_stream {
 namespace nodes {
 
-OSDDrawNode::OSDDrawNode() : IDrawNode("OSDDraw") {
+OSDDrawNode::OSDDrawNode() : core::QueuedNode<IDrawNode>("OSDDraw") {
     m_ft2_ = cv::freetype::createFreeType2();
 }
 
@@ -30,7 +30,7 @@ void OSDDrawNode::setClassFilter(const std::vector<int>& class_ids) {
     class_filter_ = class_ids;
 }
 
-bool OSDDrawNode::start()
+bool OSDDrawNode::onStartup()
 {
     // 如果启用了快照，创建保存目录
     if (snapshot_enabled_) {
@@ -50,7 +50,7 @@ bool OSDDrawNode::start()
     return true;
 }
 
-void OSDDrawNode::pushData(std::shared_ptr<core::BasePacket> packet) {
+void OSDDrawNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
     if (packet->type == core::PacketType::STREAM_END)
     {
         LOG_INFO_FMT("[OSDDraw] Received stream end");

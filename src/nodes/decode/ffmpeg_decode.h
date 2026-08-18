@@ -2,6 +2,7 @@
 #pragma once
 
 #include "ai_stream/nodes/i_decode_node.h"
+#include "ai_stream/core/queued_node.h"
 #include "decoder_pool.h"
 #include <atomic>
 #include <string>
@@ -10,7 +11,7 @@
 namespace ai_stream {
 namespace nodes {
 
-class FFmpegDecodeNode : public IDecodeNode {
+class FFmpegDecodeNode : public core::QueuedNode<IDecodeNode> {
 public:
     FFmpegDecodeNode();
     ~FFmpegDecodeNode() override;
@@ -20,11 +21,10 @@ public:
     void setOutputBGR(bool enable) override;
     size_t getActiveDecoderCount() const override;
 
-    // Node 接口
-    bool start() override;
-    void stop() override;
-    bool isRunning() const override{return running_.load();}
-    void pushData(std::shared_ptr<core::BasePacket> packet) override;
+    // QueuedNode 接口
+    void processPacket(std::shared_ptr<core::BasePacket> packet) override;
+    bool onStartup() override;
+    void onShutdown() override;
 
     // 快照配置
     void setSnapshotEnabled(bool enabled) override;
@@ -43,7 +43,6 @@ private:
     DecoderPool pool_;
     std::string decoder_type_ = "h264";
     bool output_bgr_ = true;
-    std::atomic<bool> running_{false};
 
     // 快照配置
     std::atomic<bool> snapshot_enabled_{false};

@@ -3,6 +3,7 @@
 #pragma once
 
 #include "ai_stream/nodes/i_draw_node.h"
+#include "ai_stream/core/queued_node.h"
 #include <opencv2/core/mat.hpp>
 #include <cuda_runtime.h>
 #include <opencv2/freetype.hpp>
@@ -16,7 +17,7 @@ namespace nodes {
  * 使用 CUDA 在 GPU 上直接绘制边界框和文本，避免 CPU-GPU 数据传输。
  * 适合高帧率、高分辨率的视频流处理。
  */
-class GpuOSDDrawNode : public IDrawNode {
+class GpuOSDDrawNode : public core::QueuedNode<IDrawNode> {
 public:
     GpuOSDDrawNode();
     ~GpuOSDDrawNode() override;
@@ -27,11 +28,10 @@ public:
     void setShowConfidence(bool show) override;
     void setClassFilter(const std::vector<int>& class_ids) override;
 
-    // Node 接口
-    bool start() override;
-    void stop() override;
-    bool isRunning() const override { return running_.load(); }
-    void pushData(std::shared_ptr<core::BasePacket> packet) override;
+    // QueuedNode 接口
+    void processPacket(std::shared_ptr<core::BasePacket> packet) override;
+    bool onStartup() override;
+    void onShutdown() override;
     void setSnapshotEnabled(bool enabled) override;
     void setSnapshotInterval(int interval) override;
     void setSnapshotDir(const std::string& dir) override;

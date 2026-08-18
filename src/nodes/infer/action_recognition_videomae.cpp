@@ -16,8 +16,7 @@ namespace ai_stream {
 namespace nodes {
 
 ActionRecognitionVideoMAENode::ActionRecognitionVideoMAENode()
-    : cfg_{} {
-    name_ = "ActionRecognitionVideoMAE";
+    : core::QueuedNode<IActionRecognitionNode>("ActionRecognitionVideoMAE"), cfg_{} {
     // 默认配置：3分类（climbing, fighting, other）
     cfg_.action_labels = {"climbing", "fighting", "other"};
     cfg_.confidence_threshold = 0.7f;
@@ -31,8 +30,7 @@ ActionRecognitionVideoMAENode::ActionRecognitionVideoMAENode()
 }
 
 ActionRecognitionVideoMAENode::ActionRecognitionVideoMAENode(const Config& cfg)
-    : cfg_(cfg) {
-    name_ = "ActionRecognitionVideoMAE";
+    : core::QueuedNode<IActionRecognitionNode>("ActionRecognitionVideoMAE"), cfg_(cfg) {
     LOG_INFO_FMT("[ActionRecognitionVideoMAE] Constructor, model: {}, input_size: {}x{}, num_frames: {}, frame_interval: {}, window_size: {}, stride: {}, confidence_threshold: {}, batch_size: {}",
         cfg_.model_path, cfg_.input_width, cfg_.input_height, cfg_.num_frames, cfg_.frame_interval,
         cfg_.window_size, cfg_.stride, cfg_.confidence_threshold, cfg_.batch_size);
@@ -42,20 +40,17 @@ ActionRecognitionVideoMAENode::~ActionRecognitionVideoMAENode() {
     stop();
 }
 
-bool ActionRecognitionVideoMAENode::start() {
+bool ActionRecognitionVideoMAENode::onStartup() {
     if (!loadModel()) {
         LOG_ERROR_FMT("Failed to load action recognition model");
         return false;
     }
     is_initialized_ = true;
-    running_ = true;
     LOG_INFO_FMT("[ActionRecognitionVideoMAE] Started");
     return true;
 }
 
-void ActionRecognitionVideoMAENode::stop() {
-    running_ = false;
-    
+void ActionRecognitionVideoMAENode::onShutdown() {
     // 释放GPU资源
     if (device_input_) {
         cudaFree(device_input_);
@@ -74,7 +69,7 @@ void ActionRecognitionVideoMAENode::stop() {
     LOG_INFO_FMT("[ActionRecognitionVideoMAE] Stopped");
 }
 
-void ActionRecognitionVideoMAENode::pushData(std::shared_ptr<core::BasePacket> packet) {
+void ActionRecognitionVideoMAENode::processPacket(std::shared_ptr<core::BasePacket> packet) {
     if (!is_initialized_) return;
     
     in_time_ms_ = utils::TimeUtil::currentTimeMs();

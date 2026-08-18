@@ -12,7 +12,7 @@ namespace ai_stream
     namespace nodes
     {
 
-        DetectionPostProcessNode::DetectionPostProcessNode() : IPostprocessNode("DetectionPostProcess"),
+        DetectionPostProcessNode::DetectionPostProcessNode() : core::QueuedNode<IPostprocessNode>("DetectionPostProcess"),
                                                                conf_thresh_(0.5f), nms_thresh_(0.4f), max_detections_(100),
                                                                track_id_enabled_(false), postprocess_type_("detection")
         {
@@ -52,7 +52,7 @@ namespace ai_stream
             }
         } // namespace
 
-        void DetectionPostProcessNode::pushData(std::shared_ptr<core::BasePacket> packet)
+        void DetectionPostProcessNode::processPacket(std::shared_ptr<core::BasePacket> packet)
         {
             if (packet->type == core::PacketType::STREAM_END)
             {

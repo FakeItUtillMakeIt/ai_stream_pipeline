@@ -2,22 +2,20 @@
 #pragma once
 
 #include "ai_stream/nodes/i_postprocess_node.h"
+#include "ai_stream/core/queued_node.h"
 
 namespace ai_stream
 {
     namespace nodes
     {
 
-        class DetectionPostProcessNode : public IPostprocessNode
+        class DetectionPostProcessNode : public core::QueuedNode<IPostprocessNode>
         {
         public:
             DetectionPostProcessNode();
             ~DetectionPostProcessNode();
 
-            bool start() override { return true; }
-            void stop() override {}
-            bool isRunning() const override{return running_.load();}
-            void pushData(std::shared_ptr<core::BasePacket> packet) override;
+            void processPacket(std::shared_ptr<core::BasePacket> packet) override;
 
             // 配置参数
             void setConfidenceThreshold(float threshold) { conf_thresh_ = threshold; }

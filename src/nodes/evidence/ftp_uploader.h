@@ -1,11 +1,10 @@
 // src/nodes/evidence/ftp_uploader.h
 #pragma once
 
+#include "ai_stream/core/bounded_queue.h"
 #include <string>
-#include <queue>
 #include <thread>
 #include <mutex>
-#include <condition_variable>
 #include <atomic>
 
 namespace ai_stream {
@@ -43,9 +42,8 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<bool> stop_flag_{false};
 
-    std::queue<std::string> upload_queue_;
-    mutable std::mutex queue_mutex_;
-    std::condition_variable queue_cv_;
+    // 上传任务队列（证据文件不允许丢弃，满时阻塞等待）
+    core::BoundedQueue<std::string> upload_queue_{1024};
     std::thread worker_;
 
     size_t uploaded_count_ = 0;

@@ -291,8 +291,10 @@ bool EncoderBase::encodeFrame(const uint8_t* data, int width, int height,
 }
 
 void EncoderBase::flush() {
-    if (!initialized_ || !fmt_ctx_ ||!codec_ctx_ || closed_.load()) return;
-    
+    // flushed_ 保证幂等：close() 内部与外部（如 VideoRecorder）可能各调一次，
+    // 且 close() 已先置 closed_，故不能以 closed_ 作为提前返回条件
+    if (!initialized_ || !fmt_ctx_ || !codec_ctx_ || flushed_.exchange(true)) return;
+
     LOG_INFO("[EncoderBase] Flushing encoder...");
     
     // 发送空帧冲刷编码器

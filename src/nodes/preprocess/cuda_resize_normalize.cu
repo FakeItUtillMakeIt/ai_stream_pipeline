@@ -145,7 +145,7 @@ __global__ void letterboxResizeNormalizeKernel(
 } // anonymous namespace
 
 CudaResizeNormalizeNode::CudaResizeNormalizeNode()
-    : IGpuPreprocessNode("CudaResizeNormalize"),
+    : core::QueuedNode<IGpuPreprocessNode>("CudaResizeNormalize"),
       device_id_(0),
       async_processing_(false),
       stream_(nullptr),
@@ -194,23 +194,16 @@ void CudaResizeNormalizeNode::setStd(const std::vector<float>& std) {
     LOG_INFO_FMT("[CudaResizeNormalize] Std set to: {},{},{}", std_[0], std_[1], std_[2]);
 }
 
-bool CudaResizeNormalizeNode::start() {
-    if (!IGpuPreprocessNode::start()) return false;
-
+bool CudaResizeNormalizeNode::onStartup() {
     if (!stream_) {
         CUDA_CHECK_BOOL(cudaStreamCreate(&stream_));
     }
 
-    running_ = true;
     LOG_INFO_FMT("[CudaResizeNormalize] Node started");
     return true;
 }
 
-void CudaResizeNormalizeNode::stop() {
-    if (!running_) return;
-
-    running_ = false;
-
+void CudaResizeNormalizeNode::onShutdown() {
     if (stream_) {
         cudaStreamSynchronize(stream_);
     }
@@ -235,16 +228,10 @@ void CudaResizeNormalizeNode::ensureGpuBuffers(int src_w, int src_h, int dst_w, 
     }
 }
 
-void CudaResizeNormalizeNode::pushData(std::shared_ptr<core::BasePacket> packet) {
+void CudaResizeNormalizeNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
     if (packet->type == core::PacketType::STREAM_END) {
         LOG_INFO_FMT("[CudaResizeNormalize] Received stream end");
         stop();
-        broadcast(packet);
-        return;
-    }
-
-    if (!running_) {
-        LOG_INFO_FMT("[CudaResizeNormalize] Node is not running");
         broadcast(packet);
         return;
     }

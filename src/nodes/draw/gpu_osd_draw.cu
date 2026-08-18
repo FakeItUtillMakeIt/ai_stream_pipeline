@@ -236,7 +236,7 @@ __global__ void drawKeypointsBatchKernel(
 
 } // anonymous namespace
 
-GpuOSDDrawNode::GpuOSDDrawNode() : IDrawNode("GpuOSDDraw") {
+GpuOSDDrawNode::GpuOSDDrawNode() : core::QueuedNode<IDrawNode>("GpuOSDDraw") {
     int device_count;
     cudaGetDeviceCount(&device_count);
     if (device_count > 0) {
@@ -253,6 +253,7 @@ GpuOSDDrawNode::GpuOSDDrawNode() : IDrawNode("GpuOSDDraw") {
 }
 
 GpuOSDDrawNode::~GpuOSDDrawNode() {
+    stop();
     if (stream_) cudaStreamDestroy(stream_);
     cudaEventDestroy(start_event_);
     cudaEventDestroy(stop_event_);
@@ -275,7 +276,7 @@ void GpuOSDDrawNode::setClassFilter(const std::vector<int>& class_ids) {
     class_filter_ = class_ids;
 }
 
-bool GpuOSDDrawNode::start() {
+bool GpuOSDDrawNode::onStartup() {
     if (!stream_) {
         CUDA_CHECK_BOOL(cudaStreamCreate(&stream_));
     }
@@ -293,21 +294,19 @@ bool GpuOSDDrawNode::start() {
         }
     }
 
-    running_ = true;
     LOG_INFO_FMT("[GpuOSDDraw] Started (snapshot: {}, interval: {})",
                  snapshot_enabled_.load(), snapshot_interval_.load());
     return true;
 }
 
-void GpuOSDDrawNode::stop() {
-    running_ = false;
+void GpuOSDDrawNode::onShutdown() {
     if (stream_) {
         cudaStreamSynchronize(stream_);
     }
     LOG_INFO_FMT("[GpuOSDDraw] Stopped");
 }
 
-void GpuOSDDrawNode::pushData(std::shared_ptr<core::BasePacket> packet) {
+void GpuOSDDrawNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
     if (packet->type == core::PacketType::STREAM_END) {
         LOG_INFO_FMT("[GpuOSDDraw] Received stream end");
         stop();

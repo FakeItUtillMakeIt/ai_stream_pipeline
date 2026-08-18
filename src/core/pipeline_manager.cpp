@@ -3,18 +3,8 @@
 #include "ai_stream/core/pipeline.h"
 #include "nodes/registry/node_factory.h" // 内部工厂头文件
 #include <nlohmann/json.hpp>
-
-#include "ai_stream/nodes/i_decode_node.h"
-#include "ai_stream/nodes/i_sink_node.h"
-#include "ai_stream/nodes/i_source_node.h"
-#include "ai_stream/nodes/i_infer_node.h"
-#include "ai_stream/nodes/i_tracker_node.h"
-#include "ai_stream/nodes/i_draw_node.h"
-#include "ai_stream/nodes/i_preprocess_node.h"
-#include "ai_stream/nodes/i_action_recognition_node.h"
-#include "ai_stream/nodes/i_evidence_node.h"
-#include "src/nodes/alert/alert_node.h"
-#include "src/rules/alert/alert_rule_factory.h"
+#include <queue>
+#include <unordered_map>
 
 namespace ai_stream
 {
@@ -28,10 +18,8 @@ namespace ai_stream
 
         bool Pipeline::buildFromJson(const nlohmann::json &config)
         {
-
             try
             {
-
                 // 1. 解析节点配置并创建实例
                 if (!config.contains("nodes") || !config["nodes"].is_array())
                 {
@@ -53,6 +41,12 @@ namespace ai_stream
                         return false;
                     }
 
+                    if (nodes_.find(id) != nodes_.end())
+                    {
+                        LOG_ERROR_FMT("[Pipeline {}] Duplicate node id: {}", id_, id);
+                        return false;
+                    }
+
                     auto node = NodeFactory::instance().create(type, params);
                     if (!node)
                     {
@@ -60,364 +54,19 @@ namespace ai_stream
                         return false;
                     }
 
-                    if (type.find("source") != std::string::npos)
+                    // 节点自行解析参数（模型加载等初始化也在此完成）
+                    if (!node->configure(id, params))
                     {
-                        auto source_node = std::dynamic_pointer_cast<nodes::ISourceNode>(node);
-                        source_node->setUrl(params.value("url", ""));
-                        source_node->setSourceId(id);
-                        source_node->setSkipFrames(params.value("skip_frames", 1));
+                        LOG_ERROR_FMT("[Pipeline {}] Failed to configure node: {} (type: {})", id_, id, type);
+                        return false;
                     }
 
-                    if (type.find("decode") != std::string::npos)
-                    {
-                        auto decode_node = std::dynamic_pointer_cast<nodes::IDecodeNode>(node);
-                        if (decode_node)
-                        {
-                            // 原有配置
-                            if (params.contains("codec"))
-                            {
-                                decode_node->setDecoderType(params["codec"].get<std::string>());
-                            }
-                            if (params.contains("output_bgr"))
-                            {
-                                decode_node->setOutputBGR(params["output_bgr"].get<bool>());
-                            }
-                            if (params.contains("hw_decoder"))
-                            {
-                                decode_node->setHwDecodeEnabled(params["hw_decoder"].get<bool>());
-                            }
-
-                            // 快照配置
-                            if (params.contains("snapshot"))
-                            {
-                                LOG_INFO_FMT("decode config:{}",params.dump());
-                                auto &snapshot_cfg = params["snapshot"];
-
-                                if (snapshot_cfg.contains("enabled"))
-                                {
-                                    decode_node->setSnapshotEnabled(snapshot_cfg["enabled"].get<bool>());
-                                }
-                                if (snapshot_cfg.contains("interval"))
-                                {
-                                    decode_node->setSnapshotInterval(snapshot_cfg["interval"].get<int>());
-                                }
-                                if (snapshot_cfg.contains("dir"))
-                                {
-                                    decode_node->setSnapshotDir(snapshot_cfg["dir"].get<std::string>());
-                                }
-                            }
-                        }
-                    }
-                    
-                    if (type.find("resize_normalize") != std::string::npos)
-                    { 
-                        auto preprocess_node = std::dynamic_pointer_cast<nodes::IPreprocessNode>(node);
-                        if (params.contains("output_width") && params.contains("output_height"))
-                        {
-                            preprocess_node->setTargetSize(params["output_width"].get<int>(), params["output_height"].get<int>());
-                        }
-                        else
-                        {
-                            preprocess_node->setTargetSize(640, 640);
-                        }
-                        if (params.contains("keep_aspect_ratio"))
-                        {
-                            preprocess_node->setKeepAspectRatio(params["keep_aspect_ratio"].get<bool>());
-                        }
-                        if (params.contains("mean"))
-                        {
-                            preprocess_node->setMean(params["mean"].get<std::vector<float>>());
-                        }
-                        if (params.contains("std"))
-                        {
-                            preprocess_node->setStd(params["std"].get<std::vector<float>>());
-                        }
-                    }
-
-                    if (type.find("infer") != std::string::npos)
-                    {
-                        auto infer_node = std::dynamic_pointer_cast<nodes::IInferNode>(node);
-                        if (infer_node)
-                        {
-                            // 根据具体类型设置检测器类型
-                            if (type == "detection_infer")
-                            {
-                                infer_node->setDetectorType(nodes::DetectorType::DETECTION);
-                            }
-                            else if (type == "segmentation_infer")
-                            {
-                                infer_node->setDetectorType(nodes::DetectorType::SEGMENTATION);
-                            }
-                            else if (type == "classification_infer")
-                            {
-                                infer_node->setDetectorType(nodes::DetectorType::CLASSIFICATION);
-                            }
-                            else if (type == "pose_infer")
-                            {
-                                infer_node->setDetectorType(nodes::DetectorType::POSE);
-                            }
-                            else
-                            {
-                                // 默认设置为检测器类型
-                                infer_node->setDetectorType(nodes::DetectorType::DETECTION);
-                            }
-
-                            // 加载模型
-                            if(params.contains("detector_config"))
-                            {
-                                nlohmann::json detector_config = params["detector_config"];
-                                if (detector_config.contains("input_size"))
-                                {
-                                    auto input_size = detector_config["input_size"];
-                                    if (input_size.contains("width") && input_size.contains("height"))
-                                    {
-                                        infer_node->setInputSize(input_size["width"].get<int>(), input_size["height"].get<int>());
-                                    }
-                                    else
-                                    {
-                                        infer_node->setInputSize(640, 640);
-                                    }
-                                }
-                                if(detector_config.contains("batch_size"))
-                                {
-                                    infer_node->setBatchSize(detector_config["batch_size"].get<int>());
-                                }
-                                if (detector_config.contains("model_path"))
-                                {
-                                    std::string model_path = detector_config["model_path"].get<std::string>();
-                                    if (!infer_node->loadModel(model_path))
-                                    {
-                                        LOG_ERROR_FMT("[Pipeline {}] Failed to load model: {}", id_, model_path);
-                                        return false;
-                                    }
-                                }
-                                if (detector_config.contains("model_class_names"))
-                                {
-                                    std::vector<std::string> class_names = detector_config.value("model_class_names", std::vector<std::string>{});
-                                    infer_node->setClassNames(class_names);
-                                }
-                            }
-
-                        }
-                    }
-
-                    if (type.find("action_recognition") != std::string::npos)
-                    {
-                        auto action_node = std::dynamic_pointer_cast<nodes::IActionRecognitionNode>(node);
-                        if (action_node)
-                        {
-                            if (params.contains("input_height") && params.contains("input_width"))
-                            {
-                                action_node->setInputSize(params["input_height"].get<int>(), params["input_width"].get<int>());
-                            }
-                            if (params.contains("num_frames") && params.contains("frame_interval"))
-                            {
-                                action_node->setClipParams(params["num_frames"].get<int>(), params["frame_interval"].get<int>());
-                            }
-                            if (params.contains("window_size") && params.contains("stride"))
-                            {
-                                action_node->setSlidingWindow(params["window_size"].get<int>(), params["stride"].get<int>());
-                            }
-                            if (params.contains("action_labels") && params["action_labels"].is_array())
-                            {
-                                std::vector<std::string> labels = params["action_labels"].get<std::vector<std::string>>();
-                                action_node->setActionLabels(labels);
-                            }
-                            if (params.contains("confidence_threshold"))
-                            {
-                                action_node->setConfidenceThreshold(params["confidence_threshold"].get<float>());
-                            }
-                            if (params.contains("batch_size"))
-                            {
-                                action_node->setBatchSize(params["batch_size"].get<int>());
-                            }
-                            if (params.contains("model_path"))
-                            {
-                                action_node->setModelPath(params["model_path"].get<std::string>());
-                            }
-                        }
-                    }
-
-                    if (type.find("tracker") != std::string::npos) {
-                        auto tracker_node = std::dynamic_pointer_cast<nodes::ITrackerNode>(node);
-                        tracker_node->setTrackerId(id); // 设置跟踪器 ID，便于日志区分
-                        if (tracker_node) {
-                            // 设置跟踪器类型
-                            if (params.contains("tracker_type")) {
-                                std::string t = params["tracker_type"].get<std::string>();
-                                if (t == "ocsort") {
-                                    tracker_node->setTrackerType(nodes::TrackerType::OCSORT);
-                                    
-                                    nodes::OCSortConfig ocsort_config;
-                                    if (params.contains("ocsort_config")) {
-                                        auto& cfg = params["ocsort_config"];
-                                        ocsort_config.det_thresh = cfg.value("det_thresh", 0.3f);
-                                        ocsort_config.max_age = cfg.value("max_age", 30);
-                                        ocsort_config.min_hits = cfg.value("min_hits", 3);
-                                        ocsort_config.iou_threshold = cfg.value("iou_threshold", 0.3f);
-                                        ocsort_config.delta_t = cfg.value("delta_t", 3);
-                                        ocsort_config.asso_func = cfg.value("asso_func", "iou");
-                                        ocsort_config.inertia = cfg.value("inertia", 0.2f);
-                                        ocsort_config.use_byte = cfg.value("use_byte", false);
-                                    }
-                                    tracker_node->setOCSortConfig(ocsort_config);
-                                    
-                                } else if (t == "bytetrack") {
-                                    tracker_node->setTrackerType(nodes::TrackerType::BYTETRACK);
-                                    
-                                    nodes::ByteTrackConfig bytetrack_config;
-                                    if (params.contains("bytetrack_config")) {
-                                        auto& cfg = params["bytetrack_config"];
-                                        bytetrack_config.frame_rate = cfg.value("frame_rate", 30);
-                                        bytetrack_config.track_buffer = cfg.value("track_buffer", 30);
-                                        bytetrack_config.track_thresh = cfg.value("track_thresh", 0.5f);
-                                        bytetrack_config.high_thresh = cfg.value("high_thresh", 0.6f);
-                                        bytetrack_config.match_thresh = cfg.value("match_thresh", 0.8f);
-                                    }
-                                    tracker_node->setByteTrackConfig(bytetrack_config);
-                                }
-                            }
-                            if (params.contains("sub_stream_id") && params["sub_stream_id"].is_string()) {
-                                tracker_node->setSubStreamId(params["sub_stream_id"].get<std::string>());
-                            }
-
-                        }
-                    }
-
-                    if (type.find("draw") != std::string::npos)
-                    { 
-                        auto draw_node = std::dynamic_pointer_cast<nodes::IDrawNode>(node);
-                        if(draw_node)
-                        {
-                            // 快照配置
-                            if (params.contains("snapshot"))
-                            {
-                                LOG_INFO_FMT("draw config:{}",params.dump());
-                                auto &snapshot_cfg = params["snapshot"];
-
-                                if (snapshot_cfg.contains("enabled"))
-                                {
-                                    draw_node->setSnapshotEnabled(snapshot_cfg["enabled"].get<bool>());
-                                }
-                                if (snapshot_cfg.contains("interval"))
-                                {
-                                    draw_node->setSnapshotInterval(snapshot_cfg["interval"].get<int>());
-                                }
-                                if (snapshot_cfg.contains("dir"))
-                                {
-                                    draw_node->setSnapshotDir(snapshot_cfg["dir"].get<std::string>());
-                                }
-                                if (snapshot_cfg.contains("font_file"))
-                                {
-                                    draw_node->setFontFile(snapshot_cfg["font_file"].get<std::string>());
-                                }
-                                if (snapshot_cfg.contains("logo_file"))
-                                {
-                                    draw_node->setLogoFile(snapshot_cfg["logo_file"].get<std::string>());
-                                }
-
-                            }
-                        }
-
-                    }
-
-                    if (type.find("alert") != std::string::npos)
-                    { 
-                        auto alert_node = std::dynamic_pointer_cast<nodes::AlertNode>(node);
-                        if (alert_node)
-                        {
-                            if (params.contains("rules") && params["rules"].is_array())
-                            {
-                                for (const auto& rule_cfg : params["rules"])
-                                {
-                                    std::string alert_type = rule_cfg.value("type", "");
-                                    if(alert_type.empty())
-                                    {
-                                        LOG_ERROR_FMT("[Pipeline {}] Alert rule missing 'type'", id_);
-                                        continue;
-                                    }
-                                    try
-                                    {
-                                        auto rule = rules::AlertRuleFactory::instance().create(alert_type);
-                                        if(rule == nullptr)
-                                        {
-                                            LOG_ERROR_FMT("[Pipeline {}] No factory found for alert rule type: {}", id_, alert_type);
-                                            continue;
-                                        }
-                                        
-                                        if (rule)
-                                        {
-                                            rule->initialize(rule_cfg.value("params", nlohmann::json::object()));
-                                            alert_node->addRule(rule);
-                                        }
-                                        else
-                                        {
-                                            LOG_ERROR_FMT("[Pipeline {}] Failed to create alert rule: {}", id_, alert_type);
-                                        }
-                                        
-                                    }
-                                    catch(const std::exception& e)
-                                    {
-                                        LOG_ERROR_FMT("[Pipeline {}] Exception while creating alert rule: {}", id_, e.what());
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if (type.find("evidence") != std::string::npos)
-                    {
-                        auto evidence_node = std::dynamic_pointer_cast<nodes::IEvidenceNode>(node); 
-                        if (!evidence_node)
-                        { 
-                            continue;
-                        }
-                        evidence_node->setVideoConfig(nodes::EvidenceVideoConfig{
-                            .enabled = params["video"].value("enabled", true),
-                            .pre_frames = params["video"].value("pre_frames", 10),
-                            .post_frames = params["video"].value("post_frames", 10),
-                            .fps = params["video"].value("fps", 30),
-                            .bitrate = params["video"].value("bitrate", 1000),
-                            .output_dir = params["video"].value("output_dir", "./")
-                        });
-                        evidence_node->setSnapshotConfig(nodes::EvidenceSnapshotConfig{
-                            .enabled = params["snapshot"].value("enabled", false),
-                            .output_dir = params["snapshot"].value("output_dir", "./"),
-                        });
-                        evidence_node->setRolloverConfig(nodes::EvidenceRolloverConfig{
-                            .enabled = params["rollover"].value("enabled", false),
-                            .retention_hours = static_cast<uint32_t>(params["rollover"].value("retention_hours", 24)),
-                            .check_interval_min = static_cast<uint32_t>(params["rollover"].value("check_interval_min", 60))
-                        });
-                        evidence_node->setFtpConfig(nodes::EvidenceFtpConfig{
-                            .enabled = params["ftp"].value("enabled", false),
-                            .server = params["ftp"].value("server", ""),
-                            .port = params["ftp"].value("port", 21),
-                            .username = params["ftp"].value("username", ""),
-                            .password = params["ftp"].value("password", ""),
-                            .remote_dir = params["ftp"].value("remote_dir", ""),
-                        });
-                    }
-
-                    if (type.find("sink") != std::string::npos || type.find("save") != std::string::npos)
-                    {
-                        auto sink_node = std::dynamic_pointer_cast<nodes::ISinkNode>(node);
-                        if (!sink_node)
-                        {
-                            continue;
-                        }
-                        sink_node->setTarget(params["output_url"].get<std::string>());
-                        sink_node->setOutputSize(params["output_width"].get<int>(), params["output_height"].get<int>());
-                    }
-
-                    // 设置节点名称（覆盖工厂默认名）
-                    // 由于 Node 构造函数已设置名称，可在此处通过 setter 修改（如有需要）
-                    // 简单起见，我们假设节点内部已处理好
                     nodes_[id] = node;
                     LOG_INFO_FMT("[Pipeline {}] Created node: {} (type: {})", id_, id, type);
                 }
 
                 // 2. 建立边连接（一流多用的关键）
+                std::vector<std::pair<std::string, std::string>> edge_list;
                 if (config.contains("edges") && config["edges"].is_array())
                 {
                     for (const auto &edge : config["edges"])
@@ -434,11 +83,18 @@ namespace ai_stream
                         }
 
                         it_from->second->addDownstream(it_to->second);
+                        edge_list.emplace_back(from, to);
                         LOG_INFO_FMT("[Pipeline {}] Connected: {} -> {}", id_, from, to);
                     }
                 }
 
-                // 3. 为每个节点设置管道弱引用（便于节点访问全局上下文）
+                // 3. 计算拓扑序（用于启停顺序），并检测环
+                if (!computeTopologicalOrder(edge_list))
+                {
+                    return false;
+                }
+
+                // 4. 为每个节点设置管道弱引用（便于节点访问全局上下文）
                 auto weak_self = weak_from_this();
                 for (auto &[_, node] : nodes_)
                 {
@@ -454,20 +110,67 @@ namespace ai_stream
             }
         }
 
+        bool Pipeline::computeTopologicalOrder(const std::vector<std::pair<std::string, std::string>> &edges)
+        {
+            std::unordered_map<std::string, int> in_degree;
+            std::unordered_map<std::string, std::vector<std::string>> adjacency;
+            for (const auto &[name, node] : nodes_)
+            {
+                in_degree[name] = 0;
+            }
+            for (const auto &[from, to] : edges)
+            {
+                adjacency[from].push_back(to);
+                in_degree[to]++;
+            }
+
+            std::queue<std::string> ready;
+            for (const auto &[name, deg] : in_degree)
+            {
+                if (deg == 0)
+                {
+                    ready.push(name);
+                }
+            }
+
+            topo_order_.clear();
+            while (!ready.empty())
+            {
+                std::string name = ready.front();
+                ready.pop();
+                topo_order_.push_back(name);
+                for (const auto &next : adjacency[name])
+                {
+                    if (--in_degree[next] == 0)
+                    {
+                        ready.push(next);
+                    }
+                }
+            }
+
+            if (topo_order_.size() != nodes_.size())
+            {
+                LOG_ERROR_FMT("[Pipeline {}] Cycle detected in pipeline graph", id_);
+                return false;
+            }
+            return true;
+        }
+
         bool Pipeline::start()
         {
             if (running_)
                 return true;
 
-            // 启动顺序：源节点先启动，其他节点无所谓（因为它们是被动接收数据的）
-            // 但为了简化，统一调用 start()
+            // 按逆拓扑序启动：下游（sink/draw）先就绪，source 最后启动，
+            // 避免数据到达未启动的节点被丢弃
             bool all_started = true;
-            for (auto &[name, node] : nodes_)
+            for (auto it = topo_order_.rbegin(); it != topo_order_.rend(); ++it)
             {
-                LOG_INFO_FMT("[Pipeline {}] Starting node: {}", id_, name);
+                auto &node = nodes_[*it];
+                LOG_INFO_FMT("[Pipeline {}] Starting node: {}", id_, *it);
                 if (!node->start())
                 {
-                    LOG_ERROR_FMT("[Pipeline {}] Failed to start node: {}", id_, name);
+                    LOG_ERROR_FMT("[Pipeline {}] Failed to start node: {}", id_, *it);
                     all_started = false;
                     break;
                 }
@@ -477,13 +180,19 @@ namespace ai_stream
             {
                 running_ = true;
                 LOG_INFO_FMT("[Pipeline {}] All nodes started successfully", id_);
+                return true;
             }
-            else
+
+            // 回滚：按拓扑序停止所有节点（stop() 因 running_ 未置位不会生效，需显式执行）
+            for (const auto &name : topo_order_)
             {
-                // 回滚已启动的节点
-                stop();
+                auto it = nodes_.find(name);
+                if (it != nodes_.end())
+                {
+                    it->second->stop();
+                }
             }
-            return all_started;
+            return false;
         }
 
         void Pipeline::stop()
@@ -492,11 +201,16 @@ namespace ai_stream
                 return;
             running_ = false;
 
-            // 逆序停止节点，通常先停源节点以防止新数据进入，但这里简化统一停止
-            for (auto &[name, node] : nodes_)
+            // 按拓扑序停止：source 最先停止，阻止新数据进入，下游自然排空
+            for (const auto &name : topo_order_)
             {
+                auto it = nodes_.find(name);
+                if (it == nodes_.end())
+                {
+                    continue;
+                }
                 LOG_INFO_FMT("[Pipeline {}] Stopping node: {}", id_, name);
-                node->stop();
+                it->second->stop();
             }
             LOG_INFO_FMT("[Pipeline {}] Pipeline stopped", id_);
         }
@@ -517,12 +231,9 @@ namespace ai_stream
             {
                 if(node.second->isRunning())
                 {
-                    //LOG_INFO_FMT("node: {} is running",node.first);
                     return true;
                 }
-                //LOG_INFO_FMT("node: {} is not running",node.first);
             }
-            LOG_INFO_FMT("Pipeline {} is not running", id_);
             return false;
         }
 

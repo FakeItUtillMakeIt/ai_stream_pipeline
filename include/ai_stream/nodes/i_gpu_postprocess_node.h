@@ -16,7 +16,6 @@ class IGpuPostprocessNode : public IPostprocessNode {
 public:
     using IPostprocessNode::IPostprocessNode;
 
-    bool start() override{return true;}
     /**
      * @brief 设置 GPU 设备 ID
      * @param device_id CUDA 设备 ID

@@ -9,7 +9,7 @@
 namespace ai_stream {
 namespace nodes {
 
-ResizeNormalizeNode::ResizeNormalizeNode() : IPreprocessNode("ResizeNormalize"),
+ResizeNormalizeNode::ResizeNormalizeNode() : core::QueuedNode<IPreprocessNode>("ResizeNormalize"),
     target_width_(640), target_height_(640),
     mean_{0.0f, 0.0f, 0.0f}, std_{1.0f, 1.0f, 1.0f},
     interpolation_method_("bilinear"), keep_aspect_ratio_(false),
@@ -52,7 +52,7 @@ void ResizeNormalizeNode::setOutputDataType(const std::string& dtype) {
     output_dtype_ = dtype;
 }
 
-void ResizeNormalizeNode::pushData(std::shared_ptr<core::BasePacket> packet) {
+void ResizeNormalizeNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
     if (packet->type == core::PacketType::STREAM_END)
     {
         LOG_INFO_FMT("[ResizeNormalize] Received stream end");
@@ -76,6 +76,21 @@ void ResizeNormalizeNode::pushData(std::shared_ptr<core::BasePacket> packet) {
     // 创建新 Mat 存放预处理结果（避免修改原始帧影响其他分支）
     cv::Mat input_mat = *frame->mat;
     auto processed_mat = std::make_shared<cv::Mat>();
+
+    // 逐通道归一化：(pixel/255 - mean[c]) / std[c]，与 GPU 路径语义一致
+    auto applyNormalization = [this](cv::Mat& mat) {
+        if (mean_.size() < 3 || std_.size() < 3) return;
+        cv::Mat channels[3];
+        cv::split(mat, channels);
+        for (int c = 0; c < 3; ++c) {
+            if (std_[c] != 0.0f) {
+                channels[c] = (channels[c] - mean_[c]) / std_[c];
+            } else {
+                channels[c] = channels[c] - mean_[c];
+            }
+        }
+        cv::merge(channels, 3, mat);
+    };
 
     if (keep_aspect_ratio_) {
         // Letterbox resize: keep aspect ratio, pad with gray (114)
@@ -103,18 +118,14 @@ void ResizeNormalizeNode::pushData(std::shared_ptr<core::BasePacket> packet) {
         letter_mat.convertTo(letter_float, CV_32FC3, 1.0 / 255.0);
         letter_norm = letter_float;
 
-        if (!mean_.empty() && !std_.empty()) {
-            // TODO: per-channel normalization
-        }
+        applyNormalization(letter_norm);
         letter_norm.copyTo((*processed_mat)(roi));
     } else {
         // Direct resize (stretch to fill)
         cv::resize(input_mat, *processed_mat, cv::Size(target_width_, target_height_));
         // 归一化：转换为 float，减均值除标准差
         processed_mat->convertTo(*processed_mat, CV_32FC3, 1.0/255.0);
-        if (!mean_.empty() && !std_.empty()) {
-            // 实际应用中应逐通道操作，此处简化
-        }
+        applyNormalization(*processed_mat);
     }
 
     LOG_INFO_FMT("[ResizeNormalize] Resized frame to {}x{}", target_width_, target_height_);

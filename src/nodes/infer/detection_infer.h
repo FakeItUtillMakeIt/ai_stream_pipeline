@@ -3,7 +3,7 @@
 #pragma once
 
 #include "ai_stream/nodes/i_infer_node.h"
-#include "src/core/frame_queue.h"
+#include "ai_stream/core/bounded_queue.h"
 
 #include <NvInfer.h>
 #include <cuda_runtime_api.h>

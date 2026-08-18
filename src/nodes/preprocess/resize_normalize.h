@@ -2,21 +2,19 @@
 #pragma once
 
 #include "ai_stream/nodes/i_preprocess_node.h"
+#include "ai_stream/core/queued_node.h"
 #include <opencv2/core/mat.hpp>
 
 namespace ai_stream {
 namespace nodes {
 
-class ResizeNormalizeNode : public IPreprocessNode {
+class ResizeNormalizeNode : public core::QueuedNode<IPreprocessNode> {
 public:
     ResizeNormalizeNode();
     ~ResizeNormalizeNode();
 
-    // Node 接口
-    bool start() override { return true; }
-    void stop() override {}
-    bool isRunning() const override{return running_.load();}
-    void pushData(std::shared_ptr<core::BasePacket> packet) override;
+    // QueuedNode 接口
+    void processPacket(std::shared_ptr<core::BasePacket> packet) override;
 
     // 配置方法（可通过 JSON params 设置）
     void setTargetSize(int width, int height);

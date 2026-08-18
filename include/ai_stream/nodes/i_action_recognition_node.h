@@ -16,6 +16,7 @@ namespace nodes {
  */
 class IActionRecognitionNode : public core::Node {
 public:
+    using core::Node::Node;
     virtual ~IActionRecognitionNode() = default;
     
     /**
@@ -62,6 +63,32 @@ public:
      * @param batch_size 批处理大小
      */
     virtual void setBatchSize(int batch_size) = 0;
+
+    bool configure(const std::string& node_id, const nlohmann::json& params) override {
+        (void)node_id;
+        if (params.contains("input_height") && params.contains("input_width")) {
+            setInputSize(params["input_height"].get<int>(), params["input_width"].get<int>());
+        }
+        if (params.contains("num_frames") && params.contains("frame_interval")) {
+            setClipParams(params["num_frames"].get<int>(), params["frame_interval"].get<int>());
+        }
+        if (params.contains("window_size") && params.contains("stride")) {
+            setSlidingWindow(params["window_size"].get<int>(), params["stride"].get<int>());
+        }
+        if (params.contains("action_labels") && params["action_labels"].is_array()) {
+            setActionLabels(params["action_labels"].get<std::vector<std::string>>());
+        }
+        if (params.contains("confidence_threshold")) {
+            setConfidenceThreshold(params["confidence_threshold"].get<float>());
+        }
+        if (params.contains("batch_size")) {
+            setBatchSize(params["batch_size"].get<int>());
+        }
+        if (params.contains("model_path")) {
+            setModelPath(params["model_path"].get<std::string>());
+        }
+        return true;
+    }
 };
 
 } // namespace nodes

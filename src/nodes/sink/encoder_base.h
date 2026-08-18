@@ -50,7 +50,8 @@ protected:
     int height_ = 0;
     bool initialized_ = false;
     int64_t next_pts_ = 0;
-    std::atomic<bool> closed_{false}; 
+    std::atomic<bool> closed_{false};
+    std::atomic<bool> flushed_{false};
 };
 
 /**

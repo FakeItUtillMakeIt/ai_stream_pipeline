@@ -1,4 +1,4 @@
-// src/core/frame_queue.h
+// include/ai_stream/core/bounded_queue.h
 #pragma once
 
 #include <queue>
@@ -12,14 +12,14 @@ namespace core {
 
 /**
  * @brief 线程安全的有界阻塞队列
- * 
+ *
  * 用于节点内部的生产者-消费者模型，削峰填谷，防止内存无限增长。
  */
 template<typename T>
 class BoundedQueue {
 public:
     explicit BoundedQueue(size_t max_size = 10) : max_size_(max_size) {}
-    
+
     // 禁止拷贝
     BoundedQueue(const BoundedQueue&) = delete;
     BoundedQueue& operator=(const BoundedQueue&) = delete;
@@ -38,6 +38,17 @@ public:
         if (stopped_) return false;
         queue_.push(item);
         lock.unlock();
+        not_empty_.notify_one();
+        return true;
+    }
+
+    /**
+     * @brief 非阻塞推送，队列满或已停止时立即返回 false
+     */
+    bool tryPush(const T& item) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (stopped_ || queue_.size() >= max_size_) return false;
+        queue_.push(item);
         not_empty_.notify_one();
         return true;
     }

@@ -54,6 +54,32 @@ public:
 
     virtual void setHwDecodeEnabled(bool enabled) = 0;
     virtual bool isHwDecodeEnabled() = 0;
+
+    bool configure(const std::string& node_id, const nlohmann::json& params) override {
+        (void)node_id;
+        if (params.contains("codec")) {
+            setDecoderType(params["codec"].get<std::string>());
+        }
+        if (params.contains("output_bgr")) {
+            setOutputBGR(params["output_bgr"].get<bool>());
+        }
+        if (params.contains("hw_decoder")) {
+            setHwDecodeEnabled(params["hw_decoder"].get<bool>());
+        }
+        if (params.contains("snapshot")) {
+            const auto& snapshot_cfg = params["snapshot"];
+            if (snapshot_cfg.contains("enabled")) {
+                setSnapshotEnabled(snapshot_cfg["enabled"].get<bool>());
+            }
+            if (snapshot_cfg.contains("interval")) {
+                setSnapshotInterval(snapshot_cfg["interval"].get<int>());
+            }
+            if (snapshot_cfg.contains("dir")) {
+                setSnapshotDir(snapshot_cfg["dir"].get<std::string>());
+            }
+        }
+        return true;
+    }
 };
 
 } // namespace nodes

@@ -6,6 +6,8 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 #include <nlohmann/json.hpp> // 前向声明，避免引入完整 JSON 头文件
 
 namespace ai_stream {
@@ -40,9 +42,12 @@ private:
     std::string id_;
     NodeMap nodes_;
     std::atomic<bool> running_{false};
-    
-    // 内部方法：根据类型字符串创建节点实例
-    std::shared_ptr<Node> createNodeInstance(const std::string& type, const nlohmann::json& params);
+
+    // 拓扑序（上游 -> 下游），用于确定启停顺序
+    std::vector<std::string> topo_order_;
+
+    // 内部方法：Kahn 算法计算拓扑序，图中存在环时返回 false
+    bool computeTopologicalOrder(const std::vector<std::pair<std::string, std::string>>& edges);
 };
 
 } // namespace core

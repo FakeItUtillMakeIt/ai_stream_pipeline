@@ -2,6 +2,7 @@
 #pragma once
 
 #include "ai_stream/core/packet.h"
+#include "ai_stream/core/bounded_queue.h"
 #include "sink/encoder_base.h"
 #include <memory>
 #include <string>
@@ -9,8 +10,6 @@
 #include <atomic>
 #include <thread>
 #include <mutex>
-#include <condition_variable>
-#include <queue>
 
 namespace ai_stream {
 namespace nodes {
@@ -45,9 +44,8 @@ private:
     std::unique_ptr<FileEncoder> encoder_;
     int64_t pts_ = 0;
 
-    std::queue<std::shared_ptr<core::VideoFramePacket>> frame_queue_;
-    std::mutex queue_mutex_;
-    std::condition_variable queue_cv_;
+    // 有界队列（满时丢最旧帧，防止编码慢时无界增长）
+    core::BoundedQueue<std::shared_ptr<core::VideoFramePacket>> frame_queue_{256};
     std::thread encode_thread_;
 };
 

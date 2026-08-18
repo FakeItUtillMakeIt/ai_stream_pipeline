@@ -19,6 +19,13 @@ public:
     
     // 获取当前 URL
     virtual std::string getUrl() const = 0;
+
+    bool configure(const std::string& node_id, const nlohmann::json& params) override {
+        setUrl(params.value("url", ""));
+        setSourceId(node_id);
+        setSkipFrames(params.value("skip_frames", 1));
+        return true;
+    }
 };
 
 } // namespace nodes

@@ -20,7 +20,7 @@ namespace fs = std::filesystem;
 namespace ai_stream {
 namespace nodes {
 
-FFmpegDecodeNode::FFmpegDecodeNode() : IDecodeNode("FFmpegDecode") {
+FFmpegDecodeNode::FFmpegDecodeNode() : core::QueuedNode<IDecodeNode>("FFmpegDecode") {
     LOG_DEBUG_FMT("[FFmpegDecode] Constructor");
 }
 
@@ -56,9 +56,7 @@ void FFmpegDecodeNode::setSnapshotDir(const std::string& dir) {
     LOG_INFO_FMT("[FFmpegDecode] Snapshot directory: {}", dir);
 }
 
-bool FFmpegDecodeNode::start() {
-    running_ = true;
-    
+bool FFmpegDecodeNode::onStartup() {
     if (snapshot_enabled_) {
         if (!fs::exists(snapshot_dir_)) {
             try {
@@ -76,14 +74,13 @@ bool FFmpegDecodeNode::start() {
     return true;
 }
 
-void FFmpegDecodeNode::stop() {
-    running_ = false;
+void FFmpegDecodeNode::onShutdown() {
     pool_.clear();
-    LOG_INFO_FMT("[FFmpegDecode] Stopped (total frames: {}, snapshots saved: {})", 
+    LOG_INFO_FMT("[FFmpegDecode] Stopped (total frames: {}, snapshots saved: {})",
                  frame_count_, snapshot_count_);
 }
 
-void FFmpegDecodeNode::pushData(std::shared_ptr<core::BasePacket> packet) {
+void FFmpegDecodeNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
     if (packet->type == core::PacketType::STREAM_END)
     {
         LOG_INFO("[FFmpegDecode] Stream ended");
@@ -92,7 +89,6 @@ void FFmpegDecodeNode::pushData(std::shared_ptr<core::BasePacket> packet) {
         return;
     }
     in_time_ms_ = utils::TimeUtil::currentTimeMs();
-    if (!running_) return;
     if (packet->type != core::PacketType::RAW_VIDEO) return;
     in_time_ms_ = utils::TimeUtil::currentTimeMs();
     auto raw_pkt = std::dynamic_pointer_cast<core::RawVideoPacket>(packet);

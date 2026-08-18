@@ -2,18 +2,20 @@
 #pragma once
 
 #include "ai_stream/nodes/i_fusion_node.h"
+#include "ai_stream/core/queued_node.h"
 
 namespace ai_stream {
 namespace nodes {
 
-    class FusionNodeImpl : public IFusionNode {
+    class FusionNodeImpl : public core::QueuedNode<IFusionNode> {
     public:
         FusionNodeImpl();
         ~FusionNodeImpl() override = default;
 
-        bool start() override;
-        void stop() override;
-        void pushData(std::shared_ptr<core::BasePacket> packet) override;
+        // QueuedNode 接口
+        void processPacket(std::shared_ptr<core::BasePacket> packet) override;
+        bool onStartup() override;
+        void onShutdown() override;
         void setFusionMode(FusionMode mode) override;
         FusionMode getFusionMode() const override;
         void setActionSource(const std::string& source_node_id) override;

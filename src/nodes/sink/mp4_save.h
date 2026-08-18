@@ -2,11 +2,9 @@
 #pragma once
 
 #include "ai_stream/nodes/i_sink_node.h"
+#include "ai_stream/core/bounded_queue.h"
 #include <thread>
 #include <atomic>
-#include <queue>
-#include <mutex>
-#include <condition_variable>
 #include <memory>
 #include <filesystem>
 #include <sstream>
@@ -44,11 +42,9 @@ private:
 
     std::atomic<bool> running_{false};
     std::thread worker_;
-    
-    std::queue<std::shared_ptr<core::VideoFramePacket>> frame_queue_;
-    std::mutex queue_mutex_;
-    std::condition_variable queue_cv_;
-    static constexpr size_t MAX_QUEUE_SIZE = 100;
+
+    // 有界队列（满时丢最旧帧）
+    core::BoundedQueue<std::shared_ptr<core::VideoFramePacket>> frame_queue_{100};
 
     std::unique_ptr<EncoderBase> encoder_;
     int64_t next_pts_ = 0;

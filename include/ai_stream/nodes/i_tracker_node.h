@@ -82,6 +82,45 @@ public:
      * @brief 获取当前活跃的跟踪数量
      */
     virtual int getActiveTrackCount() const = 0;
+
+    bool configure(const std::string& node_id, const nlohmann::json& params) override {
+        setTrackerId(node_id);
+        if (params.contains("tracker_type")) {
+            std::string t = params["tracker_type"].get<std::string>();
+            if (t == "ocsort") {
+                setTrackerType(TrackerType::OCSORT);
+                OCSortConfig ocsort_config;
+                if (params.contains("ocsort_config")) {
+                    const auto& cfg = params["ocsort_config"];
+                    ocsort_config.det_thresh = cfg.value("det_thresh", 0.3f);
+                    ocsort_config.max_age = cfg.value("max_age", 30);
+                    ocsort_config.min_hits = cfg.value("min_hits", 3);
+                    ocsort_config.iou_threshold = cfg.value("iou_threshold", 0.3f);
+                    ocsort_config.delta_t = cfg.value("delta_t", 3);
+                    ocsort_config.asso_func = cfg.value("asso_func", "iou");
+                    ocsort_config.inertia = cfg.value("inertia", 0.2f);
+                    ocsort_config.use_byte = cfg.value("use_byte", false);
+                }
+                setOCSortConfig(ocsort_config);
+            } else if (t == "bytetrack") {
+                setTrackerType(TrackerType::BYTETRACK);
+                ByteTrackConfig bytetrack_config;
+                if (params.contains("bytetrack_config")) {
+                    const auto& cfg = params["bytetrack_config"];
+                    bytetrack_config.frame_rate = cfg.value("frame_rate", 30);
+                    bytetrack_config.track_buffer = cfg.value("track_buffer", 30);
+                    bytetrack_config.track_thresh = cfg.value("track_thresh", 0.5f);
+                    bytetrack_config.high_thresh = cfg.value("high_thresh", 0.6f);
+                    bytetrack_config.match_thresh = cfg.value("match_thresh", 0.8f);
+                }
+                setByteTrackConfig(bytetrack_config);
+            }
+        }
+        if (params.contains("sub_stream_id") && params["sub_stream_id"].is_string()) {
+            setSubStreamId(params["sub_stream_id"].get<std::string>());
+        }
+        return true;
+    }
 };
 
 } // namespace nodes

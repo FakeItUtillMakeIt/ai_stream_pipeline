@@ -2,6 +2,7 @@
 #pragma once
 
 #include "ai_stream/nodes/i_gpu_preprocess_node.h"
+#include "ai_stream/core/queued_node.h"
 #include <cuda_runtime.h>
 
 namespace ai_stream {
@@ -13,16 +14,15 @@ namespace nodes {
  * 使用 CUDA 和 NPP 库实现高性能的图像预处理。
  * 支持 GPU 加速的缩放、颜色空间转换和归一化操作。
  */
-class GPUResizeNormalizeNode : public IGpuPreprocessNode {
+class GPUResizeNormalizeNode : public core::QueuedNode<IGpuPreprocessNode> {
 public:
     GPUResizeNormalizeNode();
     ~GPUResizeNormalizeNode() override;
 
-    // Node 接口
-    bool start() override;
-    void stop() override;
-    bool isRunning() const override{return running_.load();}
-    void pushData(std::shared_ptr<core::BasePacket> packet) override;
+    // QueuedNode 接口
+    void processPacket(std::shared_ptr<core::BasePacket> packet) override;
+    bool onStartup() override;
+    void onShutdown() override;
 
     // IPreprocessNode 接口
     void setTargetSize(int width, int height) { target_width_ = width; target_height_ = height; }

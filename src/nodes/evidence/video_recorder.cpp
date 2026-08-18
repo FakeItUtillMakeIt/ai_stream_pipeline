@@ -71,6 +71,7 @@ bool VideoRecorder::startRecording(
         }
     }
 
+    frame_queue_.reset();
     encode_thread_ = std::thread(&VideoRecorder::encodingLoop, this);
 
     LOG_INFO_FMT("[VideoRecorder] Started recording: {} ({} pre-frames written)",
@@ -81,11 +82,11 @@ bool VideoRecorder::startRecording(
 void VideoRecorder::enqueueFrame(std::shared_ptr<core::VideoFramePacket> frame) {
     if (!recording_ || !frame || !frame->mat || frame->mat->empty()) return;
 
-    {
-        std::lock_guard<std::mutex> lock(queue_mutex_);
-        frame_queue_.push(std::move(frame));
+    // 队列满时丢弃最旧帧
+    while (!frame_queue_.tryPush(frame)) {
+        std::shared_ptr<core::VideoFramePacket> discarded;
+        if (!frame_queue_.tryPop(discarded)) break;
     }
-    queue_cv_.notify_one();
 }
 
 void VideoRecorder::stop() {
@@ -94,7 +95,7 @@ void VideoRecorder::stop() {
     }
 
     recording_ = false;
-    queue_cv_.notify_all();
+    frame_queue_.stop();
 
     if (encode_thread_.joinable()) {
         encode_thread_.join();
@@ -119,15 +120,12 @@ std::string VideoRecorder::getCurrentFilePath() const {
 }
 
 void VideoRecorder::encodingLoop() {
-    while (!stop_flag_) {
+    while (true) {
         std::shared_ptr<core::VideoFramePacket> frame;
-        {
-            std::unique_lock<std::mutex> lock(queue_mutex_);
-            queue_cv_.wait(lock, [this] { return !frame_queue_.empty() || stop_flag_; });
-            if (stop_flag_ && frame_queue_.empty()) break;
-            if (frame_queue_.empty()) continue;
-            frame = std::move(frame_queue_.front());
-            frame_queue_.pop();
+        if (!frame_queue_.pop(frame, std::chrono::milliseconds(100))) {
+            // stop() 后队列排空则退出；运行中仅为超时，继续等待
+            if (stop_flag_) break;
+            continue;
         }
 
         if (frame && frame->mat && !frame->mat->empty() && encoder_) {

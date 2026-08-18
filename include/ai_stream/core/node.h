@@ -29,7 +29,15 @@ public:
     
     // 核心数据处理入口
     virtual void pushData(std::shared_ptr<BasePacket> packet) = 0;
-    
+
+    // 从 JSON 参数配置节点（由 Pipeline::buildFromJson 调用）
+    // 返回 false 表示配置无效或初始化失败（如模型加载失败），管道构建将终止
+    virtual bool configure(const std::string& node_id, const nlohmann::json& params) {
+        (void)node_id;
+        (void)params;
+        return true;
+    }
+
     // 节点名称
     const std::string& getName() const { return name_; }
     

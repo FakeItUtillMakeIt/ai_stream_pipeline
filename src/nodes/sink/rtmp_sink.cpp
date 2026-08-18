@@ -49,6 +49,7 @@ bool RTMPSinkNode::start() {
     }
     
     running_ = true;
+    frame_queue_.reset();
     worker_ = std::thread(&RTMPSinkNode::encoderLoop, this);
     LOG_INFO_FMT("[RTMPSink] Started pushing to {}", output_url_);
     return true;
@@ -58,7 +59,7 @@ void RTMPSinkNode::stop() {
     if (!running_) return;
     
     running_ = false;
-    queue_cv_.notify_all();
+    frame_queue_.stop();
     
     if (worker_.joinable()) {
         worker_.join();
@@ -81,29 +82,20 @@ void RTMPSinkNode::pushData(std::shared_ptr<core::BasePacket> packet) {
 
     auto frame = std::static_pointer_cast<core::VideoFramePacket>(packet);
     if (!frame || !frame->mat || frame->mat->empty()) return;
-    
-    {
-        std::unique_lock<std::mutex> lock(queue_mutex_);
-        if (frame_queue_.size() >= MAX_QUEUE_SIZE) {
-            frame_queue_.pop();
-            LOG_WARN_FMT("[RTMPSink] Queue full, dropping oldest frame");
-        }
-        frame_queue_.push(frame);
+
+    // 队列满时丢弃最旧帧，保证直播实时性
+    while (!frame_queue_.tryPush(frame)) {
+        std::shared_ptr<core::VideoFramePacket> discarded;
+        if (!frame_queue_.tryPop(discarded)) break;
+        LOG_WARN_FMT("[RTMPSink] Queue full, dropping oldest frame");
     }
-    queue_cv_.notify_one();
 }
 
 void RTMPSinkNode::encoderLoop() {
     while (running_) {
         std::shared_ptr<core::VideoFramePacket> frame;
-        {
-            std::unique_lock<std::mutex> lock(queue_mutex_);
-            queue_cv_.wait(lock, [this] { return !frame_queue_.empty() || !running_; });
-            if (!running_) break;
-            frame = frame_queue_.front();
-            frame_queue_.pop();
-        }
-        
+        if (!frame_queue_.pop(frame, std::chrono::milliseconds(100))) continue;
+
         if (!frame || !frame->mat || frame->mat->empty()) continue;
         
         int width = output_width_ > 0 ? output_width_ : frame->width;

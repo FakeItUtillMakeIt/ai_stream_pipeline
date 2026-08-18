@@ -46,7 +46,7 @@ namespace rules
         HUMAN_GATHERING = 8,
         ABSENCE = 9,
         SLEEPING_ON_DUTY = 10,
-        CLAMBING = 11,
+        CLIMBING = 11,
         FIGHTING = 12,
         UNLICENSED_VENDOR = 13,
         PHOTOGRAPHER = 14,
@@ -70,7 +70,7 @@ namespace rules
         {AlertType::HUMAN_GATHERING, "human_gathering"},
         {AlertType::ABSENCE, "absence"},
         {AlertType::SLEEPING_ON_DUTY, "sleeping_on_duty"},
-        {AlertType::CLAMBING, "climbing"},
+        {AlertType::CLIMBING, "climbing"},
         {AlertType::FIGHTING, "fighting"},
         {AlertType::UNLICENSED_VENDOR, "unlicensed_vendor"},
         {AlertType::PHOTOGRAPHER, "photographer"},
@@ -78,7 +78,8 @@ namespace rules
         {AlertType::DISCOVER_CRYSTAL, "discover_crystal"},
         {AlertType::DISCOVER_VISIBLE_FIRE, "discover_visible_fire"},
         {AlertType::DISCOVER_SMOKE, "discover_smoke"},
-        {AlertType::DISCOVER_HOSE_CUTOFF, "discover_hose_cutoff"}
+        {AlertType::DISCOVER_HOSE_CUTOFF, "discover_hose_cutoff"},
+        {AlertType::ACTION_RECOGNITION, "action_recognition"}
     };
 
     inline std::map<AlertType, std::string> alertTypeChMap = {
@@ -93,7 +94,7 @@ namespace rules
         {AlertType::HUMAN_GATHERING, "人员聚集"},
         {AlertType::ABSENCE, "离岗"},
         {AlertType::SLEEPING_ON_DUTY, "睡岗"},
-        {AlertType::CLAMBING, "攀爬"},
+        {AlertType::CLIMBING, "攀爬"},
         {AlertType::FIGHTING, "打架"},
         {AlertType::UNLICENSED_VENDOR, "无证摊贩"},
         {AlertType::PHOTOGRAPHER, "揽拍"},
@@ -101,7 +102,8 @@ namespace rules
         {AlertType::DISCOVER_CRYSTAL, "发现结晶"},
         {AlertType::DISCOVER_VISIBLE_FIRE, "发现火焰"},
         {AlertType::DISCOVER_SMOKE, "发现烟雾"},
-        {AlertType::DISCOVER_HOSE_CUTOFF, "发现软管断流"}
+        {AlertType::DISCOVER_HOSE_CUTOFF, "发现软管断流"},
+        {AlertType::ACTION_RECOGNITION, "动作识别"}
     };
 
     enum class ActionRecongnitionType : uint8_t
@@ -131,7 +133,7 @@ namespace rules
         {AlertType::HUMAN_GATHERING, AlertItemType::ITEM_PERSON_BEHAVIOR},
         {AlertType::ABSENCE, AlertItemType::ITEM_PERSON_BEHAVIOR},
         {AlertType::SLEEPING_ON_DUTY, AlertItemType::ITEM_PERSON_BEHAVIOR},
-        {AlertType::CLAMBING, AlertItemType::ITEM_PERSON_BEHAVIOR},
+        {AlertType::CLIMBING, AlertItemType::ITEM_PERSON_BEHAVIOR},
         {AlertType::FIGHTING, AlertItemType::ITEM_PERSON_BEHAVIOR},
         {AlertType::UNLICENSED_VENDOR, AlertItemType::ITEM_PERSON_BEHAVIOR},
         {AlertType::PHOTOGRAPHER, AlertItemType::ITEM_PERSON_BEHAVIOR},
@@ -139,7 +141,8 @@ namespace rules
         {AlertType::DISCOVER_CRYSTAL, AlertItemType::ITEM_SCENE_RECOGNITION},
         {AlertType::DISCOVER_VISIBLE_FIRE, AlertItemType::ITEM_SCENE_RECOGNITION},
         {AlertType::DISCOVER_SMOKE, AlertItemType::ITEM_SCENE_RECOGNITION},
-        {AlertType::DISCOVER_HOSE_CUTOFF, AlertItemType::ITEM_SCENE_RECOGNITION}
+        {AlertType::DISCOVER_HOSE_CUTOFF, AlertItemType::ITEM_SCENE_RECOGNITION},
+        {AlertType::ACTION_RECOGNITION, AlertItemType::ITEM_PERSON_BEHAVIOR}
     };
 
     enum class AlertStatus : uint8_t
@@ -172,15 +175,56 @@ namespace rules
 
         AlertLevel level;
         std::string alert_name;
-        AlertItemType alert_item_type;
-        AlertType alert_type;
+        AlertItemType alert_item_type = AlertItemType::ITEM_MASTER_UNKNOWN;
+        AlertType alert_type = AlertType::ALERT_UNKNOWN;
         std::string description;
         AlertStatus status;
         nlohmann::json extra_data;
         
         nlohmann::json toJson() const
         {
-            return {};
+            static const std::map<AlertLevel, std::string> level_names = {
+                {AlertLevel::INFO, "info"},
+                {AlertLevel::WARNING, "warning"},
+                {AlertLevel::ERROR, "error"},
+                {AlertLevel::CRITICAL, "critical"}
+            };
+            static const std::map<AlertStatus, std::string> status_names = {
+                {AlertStatus::ALERT_STATUS_OCCUR, "occur"},
+                {AlertStatus::ALERT_STATUS_LAST, "last"},
+                {AlertStatus::ALERT_STATUS_END, "end"},
+                {AlertStatus::ALERT_STATUS_DEFAULT, "default"}
+            };
+
+            nlohmann::json j;
+            j["alert_id"] = alert_id;
+            j["alert_name"] = alert_name;
+            j["alert_type"] = static_cast<int>(alert_type);
+            auto type_it = alertTypeMap.find(alert_type);
+            if (type_it != alertTypeMap.end()) {
+                j["alert_type_name"] = type_it->second;
+            }
+            j["alert_item_type"] = static_cast<int>(alert_item_type);
+            j["level"] = static_cast<int>(level);
+            auto level_it = level_names.find(level);
+            if (level_it != level_names.end()) {
+                j["level_name"] = level_it->second;
+            }
+            j["status"] = static_cast<int>(status);
+            auto status_it = status_names.find(status);
+            if (status_it != status_names.end()) {
+                j["status_name"] = status_it->second;
+            }
+            j["description"] = description;
+            j["detect_ms"] = detect_ms;
+            j["duration_ms"] = duration_ms;
+            j["non_update_count"] = non_update_count;
+            j["zone_no"] = zone_no;
+            j["object_ids"] = object_ids;
+            if (!extra_data.is_null()) {
+                j["extra_data"] = extra_data;
+            }
+            return j;
         }
         AlertEvent() : detect_ms(0), duration_ms(0), non_update_count(0), zone_no(0), level(AlertLevel::INFO), status(AlertStatus::ALERT_STATUS_DEFAULT) {}
     };
@@ -252,7 +296,7 @@ struct BasePacket {
     int64_t timestamp_ms = 0;          // 毫秒时间戳
     uint32_t stream_id = 0;            // 多流并行的关键：用于区分不同的源流
     std::string source_id;             // 可选的源标识符
-    int64_t frame_id;
+    int64_t frame_id = 0;
     uint64_t cost_ms = 0;
     std::map<std::string,uint64_t> cost_time_map;
 

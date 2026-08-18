@@ -61,6 +61,21 @@ public:
      * @param dtype 数据类型字符串，如 "float32", "uint8"
      */
     virtual void setOutputDataType(const std::string& dtype) = 0;
+
+    bool configure(const std::string& node_id, const nlohmann::json& params) override {
+        (void)node_id;
+        setTargetSize(params.value("output_width", 640), params.value("output_height", 640));
+        if (params.contains("keep_aspect_ratio")) {
+            setKeepAspectRatio(params["keep_aspect_ratio"].get<bool>());
+        }
+        if (params.contains("mean")) {
+            setMean(params["mean"].get<std::vector<float>>());
+        }
+        if (params.contains("std")) {
+            setStd(params["std"].get<std::vector<float>>());
+        }
+        return true;
+    }
 };
 
 } // namespace nodes

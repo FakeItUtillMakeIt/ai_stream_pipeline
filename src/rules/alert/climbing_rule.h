@@ -22,7 +22,7 @@ namespace ai_stream
                 AlertResult &alert_result,
                 int64_t current_time_ms) override;
 
-            AlertType getType() const override { return AlertType::CLAMBING; }
+            AlertType getType() const override { return AlertType::CLIMBING; }
             AlertItemType getAlertItemType() const override { return AlertItemType::ITEM_PERSON_BEHAVIOR; }
             void reset() override;
             nlohmann::json getStatistics() const override;
