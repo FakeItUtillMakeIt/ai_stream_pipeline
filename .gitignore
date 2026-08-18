@@ -45,3 +45,5 @@
 [Rr]uns/
 
 __pycache__/
+
+.opencode/

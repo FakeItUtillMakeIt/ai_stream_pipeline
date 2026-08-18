@@ -15,12 +15,14 @@ set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build, options a
 option(BUILD_HTTP_SERVER "Build HTTP API server executable" ON)
 option(BUILD_TESTS       "Build unit and integration tests" OFF)
 option(BUILD_EXAMPLES    "Build example applications" ON)
+option(BUILD_TOOLS       "Build development tools (benchmark)" ON)
 option(ENABLE_COVERAGE   "Enable code coverage instrumentation" OFF)
 option(INSTALL_HEADERS   "Install public headers" ON)
 
-# 推理后端选项（互斥或可选）
+# 推理后端选项
+# 注：ONNX Runtime 支持（原 WITH_ONNX）已移除——环境中无 ONNXRuntime 且无对应节点实现，
+# 如需引入请同时提供 onnx_infer 节点代码与依赖查找模块
 option(WITH_TENSORRT     "Enable TensorRT inference support" ON)
-option(WITH_ONNX         "Enable ONNX Runtime inference support" OFF)
 
 # GPU 加速选项
 option(WITH_CUDA "Enable CUDA support for GPU acceleration" ON)
@@ -58,6 +60,9 @@ endif()
 # 将 cmake/ 目录加入模块搜索路径
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
+# 安装目录变量（需在所有 add_subdirectory 之前定义，供子目录 install 规则使用）
+include(GNUInstallDirs)
+
 # ------------------------------------------------------------------------------
 # 3. 依赖管理
 # ------------------------------------------------------------------------------
@@ -82,12 +87,10 @@ else()
 endif()
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    # 方法1：允许重复定义（快速修复）
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--allow-multiple-definition")
-    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--allow-multiple-definition")
-    
-    
-    message(STATUS "Applied FFmpeg libgcc conflict workaround")
+    # 注意：此前此处有 -Wl,--allow-multiple-definition 全局 hack，
+    # 用于掩盖 FFmpeg/libgcc 相关的符号重复定义问题，已移除。
+    # 若链接报 multiple definition，请定位具体重复符号并修复根因。
+    message(STATUS "FFmpeg libgcc workaround removed; link errors will surface root cause")
 endif()
 
 # HTTP 服务依赖（如果构建 HTTP 服务器）
@@ -110,14 +113,6 @@ if(WITH_TENSORRT)
     else()
         message(WARNING "TensorRT not found. TensorRT inference node will be disabled.")
         set(WITH_TENSORRT OFF)
-    endif()
-endif()
-
-if(WITH_ONNX)
-    find_package(ONNXRuntime QUIET)
-    if(NOT ONNXRuntime_FOUND)
-        message(WARNING "ONNX Runtime not found. ONNX inference node will be disabled.")
-        set(WITH_ONNX OFF)
     endif()
 endif()
 
@@ -201,12 +196,6 @@ if(WITH_TENSORRT)
     target_link_libraries(ai_stream_nodes PRIVATE ${TensorRT_LIBRARIES})
 endif()
 
-if(WITH_ONNX)
-    target_compile_definitions(ai_stream_nodes PRIVATE WITH_ONNX)
-    target_include_directories(ai_stream_nodes PRIVATE ${ONNXRuntime_INCLUDE_DIRS})
-    target_link_libraries(ai_stream_nodes PRIVATE ${ONNXRuntime_LIBRARIES})
-endif()
-
 # ------------------------------------------------------------------------------
 # 6. HTTP 服务器可执行文件
 # ------------------------------------------------------------------------------
@@ -242,6 +231,13 @@ if(BUILD_EXAMPLES)
 endif()
 
 # ------------------------------------------------------------------------------
+# 8.5 开发工具
+# ------------------------------------------------------------------------------
+if(BUILD_TOOLS)
+    add_subdirectory(tools/benchmark)
+endif()
+
+# ------------------------------------------------------------------------------
 # 9. 安装规则
 # ------------------------------------------------------------------------------
 include(GNUInstallDirs)
@@ -252,12 +248,21 @@ if(INSTALL_HEADERS)
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
         COMPONENT devel
     )
+    # 公开头文件（node.h / i_alert_rule.h）依赖 utils/ 下的 header-only 工具
+    install(DIRECTORY utils/
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/utils
+        COMPONENT devel
+        FILES_MATCHING PATTERN "*.h"
+    )
 endif()
 
-# 安装核心库和节点库
-install(TARGETS ai_stream_core ai_stream_nodes
-    # ocsort 
-    bytetrack
+# 安装核心库和节点库（跟踪库仅在启用时存在，需一并导出以满足 PRIVATE 链接依赖）
+set(_INSTALL_EXPORT_TARGETS ai_stream_core ai_stream_nodes)
+if(WITH_TRACK)
+    list(APPEND _INSTALL_EXPORT_TARGETS ocsort bytetrack)
+endif()
+
+install(TARGETS ${_INSTALL_EXPORT_TARGETS}
     EXPORT ai_stream_pipeline-targets
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -272,38 +277,41 @@ if(BUILD_HTTP_SERVER)
     )
 endif()
 
-# # 安装 CMake 导出文件
-# install(EXPORT ai_stream_pipeline-targets
-#     FILE ai_stream_pipelineTargets.cmake
-#     NAMESPACE ai_stream_pipeline::
-#     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ai_stream_pipeline
-# )
+# 安装 CMake 导出文件
+install(EXPORT ai_stream_pipeline-targets
+    FILE ai_stream_pipelineTargets.cmake
+    NAMESPACE ai_stream_pipeline::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ai_stream_pipeline
+)
 
-# # 生成并安装版本文件
-# include(CMakePackageConfigHelpers)
-# write_basic_package_version_file(
-#     "${CMAKE_CURRENT_BINARY_DIR}/ai_stream_pipelineConfigVersion.cmake"
-#     VERSION ${PROJECT_VERSION}
-#     COMPATIBILITY SameMajorVersion
-# )
+# 生成并安装版本文件与包配置文件
+include(CMakePackageConfigHelpers)
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/ai_stream_pipelineConfigVersion.cmake"
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion
+)
 
-# configure_package_config_file(
-#     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ai_stream_pipelineConfig.cmake.in"
-#     "${CMAKE_CURRENT_BINARY_DIR}/ai_stream_pipelineConfig.cmake"
-#     INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ai_stream_pipeline
-# )
+configure_package_config_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ai_stream_pipelineConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/ai_stream_pipelineConfig.cmake"
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ai_stream_pipeline
+)
 
-# install(FILES
-#     "${CMAKE_CURRENT_BINARY_DIR}/ai_stream_pipelineConfig.cmake"
-#     "${CMAKE_CURRENT_BINARY_DIR}/ai_stream_pipelineConfigVersion.cmake"
-#     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ai_stream_pipeline
-# )
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/ai_stream_pipelineConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/ai_stream_pipelineConfigVersion.cmake"
+    # 自定义 Find 模块随包安装，供 Config 的 find_dependency 使用
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindFFmpeg.cmake"
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindTensorRT.cmake"
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ai_stream_pipeline
+)
 
-# # 安装配置文件目录（可选）
-# install(DIRECTORY config/
-#     DESTINATION ${CMAKE_INSTALL_DATADIR}/ai_stream_pipeline/config
-#     COMPONENT runtime
-# )
+# 安装运行时配置文件目录
+install(DIRECTORY config/
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/ai_stream_pipeline/config
+    COMPONENT runtime
+)
 
 # ------------------------------------------------------------------------------
 # 10. 输出构建摘要
@@ -316,7 +324,6 @@ message(STATUS "  HTTP Server:          ${BUILD_HTTP_SERVER}")
 message(STATUS "  Build tests:          ${BUILD_TESTS}")
 message(STATUS "  Build examples:       ${BUILD_EXAMPLES}")
 message(STATUS "  TensorRT support:     ${WITH_TENSORRT}")
-message(STATUS "  ONNX Runtime support: ${WITH_ONNX}")
 message(STATUS "  WITH_FTP:             ${WITH_FTP}")
 message(STATUS "  Install prefix:       ${CMAKE_INSTALL_PREFIX}")
 message(STATUS "===============================================")
