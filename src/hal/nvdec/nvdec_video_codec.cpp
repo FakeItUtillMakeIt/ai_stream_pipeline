@@ -224,6 +224,12 @@ bool NvdecVideoCodec::decode(const uint8_t* packet_data, int packet_size,
     frame.format = frame_->format;
     frame.owns_data = false;
 
+    // 设置 UV 平面（NV12 等格式）
+    if (frame_->data[1]) {
+        frame.data_uv = frame_->data[1];
+        frame.pitch_uv = frame_->linesize[1];
+    }
+
     LOG_DEBUG_FMT("[NvdecVideoCodec] Frame decoded: {}x{}, format={}, pitch={}",
                   frame.width, frame.height, frame.format, frame.pitch);
 

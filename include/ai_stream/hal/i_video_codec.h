@@ -20,6 +20,10 @@ struct DecodedFrame {
     int pitch = 0;
     int format = 0;             // 像素格式（如 AV_PIX_FMT_NV12）
     bool owns_data = false;     // 是否需要释放
+
+    // 多平面格式支持（如 NV12 的 Y 和 UV 平面）
+    uint8_t* data_uv = nullptr; // UV 平面数据（NV12/NV21 等）
+    int pitch_uv = 0;           // UV 平面 pitch
 };
 
 /**

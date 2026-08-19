@@ -269,9 +269,12 @@ std::shared_ptr<core::VideoFramePacket> FFmpegDecodeNode::decodePacket(
 
         if (decoded.data) {
             src_data[0] = decoded.data;
-            src_data[1] = decoded.data + decoded.pitch * ((height + 1) & ~1);
             src_linesize[0] = decoded.pitch;
-            src_linesize[1] = decoded.pitch;
+            // UV 平面（NV12 格式）
+            if (decoded.data_uv) {
+                src_data[1] = decoded.data_uv;
+                src_linesize[1] = decoded.pitch_uv;
+            }
         }
 
         sws_scale(ctx->sws_ctx,
