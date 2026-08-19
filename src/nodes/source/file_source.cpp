@@ -63,6 +63,16 @@ bool FileSourceNode::start() {
         return false;
     }
 
+    // 清理上一轮残留线程（如 EOF 自停后未 join 的 worker），
+    // 否则对 joinable 的 std::thread 赋值会触发 std::terminate
+    if (worker_.joinable()) {
+        worker_.join();
+    }
+
+    // EOF 自停不会关闭输入，重启前必须清理残留上下文，
+    // 否则 avformat_open_input 复用已打开的上下文会崩溃
+    closeInput();
+
     if (!openInput()) {
         LOG_ERROR_FMT("[FileSource] Failed to open input file: {}", url_);
         return false;
@@ -73,6 +83,7 @@ bool FileSourceNode::start() {
     static std::atomic<uint32_t> global_stream_id{1000};
     my_stream_id_ = ++global_stream_id;
 
+    worker_exited_ = false;
     worker_ = std::thread(&FileSourceNode::workerFunc, this);
     LOG_INFO_FMT("[FileSource] Started for file: {} (stream_id={}, loop={}, realtime={})",
                  url_, my_stream_id_, loop_enabled_.load(), realtime_.load());
@@ -80,19 +91,19 @@ bool FileSourceNode::start() {
 }
 
 void FileSourceNode::stop() {
-    if (!running_) return;
+    bool was_running = running_.exchange(false);
 
-    LOG_INFO_FMT("[FileSource] Stopping (stream_id={})", my_stream_id_);
-    running_ = false;
-
-    // 文件读取不会长期阻塞（av_read_frame 对本地文件快速返回），直接 join
+    // worker 可能已自行退出（EOF 非循环模式），此时 join 立即返回；
+    // 无论哪种情况都必须 join，避免析构 joinable 线程触发 std::terminate
     if (worker_.joinable()) {
         worker_.join();
     }
 
     closeInput();
-    LOG_INFO_FMT("[FileSource] Stopped (stream_id={}, total frames: {})",
-                 my_stream_id_, total_frames_.load());
+    if (was_running) {
+        LOG_INFO_FMT("[FileSource] Stopped (stream_id={}, total frames: {})",
+                     my_stream_id_, total_frames_.load());
+    }
 }
 
 void FileSourceNode::pushData(std::shared_ptr<core::BasePacket> /*packet*/) {
@@ -159,6 +170,7 @@ void FileSourceNode::workerFunc() {
     AVPacket* pkt = av_packet_alloc();
     if (!pkt) {
         LOG_ERROR_FMT("[FileSource] Failed to allocate packet");
+        worker_exited_ = true;
         return;
     }
 
@@ -184,6 +196,7 @@ void FileSourceNode::workerFunc() {
                 eos_packet->timestamp_ms = utils::TimeUtil::currentTimeMs();
                 broadcast(eos_packet);
                 running_ = false;
+                closeInput();
                 break;
             }
 
@@ -249,6 +262,7 @@ void FileSourceNode::workerFunc() {
     }
 
     av_packet_free(&pkt);
+    worker_exited_ = true;
     LOG_INFO_FMT("[FileSource] Worker thread ended, total frames: {} (stream_id={})",
                  frame_count, my_stream_id_);
 }

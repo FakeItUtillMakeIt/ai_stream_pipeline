@@ -162,7 +162,19 @@ namespace ai_stream
         bool Pipeline::start()
         {
             if (running_)
-                return true;
+            {
+                // 仍有节点在运行 → 视为已启动；
+                // 全部节点已停止（如 STREAM_END 级联自停）→ 允许重新启动
+                std::lock_guard<std::mutex> lock(mutex_);
+                for (const auto &[name, node] : nodes_)
+                {
+                    if (node->isRunning())
+                    {
+                        return true;
+                    }
+                }
+                running_ = false;
+            }
 
             // 按逆拓扑序启动：下游（sink/draw）先就绪，source 最后启动，
             // 避免数据到达未启动的节点被丢弃

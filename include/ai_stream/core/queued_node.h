@@ -66,6 +66,11 @@ public:
     bool start() final {
         if (this->running_.load()) return true;
         if (!onStartup()) return false;
+        // 清理 STREAM_END 自停后残留的未 join 线程（worker 内自停无法 join 自身），
+        // 否则对 joinable 的 std::thread 赋值会触发 std::terminate
+        if (worker_.joinable()) {
+            worker_.join();
+        }
         queue_.setMaxSize(queue_capacity_);
         queue_.reset();
         this->running_ = true;
@@ -86,6 +91,16 @@ public:
 
     void pushData(std::shared_ptr<BasePacket> packet) final {
         if (!packet || !this->running_.load()) return;
+        // STREAM_END 是控制包：绝不允许被背压丢弃，否则下游无法级联自停。
+        // 无视丢帧策略，必要时挤掉最旧的数据包强制入队
+        if (packet->type == PacketType::STREAM_END) {
+            while (!queue_.tryPush(packet)) {
+                std::shared_ptr<BasePacket> discarded;
+                if (!queue_.tryPop(discarded)) return;   // 队列已停止
+                this->recordDropped();
+            }
+            return;
+        }
         bool ok = false;
         switch (drop_policy_) {
             case DropPolicy::DROP_NEWEST:

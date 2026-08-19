@@ -50,6 +50,7 @@ private:
     std::string url_;
     std::string source_id_;
     std::atomic<bool> running_{false};
+    std::atomic<bool> worker_exited_{false};   // worker 线程是否已退出（EOF 自停场景识别）
     std::atomic<bool> loop_enabled_{true};
     std::atomic<bool> realtime_{true};
     std::thread worker_;

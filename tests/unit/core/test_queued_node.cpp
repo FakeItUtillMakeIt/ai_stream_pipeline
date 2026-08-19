@@ -203,6 +203,55 @@ TEST(QueuedNodeTest, StreamEndStopsNodeAndBroadcasts) {
     EXPECT_EQ(sink->received()[0]->type, PacketType::STREAM_END);
 }
 
+// worker 线程内经 STREAM_END 自停后（无法 join 自身，线程残留 joinable），
+// 再次 start() 必须安全——旧实现对 joinable 线程赋值触发 std::terminate
+TEST(QueuedNodeTest, RestartAfterStreamEndSelfStop) {
+    auto node = std::make_shared<RecordingNode>("self_stop_restart");
+    ASSERT_TRUE(node->start());
+
+    auto end = std::make_shared<BasePacket>();
+    end->type = PacketType::STREAM_END;
+    node->pushData(end);
+
+    ASSERT_TRUE(waitUntil([&] { return node->stream_end_count.load() == 1; }));
+    ASSERT_TRUE(waitUntil([&] { return !node->isRunning(); }));
+
+    // 关键：自停后重启不得崩溃，且能继续处理数据
+    ASSERT_TRUE(node->start());
+    EXPECT_TRUE(node->isRunning());
+    node->pushData(makePacket(7));
+    ASSERT_TRUE(waitUntil([&] { return node->processedCount() == 1; }));
+    EXPECT_EQ(node->processedIds()[0], 7);
+    node->stop();
+}
+
+// 队列被突发数据灌满时，STREAM_END 也不允许被背压丢弃（否则下游无法级联自停）
+TEST(QueuedNodeTest, StreamEndSurvivesFullQueue) {    auto node = std::make_shared<RecordingNode>("burst_node", 5);  // 慢处理
+    auto sink = std::make_shared<SyncSinkNode>("burst_sink");
+    node->addDownstream(sink);
+    nlohmann::json params = {
+        {"queue", {{"capacity", 2}, {"drop_policy", "drop_newest"}}}
+    };
+    ASSERT_TRUE(node->configure("burst_node", params));
+    ASSERT_TRUE(node->start());
+    ASSERT_TRUE(sink->start());
+
+    // 突发 20 包灌满容量为 2 的队列
+    for (int i = 0; i < 20; ++i) {
+        node->pushData(makePacket(i));
+    }
+    auto end = std::make_shared<BasePacket>();
+    end->type = PacketType::STREAM_END;
+    node->pushData(end);
+
+    // STREAM_END 必须被处理并转发（即使队列满）
+    ASSERT_TRUE(waitUntil([&] { return node->stream_end_count.load() == 1; }));
+    ASSERT_TRUE(waitUntil([&] { return !node->isRunning(); }));
+    auto received = sink->received();
+    ASSERT_GE(received.size(), 1u);
+    EXPECT_EQ(received.back()->type, PacketType::STREAM_END);
+}
+
 TEST(QueuedNodeTest, StopJoinsWorkerAndDrainsNoMore) {
     auto node = std::make_shared<RecordingNode>("join_node", 5);
     ASSERT_TRUE(node->start());

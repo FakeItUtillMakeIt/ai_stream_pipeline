@@ -26,6 +26,11 @@ gtest_discover_tests(test_core)
 add_executable(test_nodes
     nodes/test_fusion.cpp
     nodes/test_tracker_match.cpp
+    nodes/test_source_lifecycle.cpp
+)
+
+target_compile_definitions(test_nodes PRIVATE
+    TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data"
 )
 
 target_include_directories(test_nodes PRIVATE

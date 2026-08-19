@@ -241,3 +241,44 @@ TEST_F(PipelineTest, GetNodeReturnsBuiltNode) {
     EXPECT_NE(pipeline->getNode("a"), nullptr);
     EXPECT_EQ(pipeline->getNode("ghost"), nullptr);
 }
+
+TEST_F(PipelineTest, StartWhileRunningIsNoop) {
+    nlohmann::json config = {
+        {"nodes", {makeNode("a", "test_dummy")}},
+    };
+    auto pipeline = std::make_shared<Pipeline>("noop_test");
+    ASSERT_TRUE(pipeline->buildFromJson(config));
+    ASSERT_TRUE(pipeline->start());
+    OrderRecorder::instance().reset();
+
+    // 运行中再次 start：直接返回 true，不重复启动节点
+    EXPECT_TRUE(pipeline->start());
+    EXPECT_TRUE(OrderRecorder::instance().events().empty());
+    pipeline->stop();
+}
+
+TEST_F(PipelineTest, RestartAfterAllNodesSelfStopped) {
+    // 模拟 STREAM_END 级联自停：节点全部停止但 Pipeline 未调用 stop()
+    nlohmann::json config = {
+        {"nodes", {makeNode("a", "test_dummy"), makeNode("b", "test_dummy")}},
+        {"edges", {makeEdge("a", "b")}}
+    };
+    auto pipeline = std::make_shared<Pipeline>("restart_test");
+    ASSERT_TRUE(pipeline->buildFromJson(config));
+    ASSERT_TRUE(pipeline->start());
+
+    pipeline->getNode("a")->stop();
+    pipeline->getNode("b")->stop();
+    EXPECT_FALSE(pipeline->isRunning());
+
+    // 再次 start 必须真正重启节点，而不是静默 no-op
+    OrderRecorder::instance().reset();
+    ASSERT_TRUE(pipeline->start());
+    EXPECT_TRUE(pipeline->getNode("a")->isRunning());
+    EXPECT_TRUE(pipeline->getNode("b")->isRunning());
+    auto events = OrderRecorder::instance().events();
+    ASSERT_EQ(events.size(), 2u);
+    EXPECT_EQ(events[0], "start:b");   // 逆拓扑序
+    EXPECT_EQ(events[1], "start:a");
+    pipeline->stop();
+}

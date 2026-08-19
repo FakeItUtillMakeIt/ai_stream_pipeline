@@ -70,6 +70,12 @@ void ActionRecognitionVideoMAENode::onShutdown() {
 }
 
 void ActionRecognitionVideoMAENode::processPacket(std::shared_ptr<core::BasePacket> packet) {
+    if (packet->type == core::PacketType::STREAM_END) {
+        LOG_INFO_FMT("[ActionRecognitionVideoMAE] Received stream end");
+        stop();
+        broadcast(packet);
+        return;
+    }
     if (!is_initialized_) return;
     
     in_time_ms_ = utils::TimeUtil::currentTimeMs();

@@ -57,12 +57,21 @@ bool RTSPSourceNode::start() {
         LOG_WARN_FMT("[RTSPSource] Already running");
         return true;
     }
-    
+
     if (url_.empty()) {
         LOG_ERROR_FMT("[RTSPSource] URL not set");
         return false;
     }
-    
+
+    // 清理上一轮残留线程（如重连失败自停后未 join 的 worker），
+    // 否则对 joinable 的 std::thread 赋值会触发 std::terminate
+    if (worker_.joinable()) {
+        worker_.join();
+    }
+
+    // 自停路径不会关闭输入，重启前清理残留上下文防止泄漏
+    closeInput();
+
     if (!openInput()) {
         LOG_ERROR_FMT("[RTSPSource] Failed to open input");
         return false;
@@ -74,6 +83,7 @@ bool RTSPSourceNode::start() {
     static std::atomic<uint32_t> global_stream_id{0};
     my_stream_id_ = ++global_stream_id;
     
+    worker_exited_ = false;
     worker_ = std::thread(&RTSPSourceNode::workerFunc, this);
     LOG_INFO_FMT("[RTSPSource] Started for URL: {} (stream_id={})", url_, my_stream_id_);
     return true;
@@ -81,32 +91,36 @@ bool RTSPSourceNode::start() {
 
 
 void RTSPSourceNode::stop() {
-    if (!running_) return;
-    
-    LOG_INFO_FMT("[RTSPSource] Stopping (stream_id={})", my_stream_id_);
-    
-    // 先设置停止标志
-    running_ = false;
-    
-    // 等待工作线程结束（带超时）
+    bool was_running = running_.exchange(false);
+
     if (worker_.joinable()) {
-        // 使用 timed_join 避免无限等待
-        auto start = std::chrono::steady_clock::now();
-        while (worker_.joinable() && 
-               std::chrono::steady_clock::now() - start < std::chrono::seconds(3)) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (was_running && !worker_exited_.load()) {
+            // 主动停止运行中的 worker：先给 3 秒自行退出（响应 running_ 标志），
+            // 超时则强制关闭输入使阻塞的 av_read_frame 返回
+            auto start = std::chrono::steady_clock::now();
+            while (!worker_exited_.load() &&
+                   std::chrono::steady_clock::now() - start < std::chrono::seconds(3)) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            if (!worker_exited_.load()) {
+                LOG_WARN_FMT("[RTSPSource] Worker thread not responding, forcing close");
+                closeInput();
+                auto force_start = std::chrono::steady_clock::now();
+                while (!worker_exited_.load() &&
+                       std::chrono::steady_clock::now() - force_start < std::chrono::seconds(2)) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                }
+            }
         }
-        
-        if (worker_.joinable()) {
-            LOG_WARN_FMT("[RTSPSource] Worker thread not responding, forcing close");
-            // 强制关闭输入，触发 av_read_frame 返回错误
-            closeInput();
-            worker_.join();
-        }
+        // worker 已退出（或强制关闭后退出）→ 回收线程；
+        // 自停场景（was_running=false）线程已退出，join 立即返回
+        worker_.join();
     }
-    
+
     closeInput();
-    LOG_INFO_FMT("[RTSPSource] Stopped (stream_id={})", my_stream_id_);
+    if (was_running) {
+        LOG_INFO_FMT("[RTSPSource] Stopped (stream_id={})", my_stream_id_);
+    }
 }
 
 void RTSPSourceNode::pushData(std::shared_ptr<core::BasePacket> /*packet*/) {
@@ -251,6 +265,7 @@ void RTSPSourceNode::workerFunc() {
     AVPacket* pkt = av_packet_alloc();
     if (!pkt) {
         LOG_ERROR_FMT("[RTSPSource] Failed to allocate packet");
+        worker_exited_ = true;
         return;
     }
     
@@ -272,6 +287,7 @@ void RTSPSourceNode::workerFunc() {
                 eos_packet->timestamp_ms = utils::TimeUtil::currentTimeMs();
                 broadcast(eos_packet);
                 running_ = false;
+                closeInput();
                 break;
             }
             
@@ -357,6 +373,7 @@ void RTSPSourceNode::workerFunc() {
     }
     
     av_packet_free(&pkt);
+    worker_exited_ = true;
     LOG_INFO_FMT("[RTSPSource] Worker thread ended, total frames: {} (stream_id={})", 
                  frame_count, my_stream_id_);
 }
