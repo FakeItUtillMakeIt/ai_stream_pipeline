@@ -1,8 +1,11 @@
 // src/nodes/preprocess/cuda_resize_normalize.h
+// 预处理节点——使用 ImageAcceleratorFactory，支持多后端
 #pragma once
 
 #include "ai_stream/nodes/i_gpu_preprocess_node.h"
 #include "ai_stream/core/queued_node.h"
+#include "ai_stream/hal/i_image_accelerator.h"
+#include "ai_stream/hal/image_accelerator_factory.h"
 #include <cuda_runtime.h>
 
 namespace ai_stream {
@@ -33,13 +36,15 @@ public:
     float getAverageLatencyMs() const override;
     void setTensorRTPreprocessEnabled(bool enable) override;
 
+    // 设置图像加速器后端类型
+    void setImageAcceleratorBackend(hal::ImageAcceleratorBackend backend) { backend_type_ = backend; }
+
 private:
     void ensureGpuBuffers(int src_w, int src_h, int dst_w, int dst_h);
-    
-    // 处理 GPU 输入（硬件解码路径）
-    void processGpuInput(const core::VideoFramePacket& frame, int dst_w, int dst_h);
-    // 处理 CPU 输入（软件解码路径）
-    void processCpuInput(const core::VideoFramePacket& frame, int dst_w, int dst_h);
+
+    // HAL 图像加速器
+    hal::ImageAcceleratorPtr accelerator_;
+    hal::ImageAcceleratorBackend backend_type_ = hal::ImageAcceleratorBackend::AUTO;
 
     int device_id_;
     bool async_processing_;

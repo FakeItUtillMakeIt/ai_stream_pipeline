@@ -21,6 +21,51 @@ struct BBox {
 };
 
 /**
+ * @brief Resize+Normalize 参数
+ */
+struct ResizeNormalizeParams {
+    int src_width = 0;
+    int src_height = 0;
+    size_t src_pitch = 0;       // GPU 输入时的行 pitch（字节）
+    int dst_width = 0;
+    int dst_height = 0;
+    bool keep_aspect_ratio = false;  // 是否保持宽高比（letterbox）
+    std::vector<float> mean{0.0f, 0.0f, 0.0f};
+    std::vector<float> std{1.0f, 1.0f, 1.0f};
+    void* stream = nullptr;     // CUDA stream（nullptr 表示同步）
+};
+
+/**
+ * @brief Letterbox 输出参数
+ */
+struct LetterboxResult {
+    int letter_w = 0;
+    int letter_h = 0;
+    int pad_x = 0;
+    int pad_y = 0;
+    float scale = 1.0f;
+};
+
+/**
+ * @brief 绘制参数
+ */
+struct DrawParams {
+    uint8_t* bgr = nullptr;     // BGR 图像数据
+    int width = 0;
+    int height = 0;
+    int pitch = 0;              // 行 pitch（字节）
+    bool is_gpu = false;        // 数据是否在 GPU 上
+    void* stream = nullptr;     // CUDA stream
+    // 绘制选项
+    int box_color_b = 0;
+    int box_color_g = 255;
+    int box_color_r = 0;
+    int font_thickness = 1;
+    bool show_confidence = true;
+    std::vector<int> class_filter;
+};
+
+/**
  * @brief 图像加速抽象接口
  *
  * 封装 resize、normalize、NMS、OSD 绘制等图像操作，
@@ -33,33 +78,26 @@ public:
     /**
      * @brief Resize + Normalize
      * @param src 源图像数据（RGB/BGR，uint8）
-     * @param src_width 源宽度
-     * @param src_height 源高度
-     * @param dst 目标缓冲区（float32，NCHW 布局）
-     * @param dst_width 目标宽度
-     * @param dst_height 目标高度
-     * @param mean 均值
-     * @param std 标准差
+     * @param params 参数
+     * @param dst 目标缓冲区（float32，NCHW 布局，GPU 内存）
+     * @param letter 输出 letterbox 参数（如果 keep_aspect_ratio=true）
      * @return 是否成功
      */
     virtual bool resizeNormalize(
-        const uint8_t* src, int src_width, int src_height,
-        float* dst, int dst_width, int dst_height,
-        const std::vector<float>& mean,
-        const std::vector<float>& std) = 0;
+        const uint8_t* src,
+        const ResizeNormalizeParams& params,
+        float* dst,
+        LetterboxResult* letter = nullptr) = 0;
 
     /**
      * @brief 在 BGR 图像上绘制边界框
-     * @param bgr BGR 图像数据
-     * @param width 图像宽度
-     * @param height 图像高度
-     * @param pitch 行 pitch（字节）
      * @param boxes 要绘制的边界框
+     * @param draw 绘制参数
      * @return 是否成功
      */
     virtual bool drawBoxes(
-        uint8_t* bgr, int width, int height, int pitch,
-        const std::vector<BBox>& boxes) = 0;
+        const std::vector<BBox>& boxes,
+        const DrawParams& draw) = 0;
 
     /**
      * @brief 非极大值抑制

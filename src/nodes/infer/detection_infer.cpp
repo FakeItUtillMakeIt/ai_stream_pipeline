@@ -1,10 +1,10 @@
 // src/nodes/infer/detection_infer.cpp
+// 检测推理节点——使用 HAL 抽象接口
 // 【加速优化】Pinned Memory + CUDA Graph + 双流异步传输
 #include "detection_infer.h"
 #include "ai_stream/core/packet.h"
 #include "registry/node_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
-#include "utils/tensor_rt_logger.h"
 #include "utils/cuda_check.h"
 #include <opencv2/opencv.hpp>
 #include <fstream>
@@ -17,7 +17,7 @@ namespace ai_stream {
 namespace nodes {
 
 // ============================================================
-// DetectionInferNode - 加速优化版
+// DetectionInferNode - HAL 加速优化版
 // ============================================================
 
 DetectionInferNode::DetectionInferNode() : IInferNode("DetectionInfer") {
@@ -72,6 +72,9 @@ void DetectionInferNode::setBatchSize(int batch_size) {
 }
 
 std::pair<int, int> DetectionInferNode::getInputSize() const {
+    if (engine_) {
+        return engine_->getInputSize();
+    }
     return {input_width_, input_height_};
 }
 
@@ -86,8 +89,10 @@ bool DetectionInferNode::start() {
     queue_.reset();
     running_ = true;
     worker_ = std::thread(&DetectionInferNode::inferLoop, this);
-    LOG_INFO_FMT("[DetectionInfer] Started with max_batch={}, cuda_graph={}, pinned_memory={}",
-                 max_batch_size_.load(), cuda_graph_enabled_.load() ? "ON" : "OFF",
+    LOG_INFO_FMT("[DetectionInfer] Started with max_batch={}, backend={}, cuda_graph={}, pinned_memory={}",
+                 max_batch_size_.load(),
+                 engine_ ? engine_->getBackendName() : "none",
+                 cuda_graph_enabled_.load() ? "ON" : "OFF",
                  h_pinned_input_ ? "ON" : "OFF");
     return true;
 }
@@ -118,7 +123,7 @@ void DetectionInferNode::pushData(std::shared_ptr<core::BasePacket> packet) {
 }
 
 // ============================================================
-// 【加速优化】推理主循环 - 支持 CUDA Graph 快速路径
+// 推理主循环 - 支持 CUDA Graph 快速路径
 // ============================================================
 void DetectionInferNode::inferLoop() {
     while (running_) {
@@ -170,7 +175,7 @@ void DetectionInferNode::inferLoop() {
 }
 
 // ============================================================
-// 【加速优化】多 batch 推理核心 - 双流 + Pinned Memory
+// 多 batch 推理核心 - 双流 + Pinned Memory
 // ============================================================
 std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::processBatch(
     const std::vector<std::shared_ptr<core::VideoFramePacket>>& frames) {
@@ -189,7 +194,7 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
         results.push_back(result);
     }
 
-    if (!engine_ || !context_) {
+    if (!engine_) {
         // Mock 模式
         static int frame_count = 0;
         for (int b = 0; b < actual_batch; ++b) {
@@ -255,22 +260,25 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
             return results;
         }
 
-        // 设置动态输入形状
-        nvinfer1::Dims4 input_dims(valid_batch, 3, input_height_, input_width_);
-        if (!context_->setInputShape(input_name_.c_str(), input_dims)) {
-            LOG_ERROR_FMT("[DetectionInfer] setInputShape failed for batch={}", valid_batch);
-            return results;
+        // 设置动态输入形状（通过原始 TensorRT context）
+        nvinfer1::IExecutionContext* raw_context =
+            static_cast<nvinfer1::IExecutionContext*>(engine_->getRawContext());
+        if (raw_context) {
+            nvinfer1::Dims4 input_dims(valid_batch, 3, input_height_, input_width_);
+            if (!raw_context->setInputShape(input_name_.c_str(), input_dims)) {
+                LOG_ERROR_FMT("[DetectionInfer] setInputShape failed for batch={}", valid_batch);
+                return results;
+            }
         }
 
         // ============================================================
-        // 【加速优化】GPU 路径 - 使用 transfer_stream_ 异步传输
+        // GPU 路径 - 使用 transfer_stream_ 异步传输
         // ============================================================
         if (gpu_batch > 0) {
             LOG_DEBUG_FMT("[DetectionInfer] GPU path: {} frames", gpu_batch);
 
             for (int i = 0; i < gpu_batch; ++i) {
                 size_t offset = i * 3 * input_height_ * input_width_ * sizeof(float);
-                // 【加速】使用 transfer_stream_ 异步 D2D 拷贝
                 cudaMemcpyAsync(static_cast<char*>(d_input_) + offset,
                                 d_ptrs[i],
                                 3 * input_height_ * input_width_ * sizeof(float),
@@ -279,7 +287,7 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
         }
 
         // ============================================================
-        // 【加速优化】CPU 路径 - 使用 Pinned Memory 加速 H2D 传输
+        // CPU 路径 - 使用 Pinned Memory 加速 H2D 传输
         // ============================================================
         if (cpu_batch > 0) {
             LOG_DEBUG_FMT("[DetectionInfer] CPU path: {} frames (pinned memory)", cpu_batch);
@@ -287,7 +295,6 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
             int hw = input_height_ * input_width_;
             int batch_stride = 3 * hw;
 
-            // 【加速】使用 pinned memory 代替 std::vector<float>
             float* host_input = h_pinned_input_
                 ? h_pinned_input_
                 : static_cast<float*>(malloc(cpu_batch * batch_stride * sizeof(float)));
@@ -310,53 +317,48 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
                 }
             }
 
-            // 拷贝到 GPU，接在 GPU 路径数据后面
             size_t gpu_offset = gpu_batch * batch_stride * sizeof(float);
-            // 【加速】使用 transfer_stream_ 异步 H2D 传输
             cudaMemcpyAsync(static_cast<char*>(d_input_) + gpu_offset,
                             host_input,
                             cpu_batch * batch_stride * sizeof(float),
                             cudaMemcpyHostToDevice, transfer_stream_);
 
-            // 如果不是 pinned memory，需要释放
             if (!h_pinned_input_) {
                 free(host_input);
             }
         }
 
-        // 【加速】等待传输完成后再推理
+        // 等待传输完成后再推理
         cudaStreamSynchronize(transfer_stream_);
 
-        // 设置 Tensor 地址并执行推理
-        context_->setTensorAddress(input_name_.c_str(), d_input_);
-        context_->setTensorAddress(boxes_name_.c_str(), d_boxes_);
-        context_->setTensorAddress(scores_name_.c_str(), d_scores_);
-        context_->setTensorAddress(classes_name_.c_str(), d_classes_);
-        context_->setTensorAddress(batch_ids_name_.c_str(), d_batch_ids_);
-        context_->setTensorAddress(num_dets_name_.c_str(), d_num_dets_);
+        // 设置 Tensor 地址并执行推理（通过 HAL 接口）
+        engine_->setInputTensor(input_name_, d_input_);
+        engine_->setOutputTensor(boxes_name_, d_boxes_);
+        engine_->setOutputTensor(scores_name_, d_scores_);
+        engine_->setOutputTensor(classes_name_, d_classes_);
+        engine_->setOutputTensor(batch_ids_name_, d_batch_ids_);
+        engine_->setOutputTensor(num_dets_name_, d_num_dets_);
 
         // ============================================================
-        // 【加速优化】推理执行 - 优先使用 CUDA Graph
+        // 推理执行 - 优先使用 CUDA Graph
         // ============================================================
         auto t0 = std::chrono::high_resolution_clock::now();
 
         if (cuda_graph_ready_ && cuda_graph_batch_size_ == valid_batch) {
-            // 【加速】CUDA Graph 快速路径 - 消除 kernel launch overhead
             if (!executeCudaGraph()) {
                 LOG_WARN_FMT("[DetectionInfer] CUDA Graph execution failed, fallback to normal");
-                if (!context_->enqueueV3(compute_stream_)) {
-                    LOG_ERROR_FMT("[DetectionInfer] enqueueV3 failed for batch={}", valid_batch);
+                if (!engine_->inferAsync(compute_stream_)) {
+                    LOG_ERROR_FMT("[DetectionInfer] inferAsync failed for batch={}", valid_batch);
                     return results;
                 }
-                cudaStreamSynchronize(compute_stream_);
+                engine_->synchronize(compute_stream_);
             }
         } else {
-            // 普通推理路径
-            if (!context_->enqueueV3(compute_stream_)) {
-                LOG_ERROR_FMT("[DetectionInfer] enqueueV3 failed for batch={}", valid_batch);
+            if (!engine_->inferAsync(compute_stream_)) {
+                LOG_ERROR_FMT("[DetectionInfer] inferAsync failed for batch={}", valid_batch);
                 return results;
             }
-            cudaStreamSynchronize(compute_stream_);
+            engine_->synchronize(compute_stream_);
         }
 
         auto t1 = std::chrono::high_resolution_clock::now();
@@ -364,20 +366,18 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
         LOG_DEBUG_FMT("[DetectionInfer] Inference time: {:.2f}ms (batch={})", infer_ms, valid_batch);
 
         // ============================================================
-        // 【加速优化】后处理 - 使用 Pinned Memory 加速 D2H 传输
+        // 后处理 - 使用 Pinned Memory 加速 D2H 传输
         // ============================================================
-
-        // 优先使用 pinned buffers
         int64_t* num_dets_ptr = h_pinned_num_dets_ ? h_pinned_num_dets_ : &h_num_dets_;
         float* boxes_ptr = h_pinned_boxes_ ? h_pinned_boxes_ : h_boxes_.data();
         float* scores_ptr = h_pinned_scores_ ? h_pinned_scores_ : h_scores_.data();
         int64_t* classes_ptr = h_pinned_classes_ ? h_pinned_classes_ : h_classes_.data();
         int64_t* batch_ids_ptr = h_pinned_batch_ids_ ? h_pinned_batch_ids_ : h_batch_ids_.data();
 
-        // 【加速】异步 D2H 传输，使用 transfer_stream_
+        // 异步 D2H 传输
         cudaMemcpyAsync(num_dets_ptr, d_num_dets_, sizeof(int64_t),
                         cudaMemcpyDeviceToHost, transfer_stream_);
-        cudaStreamSynchronize(transfer_stream_);  // 需要先知道检测数量
+        cudaStreamSynchronize(transfer_stream_);
 
         int total_dets = static_cast<int>(*num_dets_ptr);
         h_num_dets_ = *num_dets_ptr;
@@ -397,14 +397,12 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
         size_t actual_classes = static_cast<size_t>(total_dets) * sizeof(int64_t);
         size_t actual_batch_ids = static_cast<size_t>(total_dets) * sizeof(int64_t);
 
-        // 【加速】批量异步 D2H 传输
         cudaMemcpyAsync(boxes_ptr, d_boxes_, actual_boxes, cudaMemcpyDeviceToHost, transfer_stream_);
         cudaMemcpyAsync(scores_ptr, d_scores_, actual_scores, cudaMemcpyDeviceToHost, transfer_stream_);
         cudaMemcpyAsync(classes_ptr, d_classes_, actual_classes, cudaMemcpyDeviceToHost, transfer_stream_);
         cudaMemcpyAsync(batch_ids_ptr, d_batch_ids_, actual_batch_ids, cudaMemcpyDeviceToHost, transfer_stream_);
         cudaStreamSynchronize(transfer_stream_);
 
-        // 同步到 h_boxes_ 等（如果使用了 pinned memory）
         if (h_pinned_boxes_) {
             h_boxes_.assign(boxes_ptr, boxes_ptr + total_dets * 4);
             h_scores_.assign(scores_ptr, scores_ptr + total_dets);
@@ -415,7 +413,6 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
         // 构建 scale 数组
         std::vector<float> valid_scale_x(valid_batch);
         std::vector<float> valid_scale_y(valid_batch);
-        // Letterbox 参数数组
         std::vector<float> valid_letter_scale(valid_batch, 1.0f);
         std::vector<int> valid_letter_pad_x(valid_batch, 0);
         std::vector<int> valid_letter_pad_y(valid_batch, 0);
@@ -457,7 +454,7 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
             results[i]->detections = std::move(all_detections[idx++]);
         }
 
-        LOG_INFO_FMT("[DetectionInfer] Batch done: gpu={} cpu={} total_valid={} total={}, detections={}",
+        LOG_INFO_FMT("[DetectionInfer] Batch done: gpu={} cpu={} valid_batch={} total_dets={}, detections={}",
                      gpu_batch, cpu_batch, valid_batch, total_dets, results[0]->detections.size());
 
     } catch (const std::exception& e) {
@@ -468,10 +465,10 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
 }
 
 // ============================================================
-// 【保留】CPU 路径预处理
+// CPU 路径预处理
 // ============================================================
 void DetectionInferNode::preprocessBatchCpu(const std::vector<cv::Mat*>& images,
-                                             float* gpu_buffer, int batch_size) {
+                                              float* gpu_buffer, int batch_size) {
     int hw = input_height_ * input_width_;
     int batch_stride = 3 * hw;
 
@@ -534,16 +531,12 @@ std::vector<std::vector<core::InferenceResultPacket::BBox>> DetectionInferNode::
 
         core::InferenceResultPacket::BBox box;
 
-        // Letterbox 反变换：将坐标从 letterbox 画布空间映射回原图空间
+        // Letterbox 反变换
         if (letterbox_used && letterbox_used[batch_id] && letter_scale) {
             float inv_scale = 1.0f / letter_scale[batch_id];
             float pad_x = static_cast<float>(letter_pad_x[batch_id]);
             float pad_y = static_cast<float>(letter_pad_y[batch_id]);
 
-            // 模型输出坐标是在 target 空间（含 padding）中的
-            // 映射回原图：
-            //   1. 先减去 padding 偏移
-            //   2. 再除以缩放比例
             float orig_cx = (cx - pad_x) * inv_scale;
             float orig_cy = (cy - pad_y) * inv_scale;
             float orig_w  = w * inv_scale;
@@ -553,11 +546,7 @@ std::vector<std::vector<core::InferenceResultPacket::BBox>> DetectionInferNode::
             box.y = static_cast<int>(orig_cy - orig_h / 2.0f);
             box.w = static_cast<int>(orig_w);
             box.h = static_cast<int>(orig_h);
-
-            LOG_DEBUG_FMT("[DetectionInfer] Letterbox reverse: batch={} cx={:.1f} cy={:.1f} -> orig_cx={:.1f} orig_cy={:.1f}",
-                          batch_id, cx, cy, orig_cx, orig_cy);
         } else {
-            // 直接 resize 模式：使用原有的 scale_x/scale_y
             box.x = static_cast<int>((cx - w / 2.0f) * scale_x[batch_id]);
             box.y = static_cast<int>((cy - h / 2.0f) * scale_y[batch_id]);
             box.w = static_cast<int>(w * scale_x[batch_id]);
@@ -579,34 +568,35 @@ std::vector<std::vector<core::InferenceResultPacket::BBox>> DetectionInferNode::
 }
 
 // ============================================================
-// 【加速优化】CUDA Graph 捕获 - 消除 kernel launch overhead
+// CUDA Graph 捕获 - 消除 kernel launch overhead
 // ============================================================
 bool DetectionInferNode::captureCudaGraph(int batch_size) {
-    if (!engine_ || !context_) return false;
+    nvinfer1::IExecutionContext* raw_context =
+        static_cast<nvinfer1::IExecutionContext*>(engine_->getRawContext());
+    if (!raw_context) return false;
 
     destroyCudaGraph();
 
     try {
-        // 设置输入形状
         nvinfer1::Dims4 input_dims(batch_size, 3, input_height_, input_width_);
-        if (!context_->setInputShape(input_name_.c_str(), input_dims)) {
+        if (!raw_context->setInputShape(input_name_.c_str(), input_dims)) {
             LOG_ERROR_FMT("[DetectionInfer] CUDA Graph: setInputShape failed");
             return false;
         }
 
         // 设置 tensor 地址
-        context_->setTensorAddress(input_name_.c_str(), d_input_);
-        context_->setTensorAddress(boxes_name_.c_str(), d_boxes_);
-        context_->setTensorAddress(scores_name_.c_str(), d_scores_);
-        context_->setTensorAddress(classes_name_.c_str(), d_classes_);
-        context_->setTensorAddress(batch_ids_name_.c_str(), d_batch_ids_);
-        context_->setTensorAddress(num_dets_name_.c_str(), d_num_dets_);
+        engine_->setInputTensor(input_name_, d_input_);
+        engine_->setOutputTensor(boxes_name_, d_boxes_);
+        engine_->setOutputTensor(scores_name_, d_scores_);
+        engine_->setOutputTensor(classes_name_, d_classes_);
+        engine_->setOutputTensor(batch_ids_name_, d_batch_ids_);
+        engine_->setOutputTensor(num_dets_name_, d_num_dets_);
 
         // 开始捕获 CUDA Graph
         cudaStreamBeginCapture(compute_stream_, cudaStreamCaptureModeGlobal);
 
         // 执行推理（会被捕获到 graph 中）
-        if (!context_->enqueueV3(compute_stream_)) {
+        if (!raw_context->enqueueV3(compute_stream_)) {
             LOG_ERROR_FMT("[DetectionInfer] CUDA Graph capture: enqueueV3 failed");
             cudaStreamEndCapture(compute_stream_, &cuda_graph_);
             return false;
@@ -646,7 +636,6 @@ bool DetectionInferNode::executeCudaGraph() {
         LOG_ERROR_FMT("[DetectionInfer] CUDA Graph launch failed: {}", cudaGetErrorString(err));
         return false;
     }
-
     cudaStreamSynchronize(compute_stream_);
     return true;
 }
@@ -665,7 +654,7 @@ void DetectionInferNode::destroyCudaGraph() {
 }
 
 // ============================================================
-// 【加速优化】Pinned Memory 管理
+// Pinned Memory 管理
 // ============================================================
 bool DetectionInferNode::allocatePinnedMemory() {
     int max_batch = max_batch_size_.load();
@@ -680,7 +669,6 @@ bool DetectionInferNode::allocatePinnedMemory() {
 
     cudaError_t err;
 
-    // 分配 pinned memory (page-locked)
     err = cudaMallocHost(&h_pinned_input_, input_bytes);
     if (err != cudaSuccess) {
         LOG_WARN_FMT("[DetectionInfer] Failed to allocate pinned input memory, fallback to regular");
@@ -732,65 +720,39 @@ void DetectionInferNode::freePinnedMemory() {
 }
 
 // ============================================================
-// 初始化引擎（包含加速优化初始化）
+// 初始化引擎（通过 HAL 工厂创建）
 // ============================================================
 bool DetectionInferNode::initEngine(const std::string& engine_path) {
     try {
-        std::ifstream file(engine_path, std::ios::binary | std::ios::ate);
-        if (!file.is_open()) {
-            LOG_ERROR_FMT("[DetectionInfer] Failed to open engine: {}", engine_path);
+        // 通过 HAL 工厂创建推理引擎
+        engine_ = hal::DetectionInferenceEngineFactory::instance().create(backend_type_);
+        if (!engine_) {
+            LOG_ERROR("[DetectionInfer] Failed to create inference engine via factory");
             return false;
         }
 
-        size_t size = file.tellg();
-        file.seekg(0, std::ios::beg);
-        std::vector<char> buffer(size);
-        if (!file.read(buffer.data(), size)) {
-            LOG_ERROR_FMT("[DetectionInfer] Failed to read engine");
+        hal::DetectionInferenceConfig config;
+        config.model_path = engine_path;
+        config.input_width = input_width_;
+        config.input_height = input_height_;
+        config.max_batch_size = max_batch_size_.load();
+        config.max_detections = MAX_DETS;
+        config.precision = precision_;
+        config.enable_cuda_graph = cuda_graph_enabled_.load();
+
+        if (!engine_->loadModel(config)) {
+            LOG_ERROR_FMT("[DetectionInfer] Failed to load model: {}", engine_path);
+            engine_.reset();
             return false;
         }
 
-        nvinfer1::IRuntime* runtime = nvinfer1::createInferRuntime(g_logger);
-        if (!runtime) {
-            LOG_ERROR_FMT("[DetectionInfer] createInferRuntime failed");
-            return false;
-        }
+        LOG_INFO_FMT("[DetectionInfer] Engine loaded via backend: {}", engine_->getBackendName());
 
-        nvinfer1::ICudaEngine* engine = runtime->deserializeCudaEngine(buffer.data(), size);
-        if (!engine) {
-            LOG_ERROR_FMT("[DetectionInfer] deserializeCudaEngine failed");
-            delete runtime;
-            return false;
-        }
-
-        nvinfer1::IExecutionContext* context = engine->createExecutionContext();
-        if (!context) {
-            LOG_ERROR_FMT("[DetectionInfer] createExecutionContext failed");
-            delete engine;
-            delete runtime;
-            return false;
-        }
-
-        runtime_.reset(runtime);
-        engine_.reset(engine);
-        context_.reset(context);
-
-        // 【加速优化】创建双流架构
+        // 创建双流架构
         cudaStreamCreateWithFlags(&compute_stream_, cudaStreamNonBlocking);
         cudaStreamCreateWithFlags(&transfer_stream_, cudaStreamNonBlocking);
 
-        int nb_io = engine_->getNbIOTensors();
-        LOG_INFO_FMT("[DetectionInfer] Engine has {} I/O tensors", nb_io);
-
-        for (int i = 0; i < nb_io; ++i) {
-            const char* name = engine_->getIOTensorName(i);
-            nvinfer1::TensorIOMode mode = engine_->getTensorIOMode(name);
-            nvinfer1::Dims dims = engine_->getTensorShape(name);
-            std::string mode_str = (mode == nvinfer1::TensorIOMode::kINPUT) ? "INPUT" : "OUTPUT";
-            LOG_INFO_FMT("[DetectionInfer]  Tensor[{}]: {} ({}), shape=[{}]",
-                         i, name, mode_str, dims.nbDims);
-        }
-
+        // 计算缓冲区大小
         int max_batch = max_batch_size_.load();
         input_size_ = static_cast<size_t>(max_batch) * 3 * input_height_ * input_width_ * sizeof(float);
         out_boxes_size_ = static_cast<size_t>(max_batch) * MAX_DETS * 4 * sizeof(float);
@@ -799,6 +761,7 @@ bool DetectionInferNode::initEngine(const std::string& engine_path) {
         out_batch_ids_size_ = static_cast<size_t>(max_batch) * MAX_DETS * sizeof(int64_t);
         out_num_dets_size_ = sizeof(int64_t);
 
+        // 分配 GPU 缓冲区
         cudaMalloc(&d_input_, input_size_);
         cudaMalloc(&d_boxes_, out_boxes_size_);
         cudaMalloc(&d_scores_, out_scores_size_);
@@ -809,21 +772,22 @@ bool DetectionInferNode::initEngine(const std::string& engine_path) {
         cudaMalloc(&d_preprocess_tmp_, input_size_);
         d_preprocess_tmp_size_ = input_size_;
 
+        // 分配 CPU fallback 缓冲区
         h_boxes_.resize(max_batch * MAX_DETS * 4);
         h_scores_.resize(max_batch * MAX_DETS);
         h_classes_.resize(max_batch * MAX_DETS);
         h_batch_ids_.resize(max_batch * MAX_DETS);
         h_num_dets_ = 0;
 
-        // 【加速优化】分配 Pinned Memory
+        // 分配 Pinned Memory
         allocatePinnedMemory();
 
-        // 【加速优化】预捕获 CUDA Graph
+        // 预捕获 CUDA Graph
         if (cuda_graph_enabled_) {
             captureCudaGraph(max_batch);
         }
 
-        LOG_INFO_FMT("[DetectionInfer] Engine loaded: {} (max_batch={}, max_dets={}, streams=2, pinned={}, cuda_graph={})",
+        LOG_INFO_FMT("[DetectionInfer] Engine initialized: {} (max_batch={}, max_dets={}, streams=2, pinned={}, cuda_graph={})",
                      engine_path, max_batch, MAX_DETS,
                      h_pinned_input_ ? "ON" : "OFF",
                      cuda_graph_ready_ ? "READY" : "OFF");

@@ -10,72 +10,115 @@ namespace ai_stream {
 namespace hal {
 
 bool CpuImageAccelerator::resizeNormalize(
-    const uint8_t* src, int src_width, int src_height,
-    float* dst, int dst_width, int dst_height,
-    const std::vector<float>& mean,
-    const std::vector<float>& std) {
+    const uint8_t* src,
+    const ResizeNormalizeParams& params,
+    float* dst,
+    LetterboxResult* letter) {
 
-    if (!src || !dst || src_width <= 0 || src_height <= 0) {
+    if (!src || !dst || params.src_width <= 0 || params.src_height <= 0) {
         return false;
     }
 
-    // 构造源 Mat（RGB/BGR uint8）
-    cv::Mat src_mat(src_height, src_width, CV_8UC3, const_cast<uint8_t*>(src));
+    cv::Mat src_mat(params.src_height, params.src_width, CV_8UC3, const_cast<uint8_t*>(src));
+
+    int dst_w = params.dst_width;
+    int dst_h = params.dst_height;
+    int letter_w = dst_w, letter_h = dst_h, pad_x = 0, pad_y = 0;
+    float scale = 1.0f;
+
+    if (params.keep_aspect_ratio) {
+        scale = std::min(
+            static_cast<float>(params.dst_width) / params.src_width,
+            static_cast<float>(params.dst_height) / params.src_height);
+        letter_w = std::max(1, static_cast<int>(std::round(params.src_width * scale)));
+        letter_h = std::max(1, static_cast<int>(std::round(params.src_height * scale)));
+        pad_x = (dst_w - letter_w) / 2;
+        pad_y = (dst_h - letter_h) / 2;
+    }
 
     // Resize
     cv::Mat resized;
-    cv::resize(src_mat, resized, cv::Size(dst_width, dst_height), 0, 0, cv::INTER_LINEAR);
+    cv::resize(src_mat, resized, cv::Size(letter_w, letter_h), 0, 0, cv::INTER_LINEAR);
 
     // 转 float 并归一化到 [0, 1]
     cv::Mat float_mat;
     resized.convertTo(float_mat, CV_32FC3, 1.0 / 255.0);
 
+    // 创建目标 Mat（NCHW 布局）
+    const int plane_size = dst_w * dst_h;
+    cv::Mat dst_mat(dst_h, dst_w, CV_32FC3, dst);
+
+    // 填充灰色背景（letterbox 时）
+    if (params.keep_aspect_ratio) {
+        dst_mat.setTo(cv::Scalar(114.0f / 255.0f, 114.0f / 255.0f, 114.0f / 255.0f));
+        float_mat.copyTo(dst_mat(cv::Rect(pad_x, pad_y, letter_w, letter_h)));
+    } else {
+        float_mat.copyTo(dst_mat);
+    }
+
     // 转换到 NCHW 布局
-    const int plane_size = dst_width * dst_height;
     std::vector<cv::Mat> channels(3);
     for (int c = 0; c < 3; ++c) {
-        channels[c] = cv::Mat(dst_height, dst_width, CV_32FC1,
-                              dst + c * plane_size);
+        channels[c] = cv::Mat(dst_h, dst_w, CV_32FC1, dst + c * plane_size);
     }
-    cv::split(float_mat, channels);
+    cv::split(dst_mat, channels);
 
     // 应用均值和标准差
-    float m[3] = {mean.size() > 0 ? mean[0] : 0.0f,
-                  mean.size() > 1 ? mean[1] : 0.0f,
-                  mean.size() > 2 ? mean[2] : 0.0f};
-    float s[3] = {std.size() > 0 ? std[0] : 1.0f,
-                  std.size() > 1 ? std[1] : 1.0f,
-                  std.size() > 2 ? std[2] : 1.0f};
+    float m[3] = {params.mean.size() > 0 ? params.mean[0] : 0.0f,
+                  params.mean.size() > 1 ? params.mean[1] : 0.0f,
+                  params.mean.size() > 2 ? params.mean[2] : 0.0f};
+    float s[3] = {params.std.size() > 0 ? params.std[0] : 1.0f,
+                  params.std.size() > 1 ? params.std[1] : 1.0f,
+                  params.std.size() > 2 ? params.std[2] : 1.0f};
 
     for (int c = 0; c < 3; ++c) {
-        cv::Mat plane(dst_height, dst_width, CV_32FC1, dst + c * plane_size);
+        cv::Mat plane(dst_h, dst_w, CV_32FC1, dst + c * plane_size);
         plane = (plane - m[c]) / s[c];
+    }
+
+    // 输出 letterbox 参数
+    if (letter && params.keep_aspect_ratio) {
+        letter->letter_w = letter_w;
+        letter->letter_h = letter_h;
+        letter->pad_x = pad_x;
+        letter->pad_y = pad_y;
+        letter->scale = scale;
     }
 
     return true;
 }
 
 bool CpuImageAccelerator::drawBoxes(
-    uint8_t* bgr, int width, int height, int pitch,
-    const std::vector<BBox>& boxes) {
+    const std::vector<BBox>& boxes,
+    const DrawParams& draw) {
 
-    if (!bgr || width <= 0 || height <= 0) {
+    if (!draw.bgr || draw.width <= 0 || draw.height <= 0) {
         return false;
     }
 
-    cv::Mat img(height, width, CV_8UC3, bgr, pitch);
+    cv::Mat img(draw.height, draw.width, CV_8UC3, draw.bgr, draw.pitch);
 
     for (const auto& box : boxes) {
+        // 类别过滤
+        if (!draw.class_filter.empty()) {
+            if (std::find(draw.class_filter.begin(), draw.class_filter.end(), box.class_id) == draw.class_filter.end()) {
+                continue;
+            }
+        }
+
         cv::Rect rect(static_cast<int>(box.x), static_cast<int>(box.y),
                       static_cast<int>(box.w), static_cast<int>(box.h));
-        cv::rectangle(img, rect, cv::Scalar(0, 255, 0), 2);
+        cv::Scalar color(draw.box_color_b, draw.box_color_g, draw.box_color_r);
+        cv::rectangle(img, rect, color, draw.font_thickness);
 
         if (!box.class_name.empty()) {
-            std::string label = box.class_name + " " +
-                std::to_string(static_cast<int>(box.confidence * 100)) + "%";
+            std::string label = box.class_name;
+            if (draw.show_confidence) {
+                label += " " + std::to_string(static_cast<int>(box.confidence * 100)) + "%";
+            }
             cv::putText(img, label,
                         cv::Point(static_cast<int>(box.x), static_cast<int>(box.y) - 5),
-                        cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1);
+                        cv::FONT_HERSHEY_SIMPLEX, 0.5, color, 1);
         }
     }
 
@@ -85,7 +128,6 @@ bool CpuImageAccelerator::drawBoxes(
 bool CpuImageAccelerator::nms(std::vector<BBox>& boxes, float iou_threshold) {
     if (boxes.empty()) return true;
 
-    // 按置信度排序
     std::sort(boxes.begin(), boxes.end(),
               [](const BBox& a, const BBox& b) { return a.confidence > b.confidence; });
 
@@ -99,7 +141,6 @@ bool CpuImageAccelerator::nms(std::vector<BBox>& boxes, float iou_threshold) {
         for (size_t j = i + 1; j < boxes.size(); ++j) {
             if (suppressed[j]) continue;
 
-            // 计算 IoU
             float x1 = std::max(boxes[i].x, boxes[j].x);
             float y1 = std::max(boxes[i].y, boxes[j].y);
             float x2 = std::min(boxes[i].x + boxes[i].w, boxes[j].x + boxes[j].w);

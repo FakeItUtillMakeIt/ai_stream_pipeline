@@ -14,14 +14,14 @@ public:
     ~CpuImageAccelerator() override = default;
 
     bool resizeNormalize(
-        const uint8_t* src, int src_width, int src_height,
-        float* dst, int dst_width, int dst_height,
-        const std::vector<float>& mean,
-        const std::vector<float>& std) override;
+        const uint8_t* src,
+        const ResizeNormalizeParams& params,
+        float* dst,
+        LetterboxResult* letter = nullptr) override;
 
     bool drawBoxes(
-        uint8_t* bgr, int width, int height, int pitch,
-        const std::vector<BBox>& boxes) override;
+        const std::vector<BBox>& boxes,
+        const DrawParams& draw) override;
 
     bool nms(std::vector<BBox>& boxes, float iou_threshold) override;
 

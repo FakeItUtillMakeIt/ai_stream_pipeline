@@ -129,7 +129,7 @@ if(WITH_ASCEND)
     target_link_libraries(ai_stream_nodes PRIVATE ${Ascend_LIBRARIES})
 endif()
 
-if (WITH_TRACK)
+if(WITH_TRACK)
     target_include_directories(ai_stream_nodes
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/track
@@ -144,9 +144,21 @@ if (WITH_TRACK)
         PUBLIC
             ai_stream_core
         PRIVATE
+            -Wl,--whole-archive
+            ai_stream_hal
+            -Wl,--no-whole-archive
             ocsort
             bytetrack
             Eigen3::Eigen
+    )
+else()
+    target_link_libraries(ai_stream_nodes
+        PUBLIC
+            ai_stream_core
+        PRIVATE
+            -Wl,--whole-archive
+            ai_stream_hal
+            -Wl,--no-whole-archive
     )
 endif()
 

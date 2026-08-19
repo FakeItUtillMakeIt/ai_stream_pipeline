@@ -120,9 +120,11 @@ void EvidenceNode::pushData(std::shared_ptr<core::BasePacket> packet) {
     if (!running_) return;
 
     if (packet->type == core::PacketType::DECODED_FRAME) {
+        // 来自 draw node 的绘制后帧
         auto frame = std::static_pointer_cast<core::VideoFramePacket>(packet);
         handleFrame(std::move(frame));
     } else if (packet->type == core::PacketType::META_DATA) {
+        // 来自 alert node 的告警触发
         auto infer = std::static_pointer_cast<core::InferenceResultPacket>(packet);
         if (infer) {
             handleAlertTrigger(std::move(infer));
@@ -200,6 +202,7 @@ void EvidenceNode::startRecording(const rules::AlertEvent& event) {
 
     std::string filename = generateFilename(event.alert_name, "mp4");
     auto pre_frames = frame_buffer_.snapshot();
+    size_t pre_frames_count = pre_frames.size();
 
     if (pre_frames.empty()) {
         LOG_WARN("[EvidenceNode] No pre-frames available, skipping recording");
@@ -209,7 +212,7 @@ void EvidenceNode::startRecording(const rules::AlertEvent& event) {
     if (video_recorder_.startRecording(filename, std::move(pre_frames))) {
         recording_ = true;
         post_frame_count_ = 0;
-        LOG_INFO_FMT("[EvidenceNode] Started recording: {} ({} pre-frames)", filename, pre_frames.size());
+        LOG_INFO_FMT("[EvidenceNode] Started recording: {} ({} pre-frames)", filename, pre_frames_count);
     }
 }
 

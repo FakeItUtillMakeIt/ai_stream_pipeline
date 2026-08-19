@@ -3,6 +3,7 @@
 
 set(HAL_SOURCES
     inference_engine_factory.cpp
+    detection_inference_engine_factory.cpp
     image_accelerator_factory.cpp
     video_codec_factory.cpp
     action_recognition_factory.cpp
@@ -20,7 +21,17 @@ if(WITH_TENSORRT)
     find_package(TensorRT REQUIRED)
     list(APPEND HAL_SOURCES
         tensorrt/tensorrt_inference_engine.cpp
+        tensorrt/tensorrt_detection_engine.cpp
         tensorrt/tensorrt_action_recognition.cpp
+    )
+endif()
+
+if(WITH_CUDA)
+    find_package(CUDAToolkit REQUIRED)
+    list(APPEND HAL_SOURCES
+        npp/npp_image_accelerator.cpp
+        npp/cuda_kernels_wrapper.cu
+        nvdec/nvdec_video_codec.cpp
     )
 endif()
 
@@ -48,6 +59,8 @@ endif()
 
 add_library(ai_stream_hal STATIC ${HAL_SOURCES})
 
+set_target_properties(ai_stream_hal PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 target_include_directories(ai_stream_hal
     PUBLIC
         $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
@@ -73,6 +86,12 @@ if(WITH_TENSORRT)
     target_compile_definitions(ai_stream_hal PRIVATE WITH_TENSORRT)
     target_include_directories(ai_stream_hal PRIVATE ${TensorRT_INCLUDE_DIRS})
     target_link_libraries(ai_stream_hal PRIVATE ${TensorRT_LIBRARIES})
+endif()
+
+if(WITH_CUDA)
+    find_package(CUDAToolkit REQUIRED)
+    target_compile_definitions(ai_stream_hal PRIVATE WITH_CUDA)
+    target_link_libraries(ai_stream_hal PRIVATE CUDA::cudart)
 endif()
 
 if(WITH_RKNN)

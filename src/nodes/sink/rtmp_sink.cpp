@@ -97,11 +97,11 @@ void RTMPSinkNode::encoderLoop() {
         if (!frame_queue_.pop(frame, std::chrono::milliseconds(100))) continue;
 
         if (!frame || !frame->mat || frame->mat->empty()) continue;
-        
+
         int width = output_width_ > 0 ? output_width_ : frame->width;
         int height = output_height_ > 0 ? output_height_ : frame->height;
-        
-        if (!encoder_->encodeFrame(frame->mat->data, width, height, 
+
+        if (!encoder_->encodeFrame(frame->mat->data, width, height,
                                     frame->mat->step, next_pts_++)) {
             LOG_ERROR_FMT("[RTMPSink] Failed to encode frame");
             connected_ = false;
@@ -109,7 +109,7 @@ void RTMPSinkNode::encoderLoop() {
         }
         connected_ = true;
     }
-    
+
 }
 
 bool RTMPSinkNode::initEncoder() {
