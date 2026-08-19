@@ -413,7 +413,7 @@ void GpuOSDDrawNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
                         cv::Point(rect.x, rect.y - 5),
                         cv::FONT_HERSHEY_SIMPLEX, 0.5, box_color_, font_thickness_);
         }
-
+        addPanel(*draw_mat, infer_result->alert_result);
         auto drawn_frame = std::make_shared<core::VideoFramePacket>();
         drawn_frame->stream_id = infer_result->stream_id;
         drawn_frame->timestamp_ms = infer_result->timestamp_ms;
