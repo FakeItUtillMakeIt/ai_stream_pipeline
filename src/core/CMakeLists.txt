@@ -15,3 +15,10 @@ target_include_directories(ai_stream_core
         ${CMAKE_SOURCE_DIR}/src          # 这使得可以使用 "nodes/registry/node_factory.h"
         ${PROJECT_SOURCE_DIR}
 )
+
+# CUDA 配置
+if(WITH_CUDA)
+    find_package(CUDAToolkit REQUIRED)
+    target_compile_definitions(ai_stream_core PUBLIC WITH_CUDA)
+    target_link_libraries(ai_stream_core PUBLIC CUDA::cudart)
+endif()

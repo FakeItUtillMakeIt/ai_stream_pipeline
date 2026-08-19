@@ -69,6 +69,11 @@ endif()
 # 动态库
 add_library(ai_stream_nodes SHARED ${NODES_SOURCES})
 
+# 编译定义
+if(WITH_TENSORRT)
+    target_compile_definitions(ai_stream_nodes PRIVATE WITH_TENSORRT)
+endif()
+
 target_include_directories(ai_stream_nodes
     PRIVATE
         ${PROJECT_SOURCE_DIR}
@@ -85,6 +90,8 @@ if(WITH_CUDA)
         CUDA_RESOLVE_DEVICE_SYMBOLS ON
         POSITION_INDEPENDENT_CODE ON
     )
+
+    target_compile_definitions(ai_stream_nodes PRIVATE WITH_CUDA)
 
     target_link_libraries(ai_stream_nodes
         PRIVATE

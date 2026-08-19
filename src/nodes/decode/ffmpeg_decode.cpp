@@ -227,7 +227,25 @@ std::shared_ptr<core::VideoFramePacket> FFmpegDecodeNode::decodePacket(
                 av_frame_unref(decoded_frame);
                 continue;
             }
-            // ...
+
+            av_frame_unref(decoded_frame);
+
+            // 创建输出帧包
+            auto new_frame = std::make_shared<core::VideoFramePacket>();
+            new_frame->stream_id = raw_pkt->stream_id;
+            new_frame->source_id = raw_pkt->source_id;
+            new_frame->timestamp_ms = raw_pkt->timestamp_ms;
+            new_frame->mat = std::make_shared<cv::Mat>(std::move(cpu_bgr));
+            new_frame->source_mat = new_frame->mat;
+            new_frame->width = width;
+            new_frame->height = height;
+            new_frame->channels = 3;
+            new_frame->frame_id = raw_pkt->frame_id;
+            new_frame->cost_ms = utils::TimeUtil::currentTimeMs() - in_time_ms_;
+            new_frame->cost_time_map = raw_pkt->cost_time_map;
+            new_frame->cost_time_map.insert({name_, utils::TimeUtil::currentTimeMs() - in_time_ms_});
+
+            frame_pkt = new_frame;
 #else
             LOG_ERROR("[FFmpegDecode] Hardware decode requested but CUDA not available");
             av_frame_unref(decoded_frame);

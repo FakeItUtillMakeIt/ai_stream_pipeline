@@ -30,6 +30,11 @@ endif()
 # ============================================================
 add_library(ai_stream_track OBJECT ${TRACK_SOURCES} ${TRACK_HEADERS})
 
+# CUDA 编译定义
+if(WITH_CUDA)
+    target_compile_definitions(ai_stream_track PRIVATE WITH_CUDA)
+endif()
+
 target_compile_options(ai_stream_track PRIVATE -fPIC)
 # ============================================================
 # 包含目录
