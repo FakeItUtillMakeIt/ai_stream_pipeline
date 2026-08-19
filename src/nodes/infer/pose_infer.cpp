@@ -3,7 +3,7 @@
 #include "ai_stream/core/packet.h"
 #include "registry/node_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
-#include "tensor_rt_logger.h"
+#include "utils/tensor_rt_logger.h"
 
 #include <opencv2/opencv.hpp>
 #include <fstream>

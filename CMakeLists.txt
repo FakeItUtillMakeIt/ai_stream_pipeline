@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.16)
 project(ai_stream_pipeline
     VERSION 1.0.0
     DESCRIPTION "Modular AI-driven video stream processing pipeline"
-    LANGUAGES CXX CUDA
+    LANGUAGES CXX
 )
 
 # ------------------------------------------------------------------------------
@@ -22,11 +22,18 @@ option(INSTALL_HEADERS   "Install public headers" ON)
 # 推理后端选项
 # 注：ONNX Runtime 支持（原 WITH_ONNX）已移除——环境中无 ONNXRuntime 且无对应节点实现，
 # 如需引入请同时提供 onnx_infer 节点代码与依赖查找模块
-option(WITH_TENSORRT     "Enable TensorRT inference support" ON)
+option(WITH_TENSORRT     "Enable TensorRT inference support" OFF)
 
 # GPU 加速选项
-option(WITH_CUDA "Enable CUDA support for GPU acceleration" ON)
-option(WITH_NPP "Enable NPP library for GPU image processing" ON)
+option(WITH_CUDA "Enable CUDA support for GPU acceleration" OFF)
+option(WITH_NPP "Enable NPP library for GPU image processing" OFF)
+
+# 新平台推理后端
+option(WITH_RKNN  "Enable RKNN inference support (RK3588)" OFF)
+option(WITH_ASCEND "Enable Ascend CANN inference support" OFF)
+
+# CPU fallback：无 GPU 时用 CPU 实现预处理/后处理/绘制
+option(WITH_CPU_FALLBACK "Enable CPU fallback for preprocess/postprocess/draw" ON)
 
 option(WITH_TRACK "Enable tracking node" ON)
 option(WITH_ALERT "Enable alert node" ON)
@@ -37,9 +44,14 @@ option(WITH_ALERT "Enable alert node" ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
-set(CMAKE_CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+
+# CUDA 语言按需启用
+if(WITH_CUDA)
+    enable_language(CUDA)
+    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+    set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
+    set(CMAKE_CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+endif()
 
 # 导出 compile_commands.json（用于 IDE 和 clang-tidy）
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -120,6 +132,28 @@ if(WITH_CUDA)
     set(CMAKE_CUDA_ARCHITECTURES "90" CACHE STRING "CUDA architectures")
 endif()
 
+# RKNN 后端（RK3588）
+if(WITH_RKNN)
+    find_package(RKNN QUIET)
+    if(RKNN_FOUND)
+        message(STATUS "Found RKNN: ${RKNN_INCLUDE_DIRS}")
+    else()
+        message(WARNING "RKNN not found. RKNN inference node will be disabled.")
+        set(WITH_RKNN OFF)
+    endif()
+endif()
+
+# Ascend CANN 后端
+if(WITH_ASCEND)
+    find_package(Ascend QUIET)
+    if(Ascend_FOUND)
+        message(STATUS "Found Ascend CANN: ${Ascend_INCLUDE_DIRS}")
+    else()
+        message(WARNING "Ascend CANN not found. Ascend inference node will be disabled.")
+        set(WITH_ASCEND OFF)
+    endif()
+endif()
+
 if(WITH_TRACK)
     find_package(Eigen3 REQUIRED)
     if(EIGEN3_FOUND)
@@ -150,8 +184,8 @@ add_subdirectory(src/core)
 # 公开头文件目录
 target_include_directories(ai_stream_core
     PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-        $<INSTALL_INTERFACE:include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include}>
+        $<INSTALL_INTERFACE:include}>
         ${OpenCV_INCLUDE_DIRS}
 )
 
@@ -173,6 +207,11 @@ set_target_properties(ai_stream_core PROPERTIES
 )
 
 # ------------------------------------------------------------------------------
+# 4.5 硬件抽象层（HAL）
+# ------------------------------------------------------------------------------
+add_subdirectory(src/hal)
+
+# ------------------------------------------------------------------------------
 # 5. 节点库构建（插件）
 # ------------------------------------------------------------------------------
 add_subdirectory(src/nodes)
@@ -181,6 +220,7 @@ add_subdirectory(src/nodes)
 target_link_libraries(ai_stream_nodes
     PUBLIC
         ai_stream_core
+        ai_stream_hal
     PRIVATE
         opencv_core
         opencv_imgproc
@@ -257,7 +297,7 @@ if(INSTALL_HEADERS)
 endif()
 
 # 安装核心库和节点库（跟踪库仅在启用时存在，需一并导出以满足 PRIVATE 链接依赖）
-set(_INSTALL_EXPORT_TARGETS ai_stream_core ai_stream_nodes)
+set(_INSTALL_EXPORT_TARGETS ai_stream_core ai_stream_nodes ai_stream_hal)
 if(WITH_TRACK)
     list(APPEND _INSTALL_EXPORT_TARGETS ocsort bytetrack)
 endif()
@@ -304,6 +344,8 @@ install(FILES
     # 自定义 Find 模块随包安装，供 Config 的 find_dependency 使用
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindFFmpeg.cmake"
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindTensorRT.cmake"
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindRKNN.cmake"
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindAscend.cmake"
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ai_stream_pipeline
 )
 
@@ -323,7 +365,11 @@ message(STATUS "  C++ Standard:         ${CMAKE_CXX_STANDARD}")
 message(STATUS "  HTTP Server:          ${BUILD_HTTP_SERVER}")
 message(STATUS "  Build tests:          ${BUILD_TESTS}")
 message(STATUS "  Build examples:       ${BUILD_EXAMPLES}")
+message(STATUS "  CUDA support:         ${WITH_CUDA}")
 message(STATUS "  TensorRT support:     ${WITH_TENSORRT}")
+message(STATUS "  RKNN support:         ${WITH_RKNN}")
+message(STATUS "  Ascend support:       ${WITH_ASCEND}")
+message(STATUS "  CPU fallback:         ${WITH_CPU_FALLBACK}")
 message(STATUS "  WITH_FTP:             ${WITH_FTP}")
 message(STATUS "  Install prefix:       ${CMAKE_INSTALL_PREFIX}")
 message(STATUS "===============================================")

@@ -1,5 +1,7 @@
 // src/nodes/decode/ffmpeg_decode.cpp
+#ifdef WITH_CUDA
 #include "hw_cuda_decode.h"
+#endif
 #include "ffmpeg_decode.h"
 #include "ai_stream/core/packet.h"
 #include "registry/node_factory.h"
@@ -188,18 +190,19 @@ std::shared_ptr<core::VideoFramePacket> FFmpegDecodeNode::decodePacket(
         ctx->height = height;
 
         if (ctx->use_hw) {
+#ifdef WITH_CUDA
             uint8_t* y_ptr = decoded_frame->data[0];
             uint8_t* uv_ptr = decoded_frame->data[1];
             size_t y_pitch = decoded_frame->linesize[0];
             size_t uv_pitch = decoded_frame->linesize[1];
-            
+
             size_t needed = static_cast<size_t>(width) * height * 3;
             if (ctx->d_bgr_buffer_size < needed) {
                 if (ctx->d_bgr_buffer) cudaFree(ctx->d_bgr_buffer);
                 cudaMalloc(&ctx->d_bgr_buffer, needed);
                 ctx->d_bgr_buffer_size = needed;
             }
-            
+
             launchNV12ToBGR(
                 y_ptr, uv_ptr, width, height,
                 y_pitch, uv_pitch,
@@ -207,48 +210,29 @@ std::shared_ptr<core::VideoFramePacket> FFmpegDecodeNode::decodePacket(
                 static_cast<size_t>(width) * 3,
                 cuda_stream_
             );
-            
+
             cudaError_t err = cudaGetLastError();
             if (err != cudaSuccess) {
                 LOG_ERROR_FMT("[FFmpegDecode] NV12ToBGR kernel failed: {}", cudaGetErrorString(err));
                 av_frame_unref(decoded_frame);
                 continue;
             }
-            
+
             cv::Mat cpu_bgr(height, width, CV_8UC3);
             err = cudaMemcpy(cpu_bgr.data, ctx->d_bgr_buffer,
                              width * height * 3,
                              cudaMemcpyDeviceToHost);
             if (err != cudaSuccess) {
-                LOG_ERROR_FMT("[FFmpegDecode] D2H copy failed: {}", cudaGetErrorString(err));
+                LOG_ERROR_FMT("[FFmpegDecode] cudaMemcpy failed: {}", cudaGetErrorString(err));
                 av_frame_unref(decoded_frame);
                 continue;
             }
-            
-            auto new_frame = std::make_shared<core::VideoFramePacket>();
-            new_frame->stream_id = raw_pkt->stream_id;
-            new_frame->source_id = raw_pkt->source_id;
-            new_frame->timestamp_ms = raw_pkt->timestamp_ms;
-            new_frame->is_gpu = true;
-            new_frame->d_ptr = ctx->d_bgr_buffer;
-            new_frame->d_pitch = width * 3;
-            new_frame->d_width = width;
-            new_frame->d_height = height;
-            
-            new_frame->d_bgr_ptr = ctx->d_bgr_buffer;
-            new_frame->d_bgr_pitch = width * 3;
-            new_frame->d_bgr_width = width;
-            new_frame->d_bgr_height = height;
-
-            new_frame->width = width;
-            new_frame->height = height;
-            new_frame->channels = 3;
-            new_frame->frame_id = raw_pkt->frame_id;
-            new_frame->mat = std::make_shared<cv::Mat>(std::move(cpu_bgr));
-            new_frame->source_mat = new_frame->mat;
-            
+            // ...
+#else
+            LOG_ERROR("[FFmpegDecode] Hardware decode requested but CUDA not available");
             av_frame_unref(decoded_frame);
-            frame_pkt = new_frame;
+            continue;
+#endif
         }
         else {
             cv::Mat mat;

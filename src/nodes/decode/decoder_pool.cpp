@@ -2,7 +2,9 @@
 #include "decoder_pool.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 
+#ifdef WITH_CUDA
 #include <cuda_runtime.h>
+#endif
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -15,7 +17,9 @@ namespace nodes {
 
 DecoderContext::~DecoderContext() {
     if (d_bgr_buffer){
+#ifdef WITH_CUDA
         cudaFree(d_bgr_buffer);
+#endif
     }
     if (hw_frame) {
         av_frame_free(&hw_frame);
@@ -140,6 +144,7 @@ std::shared_ptr<DecoderContext> DecoderPool::createDecoder(int codec_id, bool us
     }
 
     if (ctx->use_hw) {
+#ifdef WITH_CUDA
         // 初始化 CUDA 设备上下文
         int ret = av_hwdevice_ctx_create(&ctx->hw_device_ctx, AV_HWDEVICE_TYPE_CUDA,
                                           nullptr, nullptr, 0);
@@ -151,9 +156,13 @@ std::shared_ptr<DecoderContext> DecoderPool::createDecoder(int codec_id, bool us
             avcodec_free_context(&ctx->codec_ctx);
             return createDecoder(codec_id, false);  // 递归 fallback
         }
-        
+
         ctx->codec_ctx->hw_device_ctx = av_buffer_ref(ctx->hw_device_ctx);
         ctx->codec_ctx->thread_count = 1;  // 硬件解码不需要多线程
+#else
+        LOG_WARN("[DecoderPool] HW decode requested but CUDA not available, fallback to SW");
+        ctx->use_hw = false;
+#endif
     } else {
         ctx->codec_ctx->thread_count = 4;
         ctx->codec_ctx->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;

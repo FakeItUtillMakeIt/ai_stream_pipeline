@@ -6,7 +6,9 @@
 #include "decoder_pool.h"
 #include <atomic>
 #include <string>
+#ifdef WITH_CUDA
 #include <cuda_runtime.h>
+#endif
 
 namespace ai_stream {
 namespace nodes {
@@ -52,7 +54,9 @@ private:
     int snapshot_count_ = 0;
     int frame_count_ = 0;
     std::atomic<bool> use_hw_{false};
+#ifdef WITH_CUDA
     cudaStream_t cuda_stream_ = nullptr;  // 用于 NV12→BGR 转换
+#endif
 };
 
 } // namespace nodes

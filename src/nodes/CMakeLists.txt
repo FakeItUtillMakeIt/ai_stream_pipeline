@@ -16,8 +16,17 @@ set(NODES_SOURCES
     sink/mp4_save.cpp
     sink/encoder_base.cpp
     preprocess/resize_normalize.cpp
+    postprocess/detection_post.cpp
     fusion/fusion_node.cpp
 )
+
+# CPU fallback 节点（无 GPU 时使用）
+if(WITH_CPU_FALLBACK)
+    list(APPEND NODES_SOURCES
+        # CPU 版本的预处理/后处理已在上面注册
+        # 这里可以添加更多 CPU 专用实现
+    )
+endif()
 
 # 预处理节点：根据 CUDA 支持选择 CPU 或 GPU 版本
 if(WITH_CUDA)
@@ -33,13 +42,27 @@ if(WITH_CUDA)
     )
 endif()
 
-# 推理节点
+# 推理节点 - TensorRT 后端
 if(WITH_TENSORRT)
     list(APPEND NODES_SOURCES
         infer/detection_infer.cpp
         infer/pose_infer.cpp
         infer/int8_calibrator.cpp
         infer/action_recognition_videomae.cpp
+    )
+endif()
+
+# 推理节点 - RKNN 后端（RK3588）
+if(WITH_RKNN)
+    list(APPEND NODES_SOURCES
+        infer/rknn_detection_infer.cpp
+    )
+endif()
+
+# 推理节点 - Ascend 后端
+if(WITH_ASCEND)
+    list(APPEND NODES_SOURCES
+        infer/ascend_detection_infer.cpp
     )
 endif()
 
@@ -85,21 +108,35 @@ else()
     )
 endif()
 
+# ==================== RKNN 配置 ====================
+if(WITH_RKNN)
+    target_compile_definitions(ai_stream_nodes PRIVATE WITH_RKNN)
+    target_include_directories(ai_stream_nodes PRIVATE ${RKNN_INCLUDE_DIRS})
+    target_link_libraries(ai_stream_nodes PRIVATE ${RKNN_LIBRARIES})
+endif()
+
+# ==================== Ascend 配置 ====================
+if(WITH_ASCEND)
+    target_compile_definitions(ai_stream_nodes PRIVATE WITH_ASCEND)
+    target_include_directories(ai_stream_nodes PRIVATE ${Ascend_INCLUDE_DIRS})
+    target_link_libraries(ai_stream_nodes PRIVATE ${Ascend_LIBRARIES})
+endif()
+
 if (WITH_TRACK)
     target_include_directories(ai_stream_nodes
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/track
             ${PROJECT_SOURCE_DIR}/3rd_party/tracker
             )
-            
+
     target_sources(ai_stream_nodes
-        PRIVATE 
+        PRIVATE
             $<TARGET_OBJECTS:ai_stream_track>
     )
     target_link_libraries(ai_stream_nodes
-        PUBLIC 
+        PUBLIC
             ai_stream_core
-        PRIVATE 
+        PRIVATE
             ocsort
             bytetrack
             Eigen3::Eigen
@@ -114,14 +151,14 @@ if(WITH_ALERT)
     )
 
     target_sources(ai_stream_nodes
-        PRIVATE 
+        PRIVATE
             $<TARGET_OBJECTS:alert_node>
             $<TARGET_OBJECTS:alert_rules>
     )
 
     target_link_libraries(ai_stream_nodes
-         
-        PRIVATE 
+
+        PRIVATE
             nlohmann_json::nlohmann_json
     )
 endif()

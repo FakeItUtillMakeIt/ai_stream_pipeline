@@ -1,4 +1,4 @@
-// src/nodes/infer/tensor_rt_logger.h
+// utils/tensor_rt_logger.h
 #include "3rd_party/log_mgr/log_mgr.h"
 #include <NvInfer.h>
 
