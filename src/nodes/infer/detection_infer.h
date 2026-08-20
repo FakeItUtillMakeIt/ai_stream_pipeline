@@ -168,6 +168,9 @@ private:
 
     // 置信度阈值
     float confidence_threshold_ = 0.25f;
+
+    // Mock 模式帧计数器
+    mutable std::atomic<int> mock_frame_count_{0};
 };
 
 } // namespace nodes

@@ -41,12 +41,19 @@ bool FFmpegVideoCodec::decode(const uint8_t* packet_data, int packet_size,
         return false;
     }
 
-    // 填充 packet
-    packet_->data = const_cast<uint8_t*>(packet_data);
+    // 使用 av_packet_ref 安全复制 packet 数据，避免 const_cast 导致 UB
+    av_packet_unref(packet_);
+    packet_->data = static_cast<uint8_t*>(av_malloc(packet_size + AV_INPUT_BUFFER_PADDING_SIZE));
+    if (!packet_->data) {
+        LOG_ERROR("[FFmpegVideoCodec] Failed to allocate packet buffer");
+        return false;
+    }
+    std::memcpy(packet_->data, packet_data, packet_size);
     packet_->size = packet_size;
 
     // 发送 packet 到解码器
     int ret = avcodec_send_packet(codec_ctx_, packet_);
+    av_freep(&packet_->data);  // 释放临时缓冲区
     if (ret < 0) {
         LOG_ERROR_FMT("[FFmpegVideoCodec] avcodec_send_packet failed: {}", ret);
         return false;

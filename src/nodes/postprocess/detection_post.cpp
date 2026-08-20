@@ -57,7 +57,8 @@ namespace ai_stream
             if (packet->type == core::PacketType::STREAM_END)
             {
                 LOG_INFO_FMT("[DetectionPostProcess] Received stream end");
-                stop();
+                // 不在此处调用 stop()，避免从 worker 线程调用导致自连接死锁
+                // running_ 会在 workerLoop 中检查，worker 线程会自然退出
                 broadcast(packet);
                 return;
             }

@@ -38,7 +38,7 @@ bool FtpUploader::initialize(const FtpConfig& config) {
 }
 
 void FtpUploader::shutdown() {
-    if (!running_) return;
+    if (!running_.load(std::memory_order_relaxed)) return;
 
     stop_flag_ = true;
     upload_queue_.stop();
@@ -51,14 +51,14 @@ void FtpUploader::shutdown() {
 }
 
 void FtpUploader::enqueue(const std::string& local_path) {
-    if (!running_ || local_path.empty()) return;
+    if (!running_.load(std::memory_order_relaxed) || local_path.empty()) return;
 
     // 证据文件不允许丢弃，队列满时阻塞等待（超时则报错）
     if (!upload_queue_.push(local_path, std::chrono::seconds(5))) {
         LOG_ERROR_FMT("[FtpUploader] Upload queue full, failed to enqueue: {}", local_path);
         return;
     }
-    LOG_INFO_FMT("[FtpUploader] Enqueued: {}", local_path);
+    LOG_DEBUG_FMT("[FtpUploader] Enqueued: {}", local_path);
 }
 
 size_t FtpUploader::queueSize() const {

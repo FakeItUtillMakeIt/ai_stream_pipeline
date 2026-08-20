@@ -80,7 +80,7 @@ bool VideoRecorder::startRecording(
 }
 
 void VideoRecorder::enqueueFrame(std::shared_ptr<core::VideoFramePacket> frame) {
-    if (!recording_ || !frame || !frame->mat || frame->mat->empty()) return;
+    if (!recording_.load(std::memory_order_relaxed) || !frame || !frame->mat || frame->mat->empty()) return;
 
     // 队列满时丢弃最旧帧
     while (!frame_queue_.tryPush(frame)) {

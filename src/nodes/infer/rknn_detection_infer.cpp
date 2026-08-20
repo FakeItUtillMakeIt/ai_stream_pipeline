@@ -97,6 +97,11 @@ bool RknnDetectionInferNode::start() {
         return false;
     }
 
+    // 如果之前的 worker 线程还未 join，先 join 它（自停后线程可能还在运行）
+    if (worker_.joinable()) {
+        worker_.join();
+    }
+
     running_ = true;
     worker_ = std::thread(&RknnDetectionInferNode::inferLoop, this);
     LOG_INFO_FMT("[RknnDetectionInfer] Started (backend: {})", engine_->getBackendName());
@@ -117,7 +122,8 @@ void RknnDetectionInferNode::pushData(std::shared_ptr<core::BasePacket> packet) 
 
     if (packet->type == core::PacketType::STREAM_END) {
         LOG_INFO("[RknnDetectionInfer] Received stream end");
-        stop();
+        // 不在此处调用 stop()，避免从 worker 线程调用导致自连接死锁
+        // running_ 会在 inferLoop 中检查，worker 线程会自然退出
         broadcast(packet);
         return;
     }

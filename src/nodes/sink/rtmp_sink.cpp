@@ -42,12 +42,17 @@ bool RTMPSinkNode::start() {
         output_url_ = "rtmp://localhost/live/out1";
         LOG_WARN_FMT("[RTMPSink] Output URL not set, using default: {}", output_url_);
     }
-    
+
     if (!initEncoder()) {
         LOG_ERROR("[RTMPSink] Failed to initialize encoder");
         return false;
     }
-    
+
+    // 如果之前的 worker 线程还未 join，先 join 它（自停后线程可能还在运行）
+    if (worker_.joinable()) {
+        worker_.join();
+    }
+
     running_ = true;
     frame_queue_.reset();
     worker_ = std::thread(&RTMPSinkNode::encoderLoop, this);
@@ -73,7 +78,8 @@ void RTMPSinkNode::pushData(std::shared_ptr<core::BasePacket> packet) {
     if (packet->type == core::PacketType::STREAM_END)
     {
         LOG_INFO_FMT("[RTMPSink] Received stream end");
-        stop();
+        // 不在此处调用 stop()，避免从 worker 线程调用导致自连接死锁
+        // running_ 会在 encoderLoop 中检查，worker 线程会自然退出
         broadcast(packet);
         return;
     }
@@ -95,6 +101,12 @@ void RTMPSinkNode::encoderLoop() {
     while (running_) {
         std::shared_ptr<core::VideoFramePacket> frame;
         if (!frame_queue_.pop(frame, std::chrono::milliseconds(100))) continue;
+
+        // 检查是否为流结束信号
+        if (frame->type == core::PacketType::STREAM_END) {
+            LOG_INFO_FMT("[RTMPSink] Stream end received in worker thread");
+            break;
+        }
 
         if (!frame || !frame->mat || frame->mat->empty()) continue;
 

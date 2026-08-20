@@ -253,6 +253,10 @@ bool CudaPoseInferNode::start() {
     if (!engine_) {
         LOG_WARN_FMT("[CudaPoseInfer] No model loaded, will use mock inference");
     }
+    // 如果之前的 worker 线程还未 join，先 join 它（自停后线程可能还在运行）
+    if (worker_.joinable()) {
+        worker_.join();
+    }
     queue_.reset();
     running_ = true;
     worker_ = std::thread(&CudaPoseInferNode::inferLoop, this);
@@ -273,7 +277,8 @@ void CudaPoseInferNode::pushData(std::shared_ptr<core::BasePacket> packet) {
     if (packet->type == core::PacketType::STREAM_END)
     {
         LOG_INFO_FMT("[CudaPoseInfer] Received stream end");
-        stop();
+        // 不在此处调用 stop()，避免从 worker 线程调用导致自连接死锁
+        // running_ 会在 inferLoop 中检查，worker 线程会自然退出
         broadcast(packet);
         return;
     }

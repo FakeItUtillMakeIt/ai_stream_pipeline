@@ -31,6 +31,13 @@ DetectionInferNode::~DetectionInferNode() {
     // 释放 CUDA Graph
     destroyCudaGraph();
 
+    // 先同步所有 CUDA 流，确保 GPU 操作完成后再释放资源
+    if (compute_stream_) cudaStreamSynchronize(compute_stream_);
+    if (transfer_stream_) cudaStreamSynchronize(transfer_stream_);
+
+    // 先销毁推理引擎（引擎内部会调用 cudaFree）
+    engine_.reset();
+
     // 释放 Pinned Memory
     freePinnedMemory();
 
@@ -86,6 +93,10 @@ bool DetectionInferNode::start() {
     if (!engine_) {
         LOG_WARN_FMT("[DetectionInfer] No model loaded, will use mock inference");
     }
+    // 如果之前的 worker 线程还未 join，先 join 它（自停后线程可能还在运行）
+    if (worker_.joinable()) {
+        worker_.join();
+    }
     queue_.reset();
     running_ = true;
     worker_ = std::thread(&DetectionInferNode::inferLoop, this);
@@ -109,15 +120,17 @@ void DetectionInferNode::stop() {
 void DetectionInferNode::pushData(std::shared_ptr<core::BasePacket> packet) {
     if (packet->type == core::PacketType::STREAM_END) {
         LOG_INFO_FMT("[DetectionInfer] Received stream end");
-        // 注意：不在此处调用 stop()，避免从 worker 线程调用导致自连接死锁
-        // running_ 会在 inferLoop 中检查
+        // 不在此处调用 stop()，避免从 worker 线程调用导致自连接死锁
+        // running_ 会在 inferLoop 中检查，worker 线程会自然退出
+        running_ = false;
         broadcast(packet);
         return;
     }
     if (!running_) return;
     if (packet->type != core::PacketType::DECODED_FRAME) return;
 
-    auto frame = std::dynamic_pointer_cast<core::VideoFramePacket>(packet);
+    // 使用 static_pointer_cast 替代 dynamic_pointer_cast，因为已检查类型
+    auto frame = std::static_pointer_cast<core::VideoFramePacket>(packet);
     if (frame) {
         queue_.push(frame, std::chrono::milliseconds(10));
     }
@@ -204,9 +217,8 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
 
     if (!engine_) {
         // Mock 模式
-        static int frame_count = 0;
         for (int b = 0; b < actual_batch; ++b) {
-            frame_count++;
+            int frame_count = mock_frame_count_.fetch_add(1);
             for (int i = 0; i < 3; ++i) {
                 core::InferenceResultPacket::BBox box;
                 box.x = 100 + (frame_count % 200) + i * 50 + b * 10;
@@ -229,8 +241,8 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
         std::vector<void*> d_ptrs;
         std::vector<size_t> d_pitches;
 
-        float scale_x[actual_batch];
-        float scale_y[actual_batch];
+        std::vector<float> scale_x(actual_batch);
+        std::vector<float> scale_y(actual_batch);
 
         for (int b = 0; b < actual_batch; ++b) {
             // 计算缩放比例
