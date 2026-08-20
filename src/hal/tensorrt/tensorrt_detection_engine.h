@@ -58,6 +58,10 @@ public:
     nvinfer1::ICudaEngine* getTensorRTEngine() const;
 
 private:
+    static void deleteRuntime(nvinfer1::IRuntime* p);
+    static void deleteEngine(nvinfer1::ICudaEngine* p);
+    static void deleteContext(nvinfer1::IExecutionContext* p);
+
     bool initEngine(const std::string& engine_path);
     bool allocateBuffers();
     void freeBuffers();
@@ -67,11 +71,11 @@ private:
 
     // TensorRT 资源
     std::unique_ptr<nvinfer1::IRuntime, void(*)(nvinfer1::IRuntime*)> runtime_{
-        nullptr, [](nvinfer1::IRuntime* p){ if (p) delete p; }};
+        nullptr, &TensorrtDetectionEngine::deleteRuntime};
     std::unique_ptr<nvinfer1::ICudaEngine, void(*)(nvinfer1::ICudaEngine*)> engine_{
-        nullptr, [](nvinfer1::ICudaEngine* p){ if (p) delete p; }};
+        nullptr, &TensorrtDetectionEngine::deleteEngine};
     std::unique_ptr<nvinfer1::IExecutionContext, void(*)(nvinfer1::IExecutionContext*)> context_{
-        nullptr, [](nvinfer1::IExecutionContext* p){ if (p) delete p; }};
+        nullptr, &TensorrtDetectionEngine::deleteContext};
 
     // Tensor 名称
     std::string input_name_ = "images";

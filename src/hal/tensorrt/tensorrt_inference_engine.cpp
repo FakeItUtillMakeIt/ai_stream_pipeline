@@ -22,6 +22,18 @@ TensorrtInferenceEngine::~TensorrtInferenceEngine() {
     LOG_DEBUG("[TensorrtInferenceEngine] Destructor");
 }
 
+void TensorrtInferenceEngine::deleteRuntime(nvinfer1::IRuntime* p) {
+    delete p;
+}
+
+void TensorrtInferenceEngine::deleteEngine(nvinfer1::ICudaEngine* p) {
+    delete p;
+}
+
+void TensorrtInferenceEngine::deleteContext(nvinfer1::IExecutionContext* p) {
+    delete p;
+}
+
 bool TensorrtInferenceEngine::loadModel(const InferenceConfig& config) {
     config_ = config;
     return initEngine(config.model_path) && allocateBuffers();

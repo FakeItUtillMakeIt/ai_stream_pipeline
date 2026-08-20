@@ -163,16 +163,20 @@ namespace ai_stream
         {
             if (running_)
             {
-                // 仍有节点在运行 → 视为已启动；
-                // 全部节点已停止（如 STREAM_END 级联自停）→ 允许重新启动
-                std::lock_guard<std::mutex> lock(mutex_);
+                bool any_running = false;
+                bool all_running = !nodes_.empty();
                 for (const auto &[name, node] : nodes_)
                 {
-                    if (node->isRunning())
-                    {
-                        return true;
-                    }
+                    (void)name;
+                    const bool node_running = node->isRunning();
+                    any_running = any_running || node_running;
+                    all_running = all_running && node_running;
                 }
+
+                // STREAM_END can leave the graph partially stopped. A start request in
+                // that state must reap the old workers before launching fresh workers.
+                if (all_running) return true;
+                if (any_running) stop();
                 running_ = false;
             }
 
@@ -212,9 +216,7 @@ namespace ai_stream
 
         void Pipeline::stop()
         {
-            if (!running_)
-                return;
-            running_ = false;
+            const bool was_running = running_.exchange(false);
 
             // 按拓扑序停止：source 最先停止，阻止新数据进入，下游自然排空
             for (const auto &name : topo_order_)
@@ -227,7 +229,10 @@ namespace ai_stream
                 LOG_INFO_FMT("[Pipeline {}] Stopping node: {}", id_, name);
                 it->second->stop();
             }
-            LOG_INFO_FMT("[Pipeline {}] Pipeline stopped", id_);
+            if (was_running)
+            {
+                LOG_INFO_FMT("[Pipeline {}] Pipeline stopped", id_);
+            }
         }
 
         std::shared_ptr<Node> Pipeline::getNode(const std::string &name)

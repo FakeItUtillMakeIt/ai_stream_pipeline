@@ -23,6 +23,18 @@ TensorrtActionRecognition::~TensorrtActionRecognition() {
     LOG_DEBUG("[TensorrtActionRecognition] Destructor");
 }
 
+void TensorrtActionRecognition::deleteRuntime(nvinfer1::IRuntime* p) {
+    delete p;
+}
+
+void TensorrtActionRecognition::deleteEngine(nvinfer1::ICudaEngine* p) {
+    delete p;
+}
+
+void TensorrtActionRecognition::deleteContext(nvinfer1::IExecutionContext* p) {
+    delete p;
+}
+
 bool TensorrtActionRecognition::loadModel(const ActionRecognitionConfig& config) {
     config_ = config;
     return initEngine(config.model_path) && allocateBuffers();

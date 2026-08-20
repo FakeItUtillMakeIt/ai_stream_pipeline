@@ -21,6 +21,18 @@ TensorrtDetectionEngine::~TensorrtDetectionEngine() {
     freeBuffers();
 }
 
+void TensorrtDetectionEngine::deleteRuntime(nvinfer1::IRuntime* p) {
+    delete p;
+}
+
+void TensorrtDetectionEngine::deleteEngine(nvinfer1::ICudaEngine* p) {
+    delete p;
+}
+
+void TensorrtDetectionEngine::deleteContext(nvinfer1::IExecutionContext* p) {
+    delete p;
+}
+
 bool TensorrtDetectionEngine::loadModel(const DetectionInferenceConfig& config) {
     LOG_INFO_FMT("[TensorrtDetectionEngine] Loading model from: {}", config.model_path);
     config_ = config;
