@@ -228,6 +228,9 @@ std::shared_ptr<core::VideoFramePacket> FFmpegDecodeNode::decodePacket(
                     decoded.format == AV_PIX_FMT_CUDA);
 
     if (is_nv12 && output_bgr_) {
+        LOG_DEBUG_FMT("[FFmpegDecode] Frame {}: format={}, has_uv={}, pitch={}, pitch_uv={}",
+                      frame_count_, decoded.format, decoded.data_uv != nullptr, decoded.pitch, decoded.pitch_uv);
+
         // 使用 FFmpeg swscale 进行 NV12 -> BGR 转换
         if (!ctx->sws_ctx || ctx->width != width || ctx->height != height) {
             if (ctx->sws_ctx) {
@@ -250,10 +253,16 @@ std::shared_ptr<core::VideoFramePacket> FFmpegDecodeNode::decodePacket(
 
             int buffer_size = av_image_get_buffer_size(AV_PIX_FMT_BGR24, width, height, 1);
             if (buffer_size > ctx->buffer_size) {
+                uint8_t* new_buffer = (uint8_t*)av_malloc(buffer_size);
+                if (!new_buffer) {
+                    LOG_ERROR("[FFmpegDecode] Failed to allocate BGR buffer");
+                    ctx->in_use = false;
+                    return nullptr;
+                }
                 if (ctx->bgr_buffer) {
                     av_free(ctx->bgr_buffer);
                 }
-                ctx->bgr_buffer = (uint8_t*)av_malloc(buffer_size);
+                ctx->bgr_buffer = new_buffer;
                 ctx->buffer_size = buffer_size;
             }
 
@@ -306,10 +315,16 @@ std::shared_ptr<core::VideoFramePacket> FFmpegDecodeNode::decodePacket(
 
             int buffer_size = av_image_get_buffer_size(AV_PIX_FMT_BGR24, width, height, 1);
             if (buffer_size > ctx->buffer_size) {
+                uint8_t* new_buffer = (uint8_t*)av_malloc(buffer_size);
+                if (!new_buffer) {
+                    LOG_ERROR("[FFmpegDecode] Failed to allocate BGR buffer");
+                    ctx->in_use = false;
+                    return nullptr;
+                }
                 if (ctx->bgr_buffer) {
                     av_free(ctx->bgr_buffer);
                 }
-                ctx->bgr_buffer = (uint8_t*)av_malloc(buffer_size);
+                ctx->bgr_buffer = new_buffer;
                 ctx->buffer_size = buffer_size;
             }
 

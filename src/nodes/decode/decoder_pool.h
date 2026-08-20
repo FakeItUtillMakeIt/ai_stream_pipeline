@@ -35,10 +35,6 @@ struct DecoderContext {
     uint8_t* bgr_buffer = nullptr;
     int buffer_size = 0;
 
-    // CUDA 相关
-    void* d_bgr_buffer = nullptr;
-    size_t d_bgr_buffer_size = 0;
-
     uint32_t stream_id = 0;
     int width = 0;
     int height = 0;

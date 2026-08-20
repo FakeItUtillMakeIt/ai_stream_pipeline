@@ -18,50 +18,6 @@
 namespace ai_stream {
 namespace nodes {
 
-namespace {
-
-// CUDA 内核：绘制矩形边框
-__global__ void drawRectKernel(
-    unsigned char* image, int width, int height, int pitch,
-    int x, int y, int w, int h, int thickness,
-    unsigned char b, unsigned char g, unsigned char r)
-{
-    int px = blockIdx.x * blockDim.x + threadIdx.x;
-    int py = blockIdx.y * blockDim.y + threadIdx.y;
-
-    if (px >= width || py >= height) return;
-
-    bool on_border = false;
-
-    if (py >= y && py < y + thickness && px >= x && px < x + w) on_border = true;
-    if (py >= y + h - thickness && py < y + h && px >= x && px < x + w) on_border = true;
-    if (px >= x && px < x + thickness && py >= y && py < y + h) on_border = true;
-    if (px >= x + w - thickness && px < x + w && py >= y && py < y + h) on_border = true;
-
-    if (on_border) {
-        int idx = py * pitch + px * 3;
-        image[idx + 0] = b;
-        image[idx + 1] = g;
-        image[idx + 2] = r;
-    }
-}
-
-// Wrapper 函数
-void launchDrawRectKernel(
-    unsigned char* image, int width, int height, int pitch,
-    int x, int y, int w, int h, int thickness,
-    unsigned char b, unsigned char g, unsigned char r,
-    cudaStream_t stream)
-{
-    dim3 block_size(16, 16);
-    dim3 grid_size((width + 15) / 16, (height + 15) / 16);
-    drawRectKernel<<<grid_size, block_size, 0, stream>>>(
-        image, width, height, pitch,
-        x, y, w, h, thickness, b, g, r);
-}
-
-} // anonymous namespace
-
 GpuOSDDrawNode::GpuOSDDrawNode() : core::QueuedNode<IDrawNode>("GpuOSDDraw") {
     int device_count;
     cudaGetDeviceCount(&device_count);
@@ -80,7 +36,11 @@ GpuOSDDrawNode::GpuOSDDrawNode() : core::QueuedNode<IDrawNode>("GpuOSDDraw") {
 
 GpuOSDDrawNode::~GpuOSDDrawNode() {
     stop();
-    if (stream_) cudaStreamDestroy(stream_);
+    if (stream_) {
+        cudaStreamSynchronize(stream_);
+        cudaStreamDestroy(stream_);
+        stream_ = nullptr;
+    }
     cudaEventDestroy(start_event_);
     cudaEventDestroy(stop_event_);
     LOG_INFO_FMT("[GpuOSDDraw] Node destroyed");
@@ -124,6 +84,9 @@ void GpuOSDDrawNode::onShutdown() {
     if (stream_) {
         cudaStreamSynchronize(stream_);
     }
+
+    // 释放加速器
+    accelerator_.reset();
 
     LOG_INFO_FMT("[GpuOSDDraw] Stopped");
 }
@@ -199,23 +162,25 @@ void GpuOSDDrawNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
         return;
     }
 
-    // 克隆帧以避免修改共享数据（深拷贝 CPU mat）
+    // 克隆帧以避免修改共享数据
     auto drawn_frame = std::make_shared<core::VideoFramePacket>();
     drawn_frame->stream_id = infer_result->stream_id;
     drawn_frame->timestamp_ms = infer_result->timestamp_ms;
     drawn_frame->is_gpu = false;
 
-    // 获取 BGR 图像数据（优先 GPU，回退 CPU）
+    CUDA_CHECK(cudaEventRecord(start_event_, stream_));
+
+    // 获取 BGR 图像数据
     unsigned char* bgr_ptr = nullptr;
     int width = 0, height = 0, pitch = 0;
-    bool need_gpu_to_cpu = false;
+    bool src_is_gpu = false;
 
     if (frame->is_gpu && frame->d_bgr_ptr) {
         bgr_ptr = static_cast<unsigned char*>(frame->d_bgr_ptr);
         width = frame->d_bgr_width;
         height = frame->d_bgr_height;
         pitch = frame->d_bgr_pitch;
-        need_gpu_to_cpu = true;
+        src_is_gpu = true;
     } else if (frame->mat && !frame->mat->empty()) {
         bgr_ptr = frame->mat->data;
         width = frame->mat->cols;
@@ -229,39 +194,69 @@ void GpuOSDDrawNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
         return;
     }
 
-    // 创建 CPU mat 用于绘制
     cv::Mat draw_img;
-    if (need_gpu_to_cpu) {
-        // GPU -> CPU：拷贝 GPU 数据到 CPU mat
-        cv::Mat gpu_img(height, width, CV_8UC3, bgr_ptr, pitch);
-        draw_img = gpu_img.clone();  // 深拷贝到 CPU
-    } else if (frame->mat && !frame->mat->empty()) {
-        draw_img = frame->mat->clone();  // 深拷贝避免修改原始数据
+
+    if (src_is_gpu) {
+        // GPU 路径：分配新的 GPU 缓冲区，拷贝数据，绘制，然后拷贝回 CPU
+        size_t gpu_size = static_cast<size_t>(pitch) * height;
+        unsigned char* d_clone = nullptr;
+
+        cudaError_t err = cudaMalloc(&d_clone, gpu_size);
+        if (err != cudaSuccess) {
+            LOG_ERROR_FMT("[GpuOSDDraw] cudaMalloc failed: {}", cudaGetErrorString(err));
+            broadcast(packet);
+            return;
+        }
+
+        err = cudaMemcpyAsync(d_clone, bgr_ptr, gpu_size, cudaMemcpyDeviceToDevice, stream_);
+        if (err != cudaSuccess) {
+            LOG_ERROR_FMT("[GpuOSDDraw] cudaMemcpyAsync failed: {}", cudaGetErrorString(err));
+            cudaFree(d_clone);
+            broadcast(packet);
+            return;
+        }
+
+        // 使用 HAL 加速器在 GPU 上绘制边界框
+        if (!infer_result->detections.empty()) {
+            drawBoxesOnGpu(d_clone, width, height, pitch, infer_result->detections);
+        }
+
+        // 拷贝 GPU 数据到 CPU mat
+        draw_img = cv::Mat(height, width, CV_8UC3);
+        err = cudaMemcpyAsync(draw_img.data, d_clone, gpu_size, cudaMemcpyDeviceToHost, stream_);
+        if (err != cudaSuccess) {
+            LOG_ERROR_FMT("[GpuOSDDraw] cudaMemcpyAsync(D2H) failed: {}", cudaGetErrorString(err));
+            cudaFree(d_clone);
+            broadcast(packet);
+            return;
+        }
+
+        cudaStreamSynchronize(stream_);
+
+        // 释放 GPU 缓冲区
+        cudaFree(d_clone);
     } else {
-        LOG_WARN_FMT("[GpuOSDDraw] No valid image data to draw on");
-        broadcast(packet);
-        return;
-    }
+        // CPU 路径：深拷贝避免修改原始数据
+        draw_img = frame->mat->clone();
 
-    CUDA_CHECK(cudaEventRecord(start_event_, stream_));
+        // 使用 OpenCV 绘制边界框
+        for (const auto& det : infer_result->detections) {
+            cv::Rect rect(det.x, det.y, det.w, det.h);
+            cv::rectangle(draw_img, rect, box_color_, font_thickness_);
 
-    // 绘制边界框（CPU 路径）
-    for (const auto& det : infer_result->detections) {
-        cv::Rect rect(det.x, det.y, det.w, det.h);
-        cv::rectangle(draw_img, rect, box_color_, font_thickness_);
-
-        if (!det.class_name.empty()) {
-            std::string label = det.class_name;
-            if (show_confidence_) {
-                label += " " + std::to_string(static_cast<int>(det.confidence * 100)) + "%";
+            if (!det.class_name.empty()) {
+                std::string label = det.class_name;
+                if (show_confidence_) {
+                    label += " " + std::to_string(static_cast<int>(det.confidence * 100)) + "%";
+                }
+                cv::putText(draw_img, label,
+                            cv::Point(det.x, det.y - 5),
+                            cv::FONT_HERSHEY_SIMPLEX, 0.5, box_color_, 1);
             }
-            cv::putText(draw_img, label,
-                        cv::Point(det.x, det.y - 5),
-                        cv::FONT_HERSHEY_SIMPLEX, 0.5, box_color_, 1);
         }
     }
 
-    // 绘制告警信息面板
+    // 绘制告警信息面板（始终在 CPU 上）
     addPanel(draw_img, infer_result->alert_result);
 
     CUDA_CHECK(cudaEventRecord(stop_event_, stream_));
@@ -270,8 +265,9 @@ void GpuOSDDrawNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
     float latency_ms = 0.0f;
     cudaEventElapsedTime(&latency_ms, start_event_, stop_event_);
 
-    LOG_DEBUG_FMT("[GpuOSDDraw] Drew {} boxes on {}x{} (CPU), latency={:.2f}ms",
-                  infer_result->detections.size(), width, height, latency_ms);
+    LOG_DEBUG_FMT("[GpuOSDDraw] Drew {} boxes on {}x{} ({}), latency={:.2f}ms",
+                  infer_result->detections.size(), width, height,
+                  src_is_gpu ? "GPU" : "CPU", latency_ms);
 
     // 设置绘制后的帧数据
     drawn_frame->mat = std::make_shared<cv::Mat>(std::move(draw_img));

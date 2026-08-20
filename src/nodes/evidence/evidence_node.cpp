@@ -14,6 +14,74 @@
 namespace ai_stream {
 namespace nodes {
 
+namespace {
+
+struct FrameStats {
+    float green_ratio;
+    float mean_r, mean_g, mean_b;
+    float std_r, std_g, std_b;
+};
+
+FrameStats analyzeFrame(const cv::Mat& mat) {
+    FrameStats stats = {};
+    if (mat.empty() || mat.channels() != 3) return stats;
+
+    constexpr int sample_rows = 8;
+    constexpr int sample_cols = 8;
+
+    int total_samples = 0;
+    int green_samples = 0;
+    double sum_r = 0, sum_g = 0, sum_b = 0;
+    double sq_sum_r = 0, sq_sum_g = 0, sq_sum_b = 0;
+
+    for (int i = 0; i < sample_rows; ++i) {
+        int row = (mat.rows * (i + 1)) / (sample_rows + 1);
+        const cv::Vec3b* row_ptr = mat.ptr<cv::Vec3b>(row);
+        for (int j = 0; j < sample_cols; ++j) {
+            int col = (mat.cols * (j + 1)) / (sample_cols + 1);
+            const cv::Vec3b& pixel = row_ptr[col];
+            uint8_t b = pixel[0];
+            uint8_t g = pixel[1];
+            uint8_t r = pixel[2];
+            if (g > 80 && g > r + 30 && g > b + 30) {
+                green_samples++;
+            }
+            sum_r += r; sum_g += g; sum_b += b;
+            sq_sum_r += r * r; sq_sum_g += g * g; sq_sum_b += b * b;
+            total_samples++;
+        }
+    }
+
+    stats.green_ratio = static_cast<float>(green_samples) / total_samples;
+    stats.mean_r = sum_r / total_samples;
+    stats.mean_g = sum_g / total_samples;
+    stats.mean_b = sum_b / total_samples;
+    stats.std_r = std::sqrt(sq_sum_r / total_samples - stats.mean_r * stats.mean_r);
+    stats.std_g = std::sqrt(sq_sum_g / total_samples - stats.mean_g * stats.mean_g);
+    stats.std_b = std::sqrt(sq_sum_b / total_samples - stats.mean_b * stats.mean_b);
+
+    return stats;
+}
+
+bool isFrameValid(const cv::Mat& mat) {
+    if (mat.empty() || mat.channels() != 3) return false;
+
+    auto stats = analyzeFrame(mat);
+
+    // 条件1：绿色像素比例过高（绿色马赛克）
+    if (stats.green_ratio > 0.4f) return false;
+
+    // 条件2：G 通道均值明显高于 R 和 B（整体偏绿）
+    if (stats.mean_g > stats.mean_r + 20 && stats.mean_g > stats.mean_b + 20) return false;
+
+    // 条件3：R 或 B 通道标准差过低（色彩丢失）
+    if (stats.std_r < 5 && stats.std_b < 5) return false;
+
+    return true;
+}
+
+} // anonymous namespace
+
 EvidenceNode::EvidenceNode() : IEvidenceNode("EvidenceNode") {
     LOG_INFO("[EvidenceNode] Constructor");
 }
@@ -134,6 +202,16 @@ void EvidenceNode::pushData(std::shared_ptr<core::BasePacket> packet) {
 
 void EvidenceNode::handleFrame(std::shared_ptr<core::VideoFramePacket> frame) {
     if (!frame || !frame->mat || frame->mat->empty()) return;
+
+    // 过滤损坏帧（绿色马赛克）
+    auto stats = analyzeFrame(*frame->mat);
+    if (!isFrameValid(*frame->mat)) {
+        LOG_WARN_FMT("[EvidenceNode] Skipping corrupted frame: green_ratio={:.2%}, "
+                     "mean_bgr=({:.0f},{:.0f},{:.0f}), std_bgr=({:.0f},{:.0f},{:.0f})",
+                     stats.green_ratio, stats.mean_b, stats.mean_g, stats.mean_r,
+                     stats.std_b, stats.std_g, stats.std_r);
+        return;
+    }
 
     if (video_config_.enabled) {
         frame_buffer_.push(frame);

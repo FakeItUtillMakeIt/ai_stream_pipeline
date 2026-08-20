@@ -24,12 +24,6 @@ DecoderContext::~DecoderContext() {
     // HAL codec 通过 unique_ptr 自动释放
     codec.reset();
 
-    if (d_bgr_buffer) {
-#ifdef WITH_CUDA
-        cudaFree(d_bgr_buffer);
-#endif
-        d_bgr_buffer = nullptr;
-    }
     if (bgr_buffer) {
         av_free(bgr_buffer);
         bgr_buffer = nullptr;
