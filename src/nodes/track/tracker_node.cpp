@@ -4,6 +4,8 @@
 #include "ai_stream/core/packet.h"
 #include "registry/node_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
+#include <algorithm>
+#include <unordered_set>
 
 // 注意：不包含 ocsort_adapter.h 和 bytetrack_adapter.h
 
@@ -74,7 +76,7 @@ void TrackerNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
     if (packet->type == core::PacketType::STREAM_END)
     {
         LOG_INFO_FMT("[Tracker] Received stream end");
-        stop();
+        // 不在此处调用 stop()，避免从 worker 线程调用导致自连接死锁
         broadcast(packet);
         return;
     }
@@ -84,7 +86,7 @@ void TrackerNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
         broadcast(packet);
         return;
     }
-    
+
     auto infer_result = std::dynamic_pointer_cast<core::InferenceResultPacket>(packet);
     if (!infer_result) {
         broadcast(packet);
@@ -92,41 +94,86 @@ void TrackerNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
     }
     // 过滤不是当前追踪器绑定流的包
     if (!sub_stream_id_.empty() && infer_result->source_id != sub_stream_id_) {
-        //LOG_INFO_FMT("[TrackerNode] {} Ignored packet from stream {},expected: {}", tracker_id_, infer_result->source_id, sub_stream_id_);
-        //broadcast(packet);
         return;
     }
-    LOG_INFO_FMT("[TrackerNode] {} Processing packet from stream {},expected: {}", tracker_id_, infer_result->source_id, sub_stream_id_);
+    LOG_DEBUG_FMT("[TrackerNode] {} Processing packet from stream {},expected: {}", tracker_id_, infer_result->source_id, sub_stream_id_);
         
     // 执行跟踪
     auto tracks = tracker_->update(infer_result->detections);
 
-    // 为新轨迹绑定 class_name（按 IoU 找到产生该轨迹的检测框）。
-    // 轨迹身份与语义类别绑定后，匹配不再依赖 class_id（多模型 id 冲突安全）
+    // 收集当前活跃的轨迹 ID
+    std::unordered_set<int> current_active_ids;
     for (const auto& track : tracks) {
-        if (track_class_names_.count(track.track_id)) continue;
-        float best_iou = 0.0f;
-        std::string best_name;
-        for (const auto& det : infer_result->detections) {
-            float ix1 = std::max(det.x, track.x);
-            float iy1 = std::max(det.y, track.y);
-            float ix2 = std::min(det.x + det.w, track.x + track.w);
-            float iy2 = std::min(det.y + det.h, track.y + track.h);
-            if (ix2 <= ix1 || iy2 <= iy1) continue;
-            float inter = (ix2 - ix1) * (iy2 - iy1);
-            float iou = inter / (det.w * det.h + track.w * track.h - inter);
-            if (iou > best_iou) {
-                best_iou = iou;
-                best_name = det.class_name;
+        current_active_ids.insert(track.track_id);
+    }
+
+    // 清理过期的 track_class_names_ 条目（防止内存无限增长）
+    if (track_class_names_.size() > MAX_TRACK_CLASS_NAMES) {
+        auto it = track_class_names_.begin();
+        while (it != track_class_names_.end()) {
+            if (current_active_ids.count(it->first) == 0) {
+                it = track_class_names_.erase(it);
+            } else {
+                ++it;
             }
         }
-        if (best_iou > 0.3f) {
-            track_class_names_[track.track_id] = best_name;
+    }
+
+    // 为新轨迹绑定 class_name，同时完成检测框匹配（单次遍历）
+    // 使用 IoU 矩阵避免重复计算
+    for (auto& det : infer_result->detections) {
+        det.track_id = -1;
+        det.track_age = 0;
+        det.track_active = false;
+    }
+
+    for (const auto& track : tracks) {
+        // 为新轨迹绑定 class_name
+        if (track_class_names_.count(track.track_id) == 0) {
+            float best_iou_bind = 0.0f;
+            std::string best_name;
+            for (const auto& det : infer_result->detections) {
+                float iou = computeIoU(det, track);
+                if (iou > best_iou_bind) {
+                    best_iou_bind = iou;
+                    best_name = det.class_name;
+                }
+            }
+            if (best_iou_bind > 0.3f) {
+                track_class_names_[track.track_id] = best_name;
+            }
+        }
+
+        // 检测框匹配（使用 track_class_names_ 进行类别匹配）
+        for (auto& det : infer_result->detections) {
+            if (det.track_id != -1) continue; // 已匹配
+
+            float iou = computeIoU(det, track);
+            if (iou <= 0.5f) continue;
+
+            // 类别匹配
+            bool class_match;
+            auto name_it = track_class_names_.find(track.track_id);
+            if (name_it != track_class_names_.end() && !name_it->second.empty() && !det.class_name.empty()) {
+                class_match = (name_it->second == det.class_name);
+            } else {
+                class_match = (track.class_id == det.class_id);
+            }
+
+            if (class_match) {
+                det.track_id = track.track_id;
+                det.track_age = track.age;
+                det.track_active = track.active;
+                det.smooth_x = track.smooth_x;
+                det.smooth_y = track.smooth_y;
+                det.smooth_w = track.smooth_w;
+                det.smooth_h = track.smooth_h;
+                break;
+            }
         }
     }
+
     LOG_DEBUG_FMT("[TrackerNode] Tracks: {}", tracks.size());
-    // 更新检测框的跟踪信息
-    matchAndUpdateDetections(infer_result->detections, tracks);
     // 打印跟踪结果
     for (const auto& track : tracks) {
         LOG_DEBUG_FMT("[TrackerNode] Track ID: {}, Class ID: {}, Age: {}, Active: {}",
@@ -144,55 +191,24 @@ void TrackerNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
     {
         cost_time_str += each_node.first + ":" + std::to_string(each_node.second) + "ms,";
     }
-    LOG_INFO_FMT("{}",cost_time_str);
+    LOG_DEBUG_FMT("{}",cost_time_str);
     //更新数据包
     broadcast(packet);
 }
 
-void TrackerNode::matchAndUpdateDetections(
-    std::vector<core::InferenceResultPacket::BBox>& detections,
-    const std::vector<UnifiedTrackResult>& tracks) {
-    
-    for (auto& det : detections) {
-        det.track_id = -1;
-        det.track_age = 0;
-        det.track_active = false;
-        
-        for (const auto& track : tracks) {
-            float ix1 = std::max(det.x, track.x);
-            float iy1 = std::max(det.y, track.y);
-            float ix2 = std::min(det.x + det.w, track.x + track.w);
-            float iy2 = std::min(det.y + det.h, track.y + track.h);
-            
-            if (ix2 <= ix1 || iy2 <= iy1) continue;
-            
-            float intersection = (ix2 - ix1) * (iy2 - iy1);
-            float area_det = det.w * det.h;
-            float area_track = track.w * track.h;
-            float iou = intersection / (area_det + area_track - intersection);
+float TrackerNode::computeIoU(const core::InferenceResultPacket::BBox& det,
+                               const UnifiedTrackResult& track) {
+    float ix1 = std::max(det.x, track.x);
+    float iy1 = std::max(det.y, track.y);
+    float ix2 = std::min(det.x + det.w, track.x + track.w);
+    float iy2 = std::min(det.y + det.h, track.y + track.h);
 
-            // 类别匹配：优先按轨迹绑定的 class_name（多推理源融合场景下
-            // class_id 可能冲突），无绑定或名称缺失时回退 class_id 比较
-            bool class_match;
-            auto name_it = track_class_names_.find(track.track_id);
-            if (name_it != track_class_names_.end() && !name_it->second.empty() && !det.class_name.empty()) {
-                class_match = (name_it->second == det.class_name);
-            } else {
-                class_match = (track.class_id == det.class_id);
-            }
+    if (ix2 <= ix1 || iy2 <= iy1) return 0.0f;
 
-            if (iou > 0.5f && class_match) {
-                det.track_id = track.track_id;
-                det.track_age = track.age;
-                det.track_active = track.active;
-                det.smooth_x = track.smooth_x;
-                det.smooth_y = track.smooth_y;
-                det.smooth_w = track.smooth_w;
-                det.smooth_h = track.smooth_h;
-                break;
-            }
-        }
-    }
+    float intersection = (ix2 - ix1) * (iy2 - iy1);
+    float area_det = det.w * det.h;
+    float area_track = track.w * track.h;
+    return intersection / (area_det + area_track - intersection);
 }
 
 // 注册节点

@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iostream>
 #include <chrono>
+#include <memory>
 
 #include <NvInfer.h>
 
@@ -40,7 +41,6 @@ DetectionInferNode::~DetectionInferNode() {
     if (d_classes_) cudaFree(d_classes_);
     if (d_batch_ids_) cudaFree(d_batch_ids_);
     if (d_num_dets_) cudaFree(d_num_dets_);
-    if (d_preprocess_tmp_) cudaFree(d_preprocess_tmp_);
 
     // 释放 CUDA streams
     if (compute_stream_) cudaStreamDestroy(compute_stream_);
@@ -109,7 +109,8 @@ void DetectionInferNode::stop() {
 void DetectionInferNode::pushData(std::shared_ptr<core::BasePacket> packet) {
     if (packet->type == core::PacketType::STREAM_END) {
         LOG_INFO_FMT("[DetectionInfer] Received stream end");
-        stop();
+        // 注意：不在此处调用 stop()，避免从 worker 线程调用导致自连接死锁
+        // running_ 会在 inferLoop 中检查
         broadcast(packet);
         return;
     }
@@ -135,6 +136,13 @@ void DetectionInferNode::inferLoop() {
         if (!queue_.pop(first_frame, std::chrono::milliseconds(batch_timeout_ms_))) {
             continue;
         }
+
+        // 检查是否为流结束信号
+        if (first_frame->type == core::PacketType::STREAM_END) {
+            LOG_INFO_FMT("[DetectionInfer] Stream end received in worker thread");
+            break;
+        }
+
         batch_frames.push_back(first_frame);
 
         auto batch_start_time = std::chrono::high_resolution_clock::now();
@@ -294,10 +302,15 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
 
             int hw = input_height_ * input_width_;
             int batch_stride = 3 * hw;
+            size_t alloc_size = cpu_batch * batch_stride * sizeof(float);
 
-            float* host_input = h_pinned_input_
-                ? h_pinned_input_
-                : static_cast<float*>(malloc(cpu_batch * batch_stride * sizeof(float)));
+            // RAII 管理临时缓冲区，避免异常时泄露
+            std::unique_ptr<float, decltype(&free)> host_input_heap(
+                h_pinned_input_ ? nullptr : static_cast<float*>(malloc(alloc_size)),
+                free
+            );
+
+            float* host_input = h_pinned_input_ ? h_pinned_input_ : host_input_heap.get();
 
             for (int i = 0; i < cpu_batch; ++i) {
                 int orig_idx = cpu_indices[i];
@@ -320,12 +333,8 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
             size_t gpu_offset = gpu_batch * batch_stride * sizeof(float);
             cudaMemcpyAsync(static_cast<char*>(d_input_) + gpu_offset,
                             host_input,
-                            cpu_batch * batch_stride * sizeof(float),
+                            alloc_size,
                             cudaMemcpyHostToDevice, transfer_stream_);
-
-            if (!h_pinned_input_) {
-                free(host_input);
-            }
         }
 
         // 等待传输完成后再推理
@@ -439,7 +448,7 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
         }
 
         auto all_detections = postprocessBatch(valid_batch, total_dets,
-                                                valid_scale_x.data(), valid_scale_y.data(), 0.25f,
+                                                valid_scale_x.data(), valid_scale_y.data(), confidence_threshold_,
                                                 valid_letter_scale.data(),
                                                 valid_letter_pad_x.data(),
                                                 valid_letter_pad_y.data(),
@@ -465,42 +474,6 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
 }
 
 // ============================================================
-// CPU 路径预处理
-// ============================================================
-void DetectionInferNode::preprocessBatchCpu(const std::vector<cv::Mat*>& images,
-                                              float* gpu_buffer, int batch_size) {
-    int hw = input_height_ * input_width_;
-    int batch_stride = 3 * hw;
-
-    float* host_input = h_pinned_input_
-        ? h_pinned_input_
-        : static_cast<float*>(malloc(batch_size * batch_stride * sizeof(float)));
-
-    for (int b = 0; b < batch_size; ++b) {
-        const cv::Mat& image = *images[b];
-        const float* img_ptr = image.ptr<float>();
-        float* batch_ptr = host_input + b * batch_stride;
-
-        for (int h = 0; h < input_height_; ++h) {
-            for (int w = 0; w < input_width_; ++w) {
-                int src_idx = (h * input_width_ + w) * 3;
-                int dst_idx = h * input_width_ + w;
-                batch_ptr[0 * hw + dst_idx] = img_ptr[src_idx + 2]; // R
-                batch_ptr[1 * hw + dst_idx] = img_ptr[src_idx + 1]; // G
-                batch_ptr[2 * hw + dst_idx] = img_ptr[src_idx + 0]; // B
-            }
-        }
-    }
-
-    cudaMemcpyAsync(gpu_buffer, host_input,
-                    batch_size * batch_stride * sizeof(float),
-                    cudaMemcpyHostToDevice, transfer_stream_);
-
-    if (!h_pinned_input_) {
-        free(host_input);
-    }
-}
-
 // ============================================================
 // 后处理 - 支持 letterbox 反变换
 // ============================================================
@@ -762,15 +735,15 @@ bool DetectionInferNode::initEngine(const std::string& engine_path) {
         out_num_dets_size_ = sizeof(int64_t);
 
         // 分配 GPU 缓冲区
-        cudaMalloc(&d_input_, input_size_);
-        cudaMalloc(&d_boxes_, out_boxes_size_);
-        cudaMalloc(&d_scores_, out_scores_size_);
-        cudaMalloc(&d_classes_, out_classes_size_);
-        cudaMalloc(&d_batch_ids_, out_batch_ids_size_);
-        cudaMalloc(&d_num_dets_, out_num_dets_size_);
-
-        cudaMalloc(&d_preprocess_tmp_, input_size_);
-        d_preprocess_tmp_size_ = input_size_;
+        if (!cudaMallocChecked(&d_input_, input_size_, "d_input_") ||
+            !cudaMallocChecked(&d_boxes_, out_boxes_size_, "d_boxes_") ||
+            !cudaMallocChecked(&d_scores_, out_scores_size_, "d_scores_") ||
+            !cudaMallocChecked(&d_classes_, out_classes_size_, "d_classes_") ||
+            !cudaMallocChecked(&d_batch_ids_, out_batch_ids_size_, "d_batch_ids_") ||
+            !cudaMallocChecked(&d_num_dets_, out_num_dets_size_, "d_num_dets_")) {
+            LOG_ERROR("[DetectionInfer] Failed to allocate GPU buffers");
+            return false;
+        }
 
         // 分配 CPU fallback 缓冲区
         h_boxes_.resize(max_batch * MAX_DETS * 4);
@@ -797,6 +770,15 @@ bool DetectionInferNode::initEngine(const std::string& engine_path) {
         LOG_ERROR_FMT("[DetectionInfer] initEngine exception: {}", e.what());
         return false;
     }
+}
+
+bool DetectionInferNode::cudaMallocChecked(void** ptr, size_t size, const char* name) {
+    cudaError_t err = cudaMalloc(ptr, size);
+    if (err != cudaSuccess) {
+        LOG_ERROR_FMT("[DetectionInfer] cudaMalloc failed for {}: {}", name, cudaGetErrorString(err));
+        return false;
+    }
+    return true;
 }
 
 REGISTER_NODE("detection_infer", DetectionInferNode)

@@ -8,6 +8,8 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 namespace ai_stream {
 namespace nodes {
@@ -36,9 +38,9 @@ public:
     void onShutdown() override;
 
 private:
-    void matchAndUpdateDetections(std::vector<core::InferenceResultPacket::BBox>& detections,
-                                   const std::vector<UnifiedTrackResult>& tracks);
-    
+    static float computeIoU(const core::InferenceResultPacket::BBox& det,
+                            const UnifiedTrackResult& track);
+
     TrackerType tracker_type_ = TrackerType::OCSORT;
     OCSortConfig ocsort_config_;
     std::string sub_stream_id_;
@@ -50,6 +52,11 @@ private:
     // 用于按名称匹配：多推理源融合场景下不同模型的 class_id 可能冲突，
     // 而轨迹身份与语义类别绑定才正确
     std::unordered_map<int, std::string> track_class_names_;
+
+    // 用于清理过期轨迹的 ID 集合
+    std::unordered_set<int> active_track_ids_;
+
+    static constexpr size_t MAX_TRACK_CLASS_NAMES = 500;
 };
 
 } // namespace nodes

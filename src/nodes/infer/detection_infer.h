@@ -43,6 +43,9 @@ public:
     // CUDA Graph 开关
     void setCudaGraphEnabled(bool enable) { cuda_graph_enabled_ = enable; }
 
+    // 设置置信度阈值
+    void setConfidenceThreshold(float thresh) { confidence_threshold_ = thresh; }
+
     // 设置推理后端类型
     void setInferenceBackend(hal::DetectionBackend backend) { backend_type_ = backend; }
 
@@ -58,8 +61,7 @@ private:
     std::vector<std::shared_ptr<core::InferenceResultPacket>> processBatch(
         const std::vector<std::shared_ptr<core::VideoFramePacket>>& frames);
 
-    // 双路径预处理
-    void preprocessBatchCpu(const std::vector<cv::Mat*>& images, float* gpu_buffer, int batch_size);
+    // GPU 预处理
     void preprocessBatchGpu(const std::vector<void*>& d_ptrs, const std::vector<size_t>& pitches,
                             float* gpu_buffer, int batch_size);
 
@@ -79,6 +81,9 @@ private:
     // Pinned Memory 管理
     bool allocatePinnedMemory();
     void freePinnedMemory();
+
+    // CUDA 辅助函数
+    static bool cudaMallocChecked(void** ptr, size_t size, const char* name);
 
     // HAL 推理引擎
     hal::DetectionInferenceEnginePtr engine_;
@@ -103,10 +108,6 @@ private:
     void* d_classes_ = nullptr;
     void* d_batch_ids_ = nullptr;
     void* d_num_dets_ = nullptr;
-
-    // 用于 GPU 路径的临时缓冲区
-    void* d_preprocess_tmp_ = nullptr;
-    size_t d_preprocess_tmp_size_ = 0;
 
     // Pinned Host Memory
     float* h_pinned_input_ = nullptr;
@@ -164,6 +165,9 @@ private:
 
     std::chrono::milliseconds batch_timeout_ms_{20};
     std::atomic<int> max_batch_size_{1};
+
+    // 置信度阈值
+    float confidence_threshold_ = 0.25f;
 };
 
 } // namespace nodes
