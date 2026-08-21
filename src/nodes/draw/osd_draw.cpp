@@ -11,7 +11,9 @@ namespace ai_stream {
 namespace nodes {
 
 OSDDrawNode::OSDDrawNode() : core::QueuedNode<IDrawNode>("OSDDraw") {
+#ifdef HAVE_OPENCV_FREETYPE
     m_ft2_ = cv::freetype::createFreeType2();
+#endif
 }
 
 void OSDDrawNode::setBoxColor(int b, int g, int r) {

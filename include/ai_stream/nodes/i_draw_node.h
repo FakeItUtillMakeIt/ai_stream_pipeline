@@ -5,7 +5,9 @@
 #include "3rd_party/log_mgr/log_mgr.h"
 #include <string>
 #include <vector>
+#ifdef HAVE_OPENCV_FREETYPE
 #include <opencv2/freetype.hpp>
+#endif
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/opencv.hpp>
@@ -90,6 +92,7 @@ public:
 
     virtual void setFontFile(const std::string& font_path)
     {
+#ifdef HAVE_OPENCV_FREETYPE
         font_file_ = font_path;
         try {
             m_ft2_->loadFontData(font_path, 0);
@@ -97,6 +100,9 @@ public:
         } catch (const std::exception& e) {
             LOG_ERROR_FMT("[IDrawNode] Failed to load font file: {}, error: {}", font_path, e.what());
         }
+#else
+        LOG_WARN_FMT("[IDrawNode] freetype support not compiled, font file ignored: {}", font_path);
+#endif
     }
 
     /**
@@ -107,7 +113,9 @@ public:
 protected:
     std::string logo_file_;
     std::string font_file_;
+#ifdef HAVE_OPENCV_FREETYPE
     cv::Ptr<cv::freetype::FreeType2> m_ft2_;
+#endif
 };
 
 } // namespace nodes

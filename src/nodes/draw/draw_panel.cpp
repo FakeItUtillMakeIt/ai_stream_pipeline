@@ -132,6 +132,7 @@ void IDrawNode::addPanel(cv::Mat& origin, const std::vector<rules::AlertResult>&
     auto putTextEx = [&](cv::Mat& img, const std::string& text, cv::Point pos,
                          double scale, cv::Scalar color, int thickness) {
         (void)thickness;
+#ifdef HAVE_OPENCV_FREETYPE
         if (m_ft2_ && !text.empty()) {
             // 包含非 ASCII 字符时用 FreeType
             bool has_cn = false;
@@ -142,6 +143,7 @@ void IDrawNode::addPanel(cv::Mat& origin, const std::vector<rules::AlertResult>&
                 return;
             }
         }
+#endif
         cv::putText(img, text, pos, cv::FONT_HERSHEY_SIMPLEX, scale, color, 2, cv::LINE_AA);
     };
 

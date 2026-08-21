@@ -31,7 +31,9 @@ GpuOSDDrawNode::GpuOSDDrawNode() : core::QueuedNode<IDrawNode>("GpuOSDDraw") {
 
     cudaEventCreate(&start_event_);
     cudaEventCreate(&stop_event_);
+#ifdef HAVE_OPENCV_FREETYPE
     m_ft2_ = cv::freetype::createFreeType2();
+#endif
 }
 
 GpuOSDDrawNode::~GpuOSDDrawNode() {

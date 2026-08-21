@@ -81,11 +81,35 @@ include(GNUInstallDirs)
 include(cmake/dependencies.cmake)
 
 # 查找或获取基础依赖（spdlog, nlohmann_json）
+# 如果找不到 spdlog，自动从 GitHub 下载
+if(NOT spdlog_FOUND)
+    include(FetchContent)
+    FetchContent_Declare(
+        spdlog
+        GIT_REPOSITORY https://github.com/gabime/spdlog.git
+        GIT_TAG v1.12.0
+        GIT_SHALLOW TRUE
+    )
+    set(SPDLOG_BUILD_SHARED ON CACHE BOOL "" FORCE)
+    set(SPDLOG_INSTALL OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(spdlog)
+    # 这会给 spdlog 项目命名，可能需要使用 spdlog::spdlog 或 spdlog
+endif()
 find_package(spdlog REQUIRED)
 find_package(nlohmann_json REQUIRED)
 
 # 视频/图像处理核心依赖
 find_package(OpenCV REQUIRED COMPONENTS core imgproc videoio)
+
+# 可选的 OpenCV freetype 模块（用于中文绘制等高级文本渲染）
+# 当系统安装了 opencv_freetype 组件时，OpenCVConfig.cmake 会导出 opencv_freetype target
+if(TARGET opencv_freetype)
+    set(HAVE_OPENCV_FREETYPE TRUE)
+    message(STATUS "OpenCV freetype module available")
+else()
+    set(HAVE_OPENCV_FREETYPE FALSE)
+    message(STATUS "OpenCV freetype module not found, text rendering will use cv::putText fallback")
+endif()
 find_package(FFmpeg REQUIRED COMPONENTS avcodec avformat avutil swscale)
 
 # FTP上传依赖（可选）
@@ -225,9 +249,14 @@ target_link_libraries(ai_stream_nodes
         opencv_core
         opencv_imgproc
         opencv_videoio
-        opencv_freetype
         ${FFMPEG_LIBRARIES}
 )
+
+# 条件链接 OpenCV freetype 模块
+if(HAVE_OPENCV_FREETYPE)
+    target_link_libraries(ai_stream_nodes PRIVATE opencv_freetype)
+    target_compile_definitions(ai_stream_nodes PRIVATE HAVE_OPENCV_FREETYPE)
+endif()
 
 # 条件链接推理后端
 if(WITH_TENSORRT)
@@ -300,6 +329,9 @@ endif()
 set(_INSTALL_EXPORT_TARGETS ai_stream_core ai_stream_nodes ai_stream_hal)
 if(WITH_TRACK)
     list(APPEND _INSTALL_EXPORT_TARGETS ocsort bytetrack)
+endif()
+if(spdlog_FOUND OR TARGET spdlog)
+    list(APPEND _INSTALL_EXPORT_TARGETS spdlog)
 endif()
 
 install(TARGETS ${_INSTALL_EXPORT_TARGETS}

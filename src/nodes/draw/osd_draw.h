@@ -4,7 +4,9 @@
 #include "ai_stream/nodes/i_draw_node.h"
 #include "ai_stream/core/queued_node.h"
 #include <opencv2/core/mat.hpp>
+#ifdef HAVE_OPENCV_FREETYPE
 #include <opencv2/freetype.hpp>
+#endif
 
 namespace ai_stream {
 namespace nodes {
