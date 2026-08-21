@@ -81,19 +81,20 @@ include(GNUInstallDirs)
 include(cmake/dependencies.cmake)
 
 # 查找或获取基础依赖（spdlog, nlohmann_json）
-# 如果找不到 spdlog，自动从 GitHub 下载
+# 优先使用系统 spdlog，找不到时从 GitHub 下载
+find_package(spdlog QUIET)
 if(NOT spdlog_FOUND)
+    message(STATUS "System spdlog not found, fetching v1.9.2 from GitHub...")
     include(FetchContent)
     FetchContent_Declare(
         spdlog
         GIT_REPOSITORY https://github.com/gabime/spdlog.git
-        GIT_TAG v1.12.0
+        GIT_TAG v1.9.2
         GIT_SHALLOW TRUE
     )
     set(SPDLOG_BUILD_SHARED ON CACHE BOOL "" FORCE)
     set(SPDLOG_INSTALL OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(spdlog)
-    # 这会给 spdlog 项目命名，可能需要使用 spdlog::spdlog 或 spdlog
 endif()
 find_package(spdlog REQUIRED)
 find_package(nlohmann_json REQUIRED)
@@ -330,9 +331,7 @@ set(_INSTALL_EXPORT_TARGETS ai_stream_core ai_stream_nodes ai_stream_hal)
 if(WITH_TRACK)
     list(APPEND _INSTALL_EXPORT_TARGETS ocsort bytetrack)
 endif()
-if(spdlog_FOUND OR TARGET spdlog)
-    list(APPEND _INSTALL_EXPORT_TARGETS spdlog)
-endif()
+
 
 install(TARGETS ${_INSTALL_EXPORT_TARGETS}
     EXPORT ai_stream_pipeline-targets
