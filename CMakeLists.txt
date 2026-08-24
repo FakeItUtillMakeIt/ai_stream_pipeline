@@ -209,8 +209,8 @@ add_subdirectory(src/core)
 # 公开头文件目录
 target_include_directories(ai_stream_core
     PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include}>
-        $<INSTALL_INTERFACE:include}>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
         ${OpenCV_INCLUDE_DIRS}
 )
 
