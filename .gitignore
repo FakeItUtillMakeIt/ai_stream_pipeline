@@ -47,3 +47,7 @@
 __pycache__/
 
 .opencode/
+
+models
+
+config
