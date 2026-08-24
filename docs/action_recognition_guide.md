@@ -6,7 +6,7 @@
 - 实时视频流动作检测
 - 三分类：攀爬(climb)、打架(fight)、其他(other)
 - 帧缓冲和滑动窗口机制
-- TensorRT加速推理
+- TensorRT 加速推理（HAL 后端：`src/hal/tensorrt/tensorrt_action_recognition.h`）
 
 ## 训练
  run_train.sh
@@ -25,64 +25,79 @@
 
 ## 模型文件
 
-训练完成后，需要将以下文件复制到项目目录：
+训练完成后，将导出的 TensorRT 引擎放到项目目录：
 
 ```bash
-# 创建模型目录
-mkdir -p ./models/action_recognition
-
-# 复制TensorRT引擎
-cp ./models/videomae/action_recognition.engine ./models/action_recognition/
-
-# 复制类别映射
-cp ./models/videomae/finetuned/class_mapping.json ./models/action_recognition/
-
-# 复制配置文件
-cp ./config/action_recognition.json ./models/action_recognition/
+mkdir -p ./models/action_recognition/
+cp <训练产物>/action_recognition.engine ./models/action_recognition/
 ```
 
-## 配置文件说明
+引擎转换工具见 `tools/model_converter/`。
 
-配置文件 `action_recognition.json`：
+## 管道配置（推荐方式）
+
+动作识别节点通过管道 JSON 的节点 `params` 配置，
+参考模板 `config/pipelines/action_recongnition_pipeline.json`：
 
 ```json
 {
-    "model_path": "./models/action_recognition/action_recognition.engine",
-    "input_name": "input",
-    "input_shape": [1, 16, 3, 224, 224],
-    "output_name": "output",
-    "num_classes": 3,
-    "class_names": ["climb", "fight", "other"],
-    "confidence_threshold": 0.7,
-    "frame_buffer_size": 16,
-    "frame_stride": 8,
-    "preprocessing": {
-        "image_size": 224,
-        "mean": [0.485, 0.456, 0.406],
-        "std": [0.229, 0.224, 0.225]
-    }
+  "id": "videomae_test",
+  "graph": {
+    "nodes": [
+      { "id": "src1", "type": "rtsp_source",
+        "params": { "url": "rtsp://localhost:8554/stream1", "skip_frames": 1 } },
+      { "id": "decode1", "type": "ffmpeg_decode",
+        "params": { "output_bgr": true, "hw_decoder": true, "hw_decoder_type": "h264_cuvid" } },
+      { "id": "preprocess_videomae", "type": "cuda_resize_normalize",
+        "params": { "output_width": 224, "output_height": 224,
+                    "keep_aspect_ratio": false,
+                    "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225] } },
+      { "id": "action_recognition1", "type": "action_recognition_videomae",
+        "params": {
+          "model_path": "./models/action_recognition/action_recognition.engine",
+          "confidence_threshold": 0.7,
+          "num_frames": 16,
+          "frame_interval": 2,
+          "window_size": 16,
+          "stride": 8,
+          "batch_size": 1,
+          "input_height": 224,
+          "input_width": 224,
+          "action_labels": ["climb", "fight", "other"]
+        } }
+    ],
+    "edges": [
+      { "from": "src1", "to": "decode1" },
+      { "from": "decode1", "to": "preprocess_videomae" },
+      { "from": "preprocess_videomae", "to": "action_recognition1" }
+    ]
+  }
 }
 ```
 
-### 参数说明
+### 参数说明（`i_action_recognition_node.h` 的 configure 解析）
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| model_path | string | TensorRT引擎路径 |
-| num_classes | int | 分类数量（3: climb, fight, other）|
-| class_names | array | 类别名称 |
-| confidence_threshold | float | 置信度阈值（低于此值不输出）|
-| frame_buffer_size | int | 帧缓冲区大小 |
-| frame_stride | int | 滑动窗口步长 |
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| model_path | string | - | TensorRT 引擎路径 |
+| input_height / input_width | int | 224 | 输入分辨率 |
+| num_frames / frame_interval | int | 16 / 2 | clip 帧数与采样间隔 |
+| window_size / stride | int | 16 / 8 | 滑动窗口大小与步长 |
+| confidence_threshold | float | 0.5 | 置信度阈值 |
+| batch_size | int | 1 | 批处理大小 |
+| action_labels | array | - | 类别名称列表 |
 
-## Pipeline配置
+## 运行
 
-使用pipeline配置文件运行：
+通过 HTTP 服务提交上述管道配置：
 
 ```bash
-# 运行pipeline
-./ai_stream_pipeline --config ./config/pipelines/action_recognition_pipeline.json
+./build/src/http/http_server 0.0.0.0 8080
+curl -X POST :8080/api/v1/pipeline/build -d @config/pipelines/action_recongnition_pipeline.json
+curl -X POST :8080/api/v1/pipeline/start  -d '{"id":"videomae_test"}'
 ```
+
+接口详见 [api_reference.md](api_reference.md)。
 
 ## 推理流程
 
@@ -102,48 +117,31 @@ cp ./config/action_recognition.json ./models/action_recognition/
 
 ## C++代码集成
 
-### 基本使用
-
 ```cpp
 #include "nodes/infer/action_recognition_videomae.h"
 
-// 创建节点
+// 方式一：默认构造 + setter
 ai_stream::nodes::ActionRecognitionVideoMAENode node;
+node.setModelPath("./models/action_recognition/action_recognition.engine");
+node.setConfidenceThreshold(0.7f);
+node.setActionLabels({"climb", "fight", "other"});
+node.configure("ar1", params_json);
 
-// 配置参数
-ai_stream::nodes::ActionRecognitionVideoMAENode::Config config;
-config.model_path = "./models/action_recognition/action_recognition.engine";
-config.confidence_threshold = 0.7f;
-config.action_labels = {"climb", "fight", "other"};
-
-// 启动节点
-node.start();
-
-// 推送帧数据
-auto packet = std::make_shared<ai_stream::core::VideoFramePacket>();
-packet->stream_id = 1;
-packet->mat = cv::make_shared<cv::Mat>(frame);
-node.pushData(packet);
+// 方式二：Config 结构体构造
+ai_stream::nodes::ActionRecognitionVideoMAENode::Config cfg;
+cfg.model_path = "./models/action_recognition/action_recognition.engine";
+cfg.confidence_threshold = 0.7f;
+cfg.action_labels = {"climb", "fight", "other"};
+ai_stream::nodes::ActionRecognitionVideoMAENode node2(cfg);
 ```
+
+> 通常无需手动集成：节点已通过 `REGISTER_NODE("action_recognition_videomae", ...)`
+> 注册到工厂，在管道 JSON 中引用 type 即可。
 
 ### 结果处理
 
-```cpp
-// 在回调中处理结果
-void onActionResult(const ai_stream::core::InferenceResultPacket::ActionResult& result) {
-    if (result.confidence >= 0.7f) {
-        std::cout << "Action: " << result.action_label 
-                  << ", Confidence: " << result.confidence << std::endl;
-        
-        // 根据动作类型触发告警
-        if (result.action_label == "fight") {
-            // 触发打架告警
-        } else if (result.action_label == "climb") {
-            // 触发攀爬告警
-        }
-    }
-}
-```
+识别结果以 `InferenceResultPacket.action_result` 沿图向下传播，下游告警/融合节点按
+`ActionResult::label` 与 `confidence` 处理（如 fight/climb 触发对应告警规则）。
 
 ## 性能优化
 
@@ -190,3 +188,4 @@ void onActionResult(const ai_stream::core::InferenceResultPacket::ActionResult& 
 2. 帧分辨率会被自动resize到224x224
 3. 模型需要16帧作为输入
 4. 置信度阈值建议设置为0.7
+5. 需以 `-DWITH_CUDA=ON -DWITH_TENSORRT=ON` 编译；GPU 帧路径要求解码输出 GPU 指针

@@ -13,6 +13,10 @@
 （`configure()`）与 setter，**优先继承接口**：
 `QueuedNode<IDrawNode>`、`QueuedNode<IPreprocessNode>` 等。
 
+涉及平台相关计算（推理/硬件编解码/图像加速）时，通过 HAL 接口
+（`include/ai_stream/hal/`，如 `IInferenceEngine`、`IImageAccelerator`）访问，
+由对应工厂按编译选项选择后端，不要在节点里直接耦合 TensorRT/RKNN 等 SDK。
+
 ## 2. 头文件
 
 ```cpp
@@ -106,6 +110,9 @@ REGISTER_NODE("gray", GrayNode)
 - `broadcast()` 推给所有下游，同时记录指标、清理失效下游
 - `in_time_ms_` 由 QueuedNode 在出队时自动刷新
 - 修改帧数据前先克隆（若该帧还会被其他分支使用）
+- worker 线程内调用 `stop()` 是安全的（基类已做自 join 防护）
+- STREAM_END 是控制包：入队时无视丢帧策略强制入队（基类保证），处理时务必转发，
+  否则下游无法级联自停
 
 ## 4. 加入构建
 
@@ -140,9 +147,10 @@ gray/gray_node.cpp
 ## 6. 检查清单
 
 - [ ] 继承正确的基类/接口，重处理用 QueuedNode
+- [ ] 平台相关计算走 HAL 接口，不直接依赖具体 SDK
 - [ ] `configure/configureImpl` 解析全部参数，非法配置返回 false
-- [ ] STREAM_END 处理（stop + broadcast）
+- [ ] STREAM_END 处理（stop + broadcast，务必转发）
 - [ ] 非目标类型包透传而非丢弃
 - [ ] `REGISTER_NODE` 注册且类型名唯一
 - [ ] CMake 源文件列表已添加
-- [ ] 重启管道场景：`onStartup` 可重复执行（队列由基类 reset）
+- [ ] 重启管道场景：`onStartup` 可重复执行（残留 worker 线程与队列由基类清理）

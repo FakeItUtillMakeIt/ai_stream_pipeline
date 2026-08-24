@@ -20,9 +20,13 @@ ai_stream_pipeline 是一个模块化的视频流 AI 处理框架：以 **节点
 | 库 | 内容 |
 |---|---|
 | `ai_stream_core` | Node/Packet/Pipeline 核心抽象、QueuedNode、BoundedQueue、Metrics、AsyncPipelineManager |
+| `ai_stream_hal` | 硬件抽象层：推理引擎/图像加速/编解码接口 + 各平台后端实现（静态库） |
 | `ai_stream_nodes` | 全部具体节点实现 + 节点工厂注册 |
 | `alert_rules` / `alert_node` | 告警规则与告警节点（对象库，并入 ai_stream_nodes） |
 | `http_server` | REST API 服务可执行文件 |
+
+依赖方向：`ai_stream_nodes → ai_stream_core / ai_stream_hal`，
+节点只面向 HAL 接口编程，不直接耦合具体平台 SDK。
 
 ## 2. 核心概念
 
@@ -75,14 +79,32 @@ worker 内自停已做 join 死锁防护。
 `core::Pipeline`（`include/ai_stream/core/pipeline.h` + `src/core/pipeline_manager.cpp`）：
 
 - `buildFromJson`：工厂创建节点 → `node->configure()` → 连边 → **Kahn 算法拓扑排序 + 环检测**
-- `start()`：**逆拓扑序**启动（下游先就绪，source 最后），避免数据到达未启动节点
-- `stop()`：**拓扑序**停止（source 先停），阻止新数据进入，下游自然排空；启动失败时同序回滚
+- `start()`：**逆拓扑序**启动（下游先就绪，source 最后），避免数据到达未启动节点；
+  STREAM_END 级联自停后可直接再次 `start()`，内部自动回收残留线程并按完整拓扑重启
+- `stop()`：**拓扑序**停止（source 先停），阻止新数据进入，下游自然排空；`stop()` 幂等，
+  自停状态下调用仍会回收节点资源；启动失败时同序回滚
 
 ### 2.5 节点工厂
 
 `REGISTER_NODE("type", ClassName)`（`src/nodes/registry/node_factory.h`）静态注册，
 支持同一 .cpp 注册多个类型。Pipeline 按 JSON 中的 `type` 字符串创建实例。
 告警规则同理：`REGISTER_ALERT_RULE("type", ClassName)`（`src/rules/alert/alert_rule_factory.h`）。
+
+### 2.6 HAL（硬件抽象层）
+
+`src/hal/` 将平台相关实现收敛到统一接口（接口定义在 `include/ai_stream/hal/`）：
+
+| 接口 | 职责 | 后端 |
+|---|---|---|
+| `IInferenceEngine` / `IDetectionInferenceEngine` | 通用/检测推理 | TensorRT、RKNN、Ascend |
+| `IActionRecognition` | 动作识别推理 | TensorRT (VideoMAE) |
+| `IImageAccelerator` | 预处理/绘制/NMS 加速 | CUDA、NPP、RGA、CPU |
+| `IVideoCodec` | 视频编解码 | FFmpeg、NVDEC、MPP |
+
+各 `*_factory.cpp` 按编译期宏（`WITH_TENSORRT` / `WITH_RKNN` / `WITH_ASCEND` /
+`WITH_CUDA` / `WITH_CPU_FALLBACK`）选择可用后端；可选依赖缺失时自动降级
+（如无 GPU 回退 CPU 实现）。OSD 绘制的中文渲染依赖 OpenCV freetype 模块，
+缺失时通过 `HAVE_OPENCV_FREETYPE` 宏回退到 `cv::putText`。
 
 ## 3. 节点清单与线程模型
 
@@ -94,12 +116,13 @@ worker 内自停已做 join 死锁防护。
 | ResizeNormalizeNode / GPU / CUDA 版 | `resize_normalize` / `gpu_resize_normalize` / `cuda_resize_normalize` | QueuedNode |
 | DetectionInferNode | `detection_infer` | 自持 BoundedQueue + 推理线程（动态 batch） |
 | PoseInferNode / CudaPoseInferNode | `pose_infer` / `cuda_pose_infer` | 自持队列 + worker |
+| RknnDetectionInferNode | `rknn_detection_infer` | QueuedNode（RK3588 平台） |
 | ActionRecognitionVideoMAENode | `action_recognition_videomae` | QueuedNode |
 | DetectionPostProcessNode / GPU 版 | `detection_post` / `gpu_detection_post` | QueuedNode |
 | TrackerNode（OCSort/ByteTrack） | `tracker` | QueuedNode |
 | AlertNode | `alert` | QueuedNode（规则可并行 std::async） |
 | FusionNodeImpl | `fusion` | QueuedNode（双模式见下） |
-| OSDDrawNode / GpuOSDDrawNode | `osd_draw` / `gpu_osd_draw` | QueuedNode |
+| OSDDrawNode / GpuOSDDrawNode | `osd_draw` / `gpu_osd_draw` | QueuedNode（中文绘制需 OpenCV freetype，缺失时英文回退 `cv::putText`） |
 | EvidenceNode | `evidence` | 同步轻分发（内部组件各自带队列） |
 | RTMPSinkNode / MP4SaveNode | `rtmp_sink` / `mp4_save` | 自持 BoundedQueue + 编码线程（drop_oldest） |
 

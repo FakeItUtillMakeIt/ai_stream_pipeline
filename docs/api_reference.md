@@ -25,6 +25,29 @@
 "queue": { "capacity": 64, "drop_policy": "drop_newest|drop_oldest|block", "push_timeout_ms": 10 }
 ```
 
+### 可用节点类型
+
+| type | 节点 | 说明 |
+|---|---|---|
+| `rtsp_source` | RTSPSourceNode | RTSP 拉流 |
+| `file_source` | FileSourceNode | 文件源（loop/realtime 可选） |
+| `ffmpeg_decode` | FFmpegDecodeNode | FFmpeg 解码 |
+| `resize_normalize` / `gpu_resize_normalize` / `cuda_resize_normalize` | 预处理 | CPU/GPU/CUDA 三版 |
+| `detection_infer` | DetectionInferNode | TensorRT 目标检测（动态 batch） |
+| `rknn_detection_infer` | RknnDetectionInferNode | RK3588 目标检测 |
+| `pose_infer` / `cuda_pose_infer` | 姿态估计 | CPU/CUDA 版 |
+| `action_recognition_videomae` | ActionRecognitionVideoMAENode | VideoMAE 动作识别 |
+| `detection_post` / `gpu_detection_post` | 后处理（解码/NMS） | CPU/GPU 版 |
+| `tracker` | TrackerNode | OCSort/ByteTrack 跟踪 |
+| `alert` | AlertNode | 告警规则容器 |
+| `fusion` | FusionNodeImpl | 多推理源融合 |
+| `osd_draw` / `gpu_osd_draw` | OSD 绘制 | 中文绘制需 OpenCV freetype |
+| `evidence` | EvidenceNode | 证据链录制/上传 |
+| `rtmp_sink` / `mp4_save` | 推流/存盘 | 编码输出 |
+
+> 具体节点参数请参考各节点的 `configure()` 实现及
+> `config/pipelines/` 下的示例管道 JSON。
+
 ---
 
 ## POST /api/v1/pipeline/build — 构建管道
@@ -94,7 +117,9 @@
 
 不存在：`404 {"status":"error","message":"Pipeline not found","id":"..."}`
 
-> 注：节点收到 STREAM_END 会自停，此时 `running` 以节点实际状态为准。
+> 注：
+> - 节点收到 STREAM_END（如文件播放完毕）会级联自停，此时 `running` 以节点实际状态为准
+> - 自停后的管道可直接再次调用 start 重启，无需先 stop
 
 ## GET /health — 健康检查
 
