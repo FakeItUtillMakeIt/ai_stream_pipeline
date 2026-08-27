@@ -1,23 +1,23 @@
 // src/nodes/infer/pose_infer.cpp
 #include "pose_infer.h"
+#include "pose_postprocess.h"
 #include "ai_stream/core/packet.h"
 #include "registry/node_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
-#include "utils/tensor_rt_logger.h"
 
 #include <opencv2/opencv.hpp>
-#include <fstream>
-#include <iostream>
 #include <chrono>
 #include <cmath>
-
-#include <NvInfer.h>
+#include <cstring>
+#include <fstream>
 
 namespace ai_stream {
 namespace nodes {
 
 // ============================================================
-// PoseInferNode
+// PoseInferNode（host 预处理路径）
+// 推理通过 HAL 后端引擎完成，本节点负责业务逻辑：
+// person 框收集、CPU crop+letterbox 预处理、关键点解码。
 // ============================================================
 
 PoseInferNode::PoseInferNode() : IInferNode("PoseInfer") {
@@ -26,11 +26,7 @@ PoseInferNode::PoseInferNode() : IInferNode("PoseInfer") {
 
 PoseInferNode::~PoseInferNode() {
     stop();
-
-    if (d_input_) cudaFree(d_input_);
-    if (d_output_) cudaFree(d_output_);
-    if (stream_) cudaStreamDestroy(stream_);
-
+    engine_.reset();
     LOG_INFO_FMT("[PoseInfer] Destructor");
 }
 
@@ -41,7 +37,28 @@ bool PoseInferNode::loadModel(const std::string& model_path) {
         LOG_ERROR_FMT("[PoseInfer] Model file not found: {}", model_path);
         return false;
     }
-    return initEngine(model_path);
+
+    engine_ = hal::PoseEstimationFactory::instance().create(
+        hal::PoseEstimationBackend::AUTO);
+    if (!engine_) {
+        LOG_ERROR("[PoseInfer] No pose estimation backend available "
+                  "(check WITH_TENSORRT/WITH_RKNN/WITH_ASCEND build options)");
+        return false;
+    }
+
+    hal::PoseEstimationConfig cfg;
+    cfg.model_path = model_path;
+    cfg.input_width = input_width_;
+    cfg.input_height = input_height_;
+    cfg.max_batch = batch_size_;
+    cfg.precision = precision_;
+
+    if (!engine_->loadModel(cfg)) {
+        LOG_ERROR_FMT("[PoseInfer] Failed to load model via HAL backend: {}", model_path);
+        engine_.reset();
+        return false;
+    }
+    return true;
 }
 
 void PoseInferNode::setPrecision(const std::string& precision) {
@@ -57,6 +74,7 @@ void PoseInferNode::setBatchSize(int batch_size) {
 }
 
 std::pair<int, int> PoseInferNode::getInputSize() const {
+    if (engine_) return engine_->getInputSize();
     return {input_width_, input_height_};
 }
 
@@ -177,64 +195,44 @@ void PoseInferNode::processFrame(std::shared_ptr<core::InferenceResultPacket> pa
     }
 
     // 3. 分配 host 输入缓冲区 [num_persons, 3, 640, 640]
-    int hw = INPUT_H * INPUT_W;
+    const auto [input_w, input_h] = engine_->getInputSize();
+    int hw = input_h * input_w;
     int person_stride = 3 * hw;
     alignas(64) static thread_local std::vector<float> host_input;
     host_input.resize(static_cast<size_t>(num_persons) * person_stride);
 
     // 4. 逐人 crop + letterbox preprocess
-    h_letterbox_params_.resize(static_cast<size_t>(num_persons) * 3);
+    std::vector<float> h_letterbox_params(static_cast<size_t>(num_persons) * 3);
     for (int i = 0; i < num_persons; ++i) {
         int det_idx = person_indices[i];
         const auto& det = packet->detections[det_idx];
 
         float scale, pad_x, pad_y;
-        if (!cropAndPreprocess(source_mat, det, host_input.data(), i, scale, pad_x, pad_y)) {
+        if (!cropAndPreprocess(source_mat, det, host_input.data(), i,
+                               scale, pad_x, pad_y)) {
             LOG_WARN_FMT("[PoseInfer] Failed to crop person {}", det_idx);
         }
-        h_letterbox_params_[i * 3 + 0] = scale;
-        h_letterbox_params_[i * 3 + 1] = pad_x;
-        h_letterbox_params_[i * 3 + 2] = pad_y;
+        h_letterbox_params[i * 3 + 0] = scale;
+        h_letterbox_params[i * 3 + 1] = pad_x;
+        h_letterbox_params[i * 3 + 2] = pad_y;
     }
 
-    // 5. 设置动态 batch 并拷贝到 GPU
-    nvinfer1::Dims4 input_dims(num_persons, 3, INPUT_H, INPUT_W);
-    if (!context_->setInputShape(input_name_.c_str(), input_dims)) {
-        LOG_ERROR_FMT("[PoseInfer] setInputShape failed for batch={}", num_persons);
-        return;
-    }
-
-    size_t input_bytes = static_cast<size_t>(num_persons) * person_stride * sizeof(float);
-    cudaMemcpyAsync(d_input_, host_input.data(), input_bytes,
-                    cudaMemcpyHostToDevice, stream_);
-
-    // 6. 设置输出缓冲区大小（动态 batch 后输出大小会变）
-    size_t output_bytes = static_cast<size_t>(num_persons) * NUM_CANDIDATES * POSE_DIM * sizeof(float);
-
-    // 7. 设置 Tensor 地址
-    context_->setTensorAddress(input_name_.c_str(), d_input_);
-    context_->setTensorAddress(output_name_.c_str(), d_output_);
-
-    // 8. 执行推理
+    // 5. 通过 HAL 引擎推理
     auto t0 = std::chrono::high_resolution_clock::now();
-    if (!context_->enqueueV3(stream_)) {
-        LOG_ERROR_FMT("[PoseInfer] enqueueV3 failed for batch={}", num_persons);
+    std::vector<float> output_host;
+    if (!engine_->inferHost(host_input.data(), num_persons, output_host)) {
+        LOG_ERROR_FMT("[PoseInfer] Engine inference failed for batch={}", num_persons);
         return;
     }
-    cudaStreamSynchronize(stream_);
     auto t1 = std::chrono::high_resolution_clock::now();
 
     float infer_ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
-    LOG_INFO_FMT("[PoseInfer] TensorRT enqueue: {} persons, {:.2f}ms", num_persons, infer_ms);
+    LOG_INFO_FMT("[PoseInfer] Backend inference: {} persons, {:.2f}ms", num_persons, infer_ms);
 
-    // 9. 拷贝输出回 host
-    h_output_.resize(num_persons * NUM_CANDIDATES * POSE_DIM);
-    cudaMemcpyAsync(h_output_.data(), d_output_, output_bytes,
-                    cudaMemcpyDeviceToHost, stream_);
-    cudaStreamSynchronize(stream_);
-
-    // 10. 后处理：解码关键点
-    postprocessFrame(packet, person_indices, num_persons, h_output_.data(), h_letterbox_params_);
+    // 6. 后处理：解码关键点
+    pose_postprocess::decodeFrame(packet, person_indices, num_persons,
+                                  output_host.data(), h_letterbox_params,
+                                  conf_thresh_, kpt_conf_thresh_, "PoseInfer");
 }
 
 // ============================================================
@@ -248,6 +246,8 @@ bool PoseInferNode::cropAndPreprocess(
     float& out_scale,
     float& out_pad_x,
     float& out_pad_y) {
+
+    const auto [input_w, input_h] = engine_->getInputSize();
 
     float x1 = det.x;
     float y1 = det.y;
@@ -273,24 +273,24 @@ bool PoseInferNode::cropAndPreprocess(
     float crop_w = static_cast<float>(cropped.cols);
     float crop_h = static_cast<float>(cropped.rows);
 
-    out_scale = std::min(static_cast<float>(INPUT_W) / crop_w,
-                          static_cast<float>(INPUT_H) / crop_h);
+    out_scale = std::min(static_cast<float>(input_w) / crop_w,
+                          static_cast<float>(input_h) / crop_h);
     float scaled_w = crop_w * out_scale;
     float scaled_h = crop_h * out_scale;
-    out_pad_x = (INPUT_W - scaled_w) / 2.0f;
-    out_pad_y = (INPUT_H - scaled_h) / 2.0f;
+    out_pad_x = (input_w - scaled_w) / 2.0f;
+    out_pad_y = (input_h - scaled_h) / 2.0f;
 
     cv::Mat resized;
     cv::resize(cropped, resized, cv::Size(static_cast<int>(scaled_w), static_cast<int>(scaled_h)));
 
-    cv::Mat letterbox(INPUT_H, INPUT_W, CV_8UC3, cv::Scalar(114, 114, 114));
+    cv::Mat letterbox(input_h, input_w, CV_8UC3, cv::Scalar(114, 114, 114));
     resized.copyTo(letterbox(cv::Rect(static_cast<int>(out_pad_x), static_cast<int>(out_pad_y),
                                       resized.cols, resized.rows)));
 
     cv::Mat float_img;
     letterbox.convertTo(float_img, CV_32FC3, 1.0 / 255.0);
 
-    int hw = INPUT_H * INPUT_W;
+    int hw = input_h * input_w;
     int batch_stride = 3 * hw;
     float* batch_ptr = host_buffer + slot_idx * batch_stride;
 
@@ -301,175 +301,6 @@ bool PoseInferNode::cropAndPreprocess(
     memcpy(batch_ptr + 2 * hw, chs[2].data, hw * sizeof(float));
 
     return true;
-}
-
-// ============================================================
-// 后处理：每人体框独立解码关键点
-// 输出格式: [num_persons, 8400, 56] (已转置)
-// ============================================================
-void PoseInferNode::postprocessFrame(
-    std::shared_ptr<core::InferenceResultPacket> packet,
-    const std::vector<int>& person_indices,
-    int num_persons,
-    float* output_host,
-    const std::vector<float>& letterbox_params) {
-
-    packet->pose_results.clear();
-    packet->pose_results.reserve(num_persons);
-
-    for (int p = 0; p < num_persons; ++p) {
-        int det_idx = person_indices[p];
-        auto& det = packet->detections[det_idx];
-
-        float scale = letterbox_params[p * 3 + 0];
-        float pad_x = letterbox_params[p * 3 + 1];
-        float pad_y = letterbox_params[p * 3 + 2];
-
-        // 该人的输出起始地址: [p, 0, 0]
-        float* person_output = output_host + p * NUM_CANDIDATES * POSE_DIM;
-
-        // 遍历 8400 候选，找 person score 最高的
-        float best_score = -1.0f;
-        int best_idx = 0;
-
-        for (int i = 0; i < NUM_CANDIDATES; ++i) {
-            float score = person_output[i * POSE_DIM + 4];
-            score = 1.0f / (1.0f + std::exp(-score));
-            if (score > best_score) {
-                best_score = score;
-                best_idx = i;
-            }
-        }
-
-        if (best_score < conf_thresh_) {
-            LOG_INFO_FMT("[PoseInfer] Person {} best score {:.3f} below threshold {}, skipping",
-                          det_idx, best_score, conf_thresh_);
-            continue;
-        }
-
-        float* best_pred = person_output + best_idx * POSE_DIM;
-
-        core::InferenceResultPacket::PoseResult pose;
-        pose.person_score = best_score;
-        pose.matched_det_idx = det_idx;
-
-        for (int k = 0; k < NUM_KEYPOINTS; ++k) {
-            float kx = best_pred[5 + k * 3 + 0];
-            float ky = best_pred[5 + k * 3 + 1];
-            float kconf = best_pred[5 + k * 3 + 2];
-
-            kconf = 1.0f / (1.0f + std::exp(-kconf));
-
-            float orig_kx = (kx - pad_x) / scale + det.x;
-            float orig_ky = (ky - pad_y) / scale + det.y;
-
-            pose.keypoints[k] = {
-                orig_kx,
-                orig_ky,
-                kconf,
-                kconf > kpt_conf_thresh_
-            };
-            det.has_keypoints = true;
-            det.keypoints[k] = pose.keypoints[k];
-            det.keypoints_conf = kconf;
-        }
-
-        pose.person_box = cv::Rect2f(det.x, det.y, det.w, det.h);
-
-        packet->pose_results.push_back(pose);
-
-        LOG_INFO_FMT("[PoseInfer] Person {}: score={:.3f}, kpts_visible={}/17, scale={:.3f}, pad=({:.1f},{:.1f})",
-                      det_idx, best_score,
-                      std::count_if(pose.keypoints.begin(), pose.keypoints.end(),
-                                    [](const auto& k){ return k.visible; }),
-                      scale, pad_x, pad_y);
-    }
-}
-
-// ============================================================
-// 初始化引擎
-// ============================================================
-bool PoseInferNode::initEngine(const std::string& engine_path) {
-    try {
-        // 1. 读取文件
-        std::ifstream file(engine_path, std::ios::binary | std::ios::ate);
-        if (!file.is_open()) {
-            LOG_ERROR_FMT("[PoseInfer] Failed to open engine: {}", engine_path);
-            return false;
-        }
-
-        size_t size = file.tellg();
-        file.seekg(0, std::ios::beg);
-        std::vector<char> buffer(size);
-        if (!file.read(buffer.data(), size)) {
-            LOG_ERROR_FMT("[PoseInfer] Failed to read engine");
-            return false;
-        }
-
-        // 2. 创建 runtime
-        nvinfer1::IRuntime* runtime = nvinfer1::createInferRuntime(g_logger);
-        if (!runtime) {
-            LOG_ERROR_FMT("[PoseInfer] createInferRuntime failed");
-            return false;
-        }
-
-        // 3. 反序列化引擎
-        nvinfer1::ICudaEngine* engine = runtime->deserializeCudaEngine(buffer.data(), size);
-        if (!engine) {
-            LOG_ERROR_FMT("[PoseInfer] deserializeCudaEngine failed");
-            delete runtime;
-            return false;
-        }
-
-        // 4. 创建上下文
-        nvinfer1::IExecutionContext* context = engine->createExecutionContext();
-        if (!context) {
-            LOG_ERROR_FMT("[PoseInfer] createExecutionContext failed");
-            delete engine;
-            delete runtime;
-            return false;
-        }
-
-        // 5. 保存资源
-        runtime_.reset(runtime);
-        engine_.reset(engine);
-        context_.reset(context);
-
-        // 6. 创建 CUDA Stream
-        cudaStreamCreate(&stream_);
-
-        // 打印 Tensor 信息
-        int nb_io = engine_->getNbIOTensors();
-        LOG_INFO_FMT("[PoseInfer] Engine has {} I/O tensors", nb_io);
-        for (int i = 0; i < nb_io; ++i) {
-            const char* name = engine_->getIOTensorName(i);
-            nvinfer1::TensorIOMode mode = engine_->getTensorIOMode(name);
-            nvinfer1::Dims dims = engine_->getTensorShape(name);
-            std::string mode_str = (mode == nvinfer1::TensorIOMode::kINPUT) ? "INPUT" : "OUTPUT";
-            LOG_INFO_FMT("[PoseInfer]  Tensor[{}]: {} ({}), shape=[{}]",
-                         i, name, mode_str, dims.nbDims);
-        }
-
-        // 7. 计算缓冲区大小
-        int max_batch = batch_size_;
-        input_size_ = static_cast<size_t>(max_batch) * 3 * INPUT_H * INPUT_W * sizeof(float);
-        output_size_ = static_cast<size_t>(max_batch) * NUM_CANDIDATES * POSE_DIM * sizeof(float);
-
-        // 8. 分配 GPU 内存
-        cudaMalloc(&d_input_, input_size_);
-        cudaMalloc(&d_output_, output_size_);
-
-        // 9. 预分配 CPU 输出缓冲区
-        h_output_.resize(max_batch * NUM_CANDIDATES * POSE_DIM);
-
-        LOG_INFO_FMT("[PoseInfer] Engine loaded: {} (max_persons={}, input={}x{}, candidates={})",
-                     engine_path, max_batch, INPUT_W, INPUT_H, NUM_CANDIDATES);
-        return true;
-
-    } catch (const std::exception& e) {
-        LOG_ERROR_FMT("[PoseInfer] initEngine exception: {}", e.what());
-        return false;
-    }
 }
 
 REGISTER_NODE("pose_infer", PoseInferNode)

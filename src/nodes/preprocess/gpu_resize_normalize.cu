@@ -265,11 +265,11 @@ void GPUResizeNormalizeNode::setAsyncProcessing(bool async) {
     LOG_INFO_FMT("[GPUResizeNormalize] Set async processing: %d", async);
 }
 
-void GPUResizeNormalizeNode::setCudaStream(cudaStream_t stream) {
+void GPUResizeNormalizeNode::setCudaStream(void* stream) {
     if (stream_) {
         cudaStreamDestroy(stream_);
     }
-    stream_ = stream;
+    stream_ = static_cast<cudaStream_t>(stream);
     LOG_INFO_FMT("[GPUResizeNormalize] Set external CUDA stream");
 }
 

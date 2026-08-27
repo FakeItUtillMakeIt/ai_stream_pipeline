@@ -48,6 +48,22 @@ if(Ascend_FOUND)
     if(Ascend_ACL_DVPP_LIBRARY)
         list(APPEND Ascend_LIBRARIES ${Ascend_ACL_DVPP_LIBRARY})
     endif()
+
+    # 从 acl.h 提取 CANN 版本（ACL_MAJOR_VERSION / ACL_MINOR_VERSION）
+    set(Ascend_VERSION "")
+    if(EXISTS "${Ascend_INCLUDE_DIR}/acl/acl_base.h")
+        file(STRINGS "${Ascend_INCLUDE_DIR}/acl/acl_base.h" _ACL_VER_MAJOR
+             REGEX "#define[ \t]+ACL_MAJOR_VERSION[ \t]+[0-9]+")
+        file(STRINGS "${Ascend_INCLUDE_DIR}/acl/acl_base.h" _ACL_VER_MINOR
+             REGEX "#define[ \t]+ACL_MINOR_VERSION[ \t]+[0-9]+")
+        if(_ACL_VER_MAJOR MATCHES "ACL_MAJOR_VERSION[ \t]+([0-9]+)"
+           AND _ACL_VER_MINOR MATCHES "ACL_MINOR_VERSION[ \t]+([0-9]+)")
+            set(Ascend_VERSION "${CMAKE_MATCH_1}.${CMAKE_MATCH_2}")
+        endif()
+    endif()
+    if(Ascend_VERSION)
+        message(STATUS "Found Ascend CANN version: ${Ascend_VERSION}")
+    endif()
 endif()
 
 mark_as_advanced(Ascend_INCLUDE_DIR Ascend_ACL_LIBRARY Ascend_ACL_DVPP_LIBRARY)

@@ -9,30 +9,19 @@ add_executable(simple_detection
 
 # 子项目构建
 if(TARGET ai_stream_core)
-    if(WITH_CUDA)
-        target_link_libraries(simple_detection
-            PRIVATE
-                nlohmann_json::nlohmann_json
-                spdlog::spdlog
-                ${OpenCV_LIBS}
-                -Wl,--no-as-needed
-                ai_stream_nodes
-                ai_stream_core
-                $<TARGET_OBJECTS:alert_rules>
-                -Wl,--as-needed
-        )
-    else()
-        target_link_libraries(simple_detection
-            PRIVATE
-                nlohmann_json::nlohmann_json
-                spdlog::spdlog
-                ${OpenCV_LIBS}
-                -Wl,--no-as-needed
-                ai_stream_nodes
-                ai_stream_core
-                $<TARGET_OBJECTS:alert_rules>
-                -Wl,--as-needed
-        )
+    target_link_libraries(simple_detection
+        PRIVATE
+            nlohmann_json::nlohmann_json
+            spdlog::spdlog
+            ${OpenCV_LIBS}
+            -Wl,--no-as-needed
+            ai_stream_nodes
+            ai_stream_core
+            -Wl,--as-needed
+    )
+    # alert_rules 为可选对象库（WITH_ALERT=OFF 时不存在）
+    if(TARGET alert_rules)
+        target_link_libraries(simple_detection PRIVATE $<TARGET_OBJECTS:alert_rules>)
     endif()
 else()
     # 独立项目

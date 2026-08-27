@@ -1,4 +1,5 @@
 // src/nodes/draw/osd_draw.cpp
+#include "utils/time_util.h"
 #include "osd_draw.h"
 #include "ai_stream/core/packet.h"
 #include "registry/node_factory.h"
@@ -187,8 +188,7 @@ void OSDDrawNode::saveSnapshot(std::shared_ptr<core::VideoFramePacket> frame, in
         auto us = std::chrono::duration_cast<std::chrono::microseconds>(
             now.time_since_epoch()).count() % 1000000;
         
-        std::tm tm_buf;
-        localtime_r(&time_t, &tm_buf);
+        std::tm tm_buf = utils::TimeUtil::safeLocaltime(time_t);
         
         std::stringstream ss;
         ss << snapshot_dir_ << "/"

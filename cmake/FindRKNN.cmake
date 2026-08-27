@@ -38,6 +38,26 @@ find_package_handle_standard_args(RKNN
 if(RKNN_FOUND)
     set(RKNN_INCLUDE_DIRS ${RKNN_INCLUDE_DIR})
     set(RKNN_LIBRARIES ${RKNN_LIBRARY})
+
+    # 从 rknn_api.h 提取 SDK 版本（RKNN_API_VERSION，如 "1.6.0"）
+    set(RKNN_VERSION "")
+    if(EXISTS "${RKNN_INCLUDE_DIR}/rknn_api.h")
+        file(STRINGS "${RKNN_INCLUDE_DIR}/rknn_api.h" _RKNN_VER_LINE
+             REGEX "#define[ \t]+RKNN_API_VERSION")
+        if(_RKNN_VER_LINE MATCHES "RKNN_API_VERSION[ \t]+\"?([0-9.]+)\"?")
+            set(RKNN_VERSION "${CMAKE_MATCH_1}")
+        endif()
+    endif()
+    if(RKNN_VERSION)
+        message(STATUS "Found RKNN SDK version: ${RKNN_VERSION}")
+    endif()
+
+    # 平台一致性提示：SDK 架构需与目标平台匹配（x86_64/aarch64）
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+        message(STATUS "Target platform: aarch64 (请确认 RKNN 库为 aarch64 版本)")
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
+        message(STATUS "Target platform: x86_64 (RKNN x86 版本通常仅用于模拟器)")
+    endif()
 endif()
 
 mark_as_advanced(RKNN_INCLUDE_DIR RKNN_LIBRARY)

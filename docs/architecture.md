@@ -97,7 +97,8 @@ worker 内自停已做 join 死锁防护。
 | 接口 | 职责 | 后端 |
 |---|---|---|
 | `IInferenceEngine` / `IDetectionInferenceEngine` | 通用/检测推理 | TensorRT、RKNN、Ascend |
-| `IActionRecognition` | 动作识别推理 | TensorRT (VideoMAE) |
+| `IActionRecognition` | 动作识别推理 | TensorRT (VideoMAE)、RKNN、Ascend |
+| `IPoseEstimationEngine` | 姿态估计推理（host/设备输入/GPU 端到端三路径） | TensorRT (YOLO-Pose) |
 | `IImageAccelerator` | 预处理/绘制/NMS 加速 | CUDA、NPP、RGA、CPU |
 | `IVideoCodec` | 视频编解码 | FFmpeg、NVDEC、MPP |
 
@@ -115,7 +116,7 @@ worker 内自停已做 join 死锁防护。
 | FFmpegDecodeNode | `ffmpeg_decode` | QueuedNode |
 | ResizeNormalizeNode / GPU / CUDA 版 | `resize_normalize` / `gpu_resize_normalize` / `cuda_resize_normalize` | QueuedNode |
 | DetectionInferNode | `detection_infer` | 自持 BoundedQueue + 推理线程（动态 batch） |
-| PoseInferNode / CudaPoseInferNode | `pose_infer` / `cuda_pose_infer` | 自持队列 + worker |
+| PoseInferNode / CudaPoseInferNode | `pose_infer` / `cuda_pose_infer` | 自持队列 + worker（推理走 HAL `IPoseEstimationEngine`） |
 | RknnDetectionInferNode | `rknn_detection_infer` | QueuedNode（RK3588 平台） |
 | ActionRecognitionVideoMAENode | `action_recognition_videomae` | QueuedNode |
 | DetectionPostProcessNode / GPU 版 | `detection_post` / `gpu_detection_post` | QueuedNode |

@@ -3,25 +3,17 @@
 #pragma once
 
 #include "ai_stream/hal/i_inference_engine.h"
-#include <vector>
+#include "trt_core.h"
 #include <string>
-#include <memory>
-
-// 前向声明 TensorRT 类型
-namespace nvinfer1 {
-    class IRuntime;
-    class ICudaEngine;
-    class IExecutionContext;
-}
 
 namespace ai_stream {
 namespace hal {
 
 /**
- * @brief TensorRT 推理引擎
+ * @brief TensorRT 通用推理引擎（字节级进出，任意模型兜底抽象）
  *
- * 封装 TensorRT 推理逻辑到 IInferenceEngine 接口。
- * 使推理节点可以通过统一接口调用不同后端。
+ * 引擎生命周期与缓冲区管理由 TrtCore 内核承担，
+ * 本类只负责 IInferenceEngine 契约的适配。
  */
 class TensorrtInferenceEngine : public IInferenceEngine {
 public:
@@ -47,33 +39,18 @@ public:
     void* getRawContext() const;
 
 private:
-    static void deleteRuntime(nvinfer1::IRuntime* p);
-    static void deleteEngine(nvinfer1::ICudaEngine* p);
-    static void deleteContext(nvinfer1::IExecutionContext* p);
-
-    bool initEngine(const std::string& engine_path);
-    bool allocateBuffers();
-    void freeBuffers();
-
     InferenceConfig config_;
     bool loaded_ = false;
 
-    // TensorRT 资源
-    std::unique_ptr<nvinfer1::IRuntime, void(*)(nvinfer1::IRuntime*)> runtime_{
-        nullptr, &TensorrtInferenceEngine::deleteRuntime};
-    std::unique_ptr<nvinfer1::ICudaEngine, void(*)(nvinfer1::ICudaEngine*)> engine_{
-        nullptr, &TensorrtInferenceEngine::deleteEngine};
-    std::unique_ptr<nvinfer1::IExecutionContext, void(*)(nvinfer1::IExecutionContext*)> context_{
-        nullptr, &TensorrtInferenceEngine::deleteContext};
-
-    // GPU 缓冲区
-    void* d_input_ = nullptr;
-    void* d_output_ = nullptr;
-    size_t input_size_ = 0;
-    size_t output_size_ = 0;
+    // 公共内核：引擎生命周期 / 缓冲区 / 执行
+    TrtCore core_;
 
     // CUDA 流
     void* cuda_stream_ = nullptr;
+
+    // IO 字节大小
+    size_t input_size_ = 0;
+    size_t output_size_ = 0;
 
     // Tensor 名称
     std::string input_name_ = "images";

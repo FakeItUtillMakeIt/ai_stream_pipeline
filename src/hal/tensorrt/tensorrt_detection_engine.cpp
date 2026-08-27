@@ -6,8 +6,6 @@
 #include "utils/tensor_rt_logger.h"
 #include <NvInfer.h>
 #include <cuda_runtime_api.h>
-#include <fstream>
-#include <iostream>
 
 namespace ai_stream {
 namespace hal {
@@ -18,19 +16,6 @@ TensorrtDetectionEngine::TensorrtDetectionEngine() {
 
 TensorrtDetectionEngine::~TensorrtDetectionEngine() {
     LOG_DEBUG("[TensorrtDetectionEngine] Destructor");
-    freeBuffers();
-}
-
-void TensorrtDetectionEngine::deleteRuntime(nvinfer1::IRuntime* p) {
-    delete p;
-}
-
-void TensorrtDetectionEngine::deleteEngine(nvinfer1::ICudaEngine* p) {
-    delete p;
-}
-
-void TensorrtDetectionEngine::deleteContext(nvinfer1::IExecutionContext* p) {
-    delete p;
 }
 
 bool TensorrtDetectionEngine::loadModel(const DetectionInferenceConfig& config) {
@@ -41,8 +26,16 @@ bool TensorrtDetectionEngine::loadModel(const DetectionInferenceConfig& config) 
     max_batch_size_ = config.max_batch_size;
     max_detections_ = config.max_detections;
 
-    if (!initEngine(config.model_path)) {
+    if (!core_.loadEngine(config.model_path, "TensorrtDetectionEngine")) {
         return false;
+    }
+
+    // 确定输入名（第一个输入）
+    for (const auto& meta : core_.tensors()) {
+        if (meta.is_input) {
+            input_name_ = meta.name;
+            break;
+        }
     }
 
     loaded_ = true;
@@ -52,87 +45,67 @@ bool TensorrtDetectionEngine::loadModel(const DetectionInferenceConfig& config) 
 }
 
 bool TensorrtDetectionEngine::setInputTensor(const std::string& name, void* gpu_ptr) {
-    if (!context_) return false;
     tensor_ptrs_[name] = gpu_ptr;
-    return context_->setTensorAddress(name.c_str(), gpu_ptr) == true;
+    return core_.setAddress(name, gpu_ptr);
 }
 
 bool TensorrtDetectionEngine::setOutputTensor(const std::string& name, void* gpu_ptr) {
-    if (!context_) return false;
     tensor_ptrs_[name] = gpu_ptr;
-    return context_->setTensorAddress(name.c_str(), gpu_ptr) == true;
+    return core_.setAddress(name, gpu_ptr);
 }
 
 void* TensorrtDetectionEngine::getOutputTensor(const std::string& name) {
+    // 优先返回节点自管缓冲区，其次引擎内部分配的
     auto it = tensor_ptrs_.find(name);
     if (it != tensor_ptrs_.end()) {
         return it->second;
     }
-    return nullptr;
+    return core_.buffer(name);
 }
 
 size_t TensorrtDetectionEngine::getOutputTensorSize(const std::string& name) const {
-    auto it = tensor_sizes_.find(name);
-    if (it != tensor_sizes_.end()) {
-        return it->second;
-    }
-    return 0;
+    return core_.bufferSize(name);
 }
 
 bool TensorrtDetectionEngine::allocateOutputBuffers() {
-    if (!engine_) return false;
+    if (!core_.isLoaded()) return false;
 
     int max_batch = max_batch_size_;
-    out_boxes_size_ = static_cast<size_t>(max_batch) * max_detections_ * 4 * sizeof(float);
-    out_scores_size_ = static_cast<size_t>(max_batch) * max_detections_ * sizeof(float);
-    out_classes_size_ = static_cast<size_t>(max_batch) * max_detections_ * sizeof(int64_t);
-    out_batch_ids_size_ = static_cast<size_t>(max_batch) * max_detections_ * sizeof(int64_t);
-    out_num_dets_size_ = sizeof(int64_t);
+    const size_t boxes_bytes =
+        static_cast<size_t>(max_batch) * max_detections_ * 4 * sizeof(float);
+    const size_t scores_bytes =
+        static_cast<size_t>(max_batch) * max_detections_ * sizeof(float);
+    const size_t classes_bytes =
+        static_cast<size_t>(max_batch) * max_detections_ * sizeof(int64_t);
+    const size_t batch_ids_bytes = classes_bytes;
+    const size_t num_dets_bytes = sizeof(int64_t);
 
-    cudaError_t err;
-    err = cudaMalloc(&d_boxes_, out_boxes_size_);
-    if (err != cudaSuccess) { LOG_ERROR("Failed to allocate d_boxes_"); return false; }
-    err = cudaMalloc(&d_scores_, out_scores_size_);
-    if (err != cudaSuccess) { LOG_ERROR("Failed to allocate d_scores_"); return false; }
-    err = cudaMalloc(&d_classes_, out_classes_size_);
-    if (err != cudaSuccess) { LOG_ERROR("Failed to allocate d_classes_"); return false; }
-    err = cudaMalloc(&d_batch_ids_, out_batch_ids_size_);
-    if (err != cudaSuccess) { LOG_ERROR("Failed to allocate d_batch_ids_"); return false; }
-    err = cudaMalloc(&d_num_dets_, out_num_dets_size_);
-    if (err != cudaSuccess) { LOG_ERROR("Failed to allocate d_num_dets_"); return false; }
-
-    // 保存大小信息
-    tensor_sizes_[boxes_name_] = out_boxes_size_;
-    tensor_sizes_[scores_name_] = out_scores_size_;
-    tensor_sizes_[classes_name_] = out_classes_size_;
-    tensor_sizes_[batch_ids_name_] = out_batch_ids_size_;
-    tensor_sizes_[num_dets_name_] = out_num_dets_size_;
-
-    // 设置 tensor 地址
-    setOutputTensor(boxes_name_, d_boxes_);
-    setOutputTensor(scores_name_, d_scores_);
-    setOutputTensor(classes_name_, d_classes_);
-    setOutputTensor(batch_ids_name_, d_batch_ids_);
-    setOutputTensor(num_dets_name_, d_num_dets_);
+    if (!core_.allocBuffer(boxes_name_, boxes_bytes)) return false;
+    if (!core_.allocBuffer(scores_name_, scores_bytes)) return false;
+    if (!core_.allocBuffer(classes_name_, classes_bytes)) return false;
+    if (!core_.allocBuffer(batch_ids_name_, batch_ids_bytes)) return false;
+    if (!core_.allocBuffer(num_dets_name_, num_dets_bytes)) return false;
 
     LOG_INFO("[TensorrtDetectionEngine] Output buffers allocated");
     return true;
 }
 
 bool TensorrtDetectionEngine::infer() {
-    if (!context_) return false;
-    return context_->enqueueV3(0);
+    return core_.enqueue();
 }
 
 bool TensorrtDetectionEngine::inferAsync(void* stream) {
-    if (!context_) return false;
-    return context_->enqueueV3(static_cast<cudaStream_t>(stream));
+    // 临时切换流执行
+    void* prev = core_.stream();
+    core_.setStream(stream);
+    bool ok = core_.enqueue();
+    core_.setStream(prev);
+    return ok;
 }
 
 bool TensorrtDetectionEngine::synchronize(void* stream) {
     if (!stream) return false;
-    cudaError_t err = cudaStreamSynchronize(static_cast<cudaStream_t>(stream));
-    return err == cudaSuccess;
+    return cudaStreamSynchronize(static_cast<cudaStream_t>(stream)) == cudaSuccess;
 }
 
 std::vector<std::string> TensorrtDetectionEngine::getInputNames() const {
@@ -162,90 +135,19 @@ bool TensorrtDetectionEngine::isAvailable() const {
 }
 
 void* TensorrtDetectionEngine::getRawContext() const {
-    return context_.get();
+    return core_.context();
 }
 
 void* TensorrtDetectionEngine::getRawEngine() const {
-    return engine_.get();
+    return core_.engine();
 }
 
 nvinfer1::IExecutionContext* TensorrtDetectionEngine::getTensorRTContext() const {
-    return context_.get();
+    return static_cast<nvinfer1::IExecutionContext*>(core_.context());
 }
 
 nvinfer1::ICudaEngine* TensorrtDetectionEngine::getTensorRTEngine() const {
-    return engine_.get();
-}
-
-bool TensorrtDetectionEngine::initEngine(const std::string& engine_path) {
-    try {
-        std::ifstream file(engine_path, std::ios::binary | std::ios::ate);
-        if (!file.is_open()) {
-            LOG_ERROR_FMT("[TensorrtDetectionEngine] Failed to open engine: {}", engine_path);
-            return false;
-        }
-
-        size_t size = file.tellg();
-        file.seekg(0, std::ios::beg);
-        std::vector<char> buffer(size);
-        if (!file.read(buffer.data(), size)) {
-            LOG_ERROR("[TensorrtDetectionEngine] Failed to read engine");
-            return false;
-        }
-
-        nvinfer1::IRuntime* runtime = nvinfer1::createInferRuntime(g_logger);
-        if (!runtime) {
-            LOG_ERROR("[TensorrtDetectionEngine] createInferRuntime failed");
-            return false;
-        }
-
-        nvinfer1::ICudaEngine* engine = runtime->deserializeCudaEngine(buffer.data(), size);
-        if (!engine) {
-            LOG_ERROR("[TensorrtDetectionEngine] deserializeCudaEngine failed");
-            delete runtime;
-            return false;
-        }
-
-        nvinfer1::IExecutionContext* context = engine->createExecutionContext();
-        if (!context) {
-            LOG_ERROR("[TensorrtDetectionEngine] createExecutionContext failed");
-            delete engine;
-            delete runtime;
-            return false;
-        }
-
-        runtime_.reset(runtime);
-        engine_.reset(engine);
-        context_.reset(context);
-
-        // 打印 tensor 信息
-        int nb_io = engine_->getNbIOTensors();
-        LOG_INFO_FMT("[TensorrtDetectionEngine] Engine has {} I/O tensors", nb_io);
-        for (int i = 0; i < nb_io; ++i) {
-            const char* name = engine_->getIOTensorName(i);
-            nvinfer1::TensorIOMode mode = engine_->getTensorIOMode(name);
-            nvinfer1::Dims dims = engine_->getTensorShape(name);
-            std::string mode_str = (mode == nvinfer1::TensorIOMode::kINPUT) ? "INPUT" : "OUTPUT";
-            LOG_INFO_FMT("[TensorrtDetectionEngine]  Tensor[{}]: {} ({}), shape=[{}]",
-                         i, name, mode_str, dims.nbDims);
-        }
-
-        return true;
-
-    } catch (const std::exception& e) {
-        LOG_ERROR_FMT("[TensorrtDetectionEngine] initEngine exception: {}", e.what());
-        return false;
-    }
-}
-
-void TensorrtDetectionEngine::freeBuffers() {
-    if (d_boxes_) { cudaFree(d_boxes_); d_boxes_ = nullptr; }
-    if (d_scores_) { cudaFree(d_scores_); d_scores_ = nullptr; }
-    if (d_classes_) { cudaFree(d_classes_); d_classes_ = nullptr; }
-    if (d_batch_ids_) { cudaFree(d_batch_ids_); d_batch_ids_ = nullptr; }
-    if (d_num_dets_) { cudaFree(d_num_dets_); d_num_dets_ = nullptr; }
-    tensor_ptrs_.clear();
-    tensor_sizes_.clear();
+    return static_cast<nvinfer1::ICudaEngine*>(core_.engine());
 }
 
 // 注册到工厂

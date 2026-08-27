@@ -1,4 +1,5 @@
 // src/nodes/alert/alert_node.cpp
+#include "utils/time_util.h"
 #include "alert_node.h"
 #include "ai_stream/core/packet.h"
 #include "registry/node_factory.h"
@@ -250,8 +251,7 @@ void AlertNode::saveSnapshot(std::shared_ptr<core::InferenceResultPacket> packet
     try {
         auto now = std::chrono::system_clock::now();
         auto tt = std::chrono::system_clock::to_time_t(now);
-        std::tm tm;
-        localtime_r(&tt, &tm);
+        std::tm tm = utils::TimeUtil::safeLocaltime(tt);
         char buf[64];
         strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", &tm);
 

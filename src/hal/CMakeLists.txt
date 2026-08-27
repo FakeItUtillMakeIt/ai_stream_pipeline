@@ -14,16 +14,23 @@ list(APPEND HAL_SOURCES
     cpu/cpu_image_accelerator.cpp
     cpu/cpu_inference_engine.cpp
     ffmpeg/ffmpeg_video_codec.cpp
+    pose_estimation_factory.cpp
 )
 
 # TensorRT 后端
 if(WITH_TENSORRT)
     find_package(TensorRT REQUIRED)
     list(APPEND HAL_SOURCES
+        tensorrt/trt_core.cpp
         tensorrt/tensorrt_inference_engine.cpp
         tensorrt/tensorrt_detection_engine.cpp
         tensorrt/tensorrt_action_recognition.cpp
+        tensorrt/tensorrt_pose_estimation.cpp
     )
+    # 姿态估计 GPU 预处理 kernel（需 CUDA 语言）
+    if(WITH_CUDA)
+        list(APPEND HAL_SOURCES tensorrt/tensorrt_pose_kernels.cu)
+    endif()
 endif()
 
 if(WITH_CUDA)

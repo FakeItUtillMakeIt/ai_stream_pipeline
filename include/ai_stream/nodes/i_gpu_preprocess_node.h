@@ -2,7 +2,6 @@
 #pragma once
 
 #include "i_preprocess_node.h"
-#include <cuda_runtime.h>
 
 namespace ai_stream {
 namespace nodes {
@@ -12,6 +11,9 @@ namespace nodes {
  *
  * 基于 CUDA 的预处理加速接口，用于高性能推理场景。
  * 继承自 IPreprocessNode，添加 GPU 相关配置。
+ *
+ * 注意：本头文件不包含 CUDA 头文件（公开头文件不得泄漏平台 SDK），
+ * CUDA 流以 void* 传递，与 HAL 接口约定一致。
  */
 class IGpuPreprocessNode : public IPreprocessNode {
 public:
@@ -37,9 +39,9 @@ public:
 
     /**
      * @brief 设置 CUDA 流
-     * @param stream 外部 CUDA 流
+     * @param stream 外部 CUDA 流（cudaStream_t 以 void* 传递）
      */
-    virtual void setCudaStream(cudaStream_t stream) = 0;
+    virtual void setCudaStream(void* stream) = 0;
 
     /**
      * @brief 获取处理延迟统计

@@ -3,8 +3,8 @@
 
 #include "ai_stream/nodes/i_action_recognition_node.h"
 #include "ai_stream/core/queued_node.h"
-#include <NvInfer.h>
-#include <cuda_runtime_api.h>
+#include "ai_stream/hal/i_action_recognition.h"
+#include "ai_stream/hal/action_recognition_factory.h"
 #include <opencv2/opencv.hpp>
 #include <deque>
 #include <unordered_map>
@@ -54,39 +54,29 @@ public:
     void setBatchSize(int batch_size) override;
 
 private:
-    // TensorRT相关
+    // 推理（通过 HAL 后端引擎）
     bool loadModel();
-    void allocateBuffers();
     void inferFromGpu(const std::vector<void*>& gpu_frames, core::InferenceResultPacket::ActionResult& result);
     void inferFromCpu(const std::vector<cv::Mat>& clip, core::InferenceResultPacket::ActionResult& result);
-    
+
     // 帧缓冲和滑动窗口
     void updateGpuFrameBuffer(uint32_t stream_id, void* d_ptr, int64_t frame_id);
     void updateFrameBuffer(uint32_t stream_id, const cv::Mat& frame, int64_t frame_id);
     bool shouldRunInference(uint32_t stream_id);
     std::vector<void*> getGpuClipFromBuffer(uint32_t stream_id);
     std::vector<cv::Mat> getClipFromBuffer(uint32_t stream_id);
-    
-    // 预处理（CPU路径使用）
+
+    // 预处理（CPU路径使用：HWC float → NCHW float 布局转换）
     void preprocessClip(const std::vector<cv::Mat>& clip, float* input_buffer);
-    
-    // 后处理
-    core::InferenceResultPacket::ActionResult postprocess(const float* output, int num_classes);
-    
+
+    // hal::ActionResult → core::ActionResult 映射
+    core::InferenceResultPacket::ActionResult toCoreResult(const hal::ActionResult& hal_result) const;
+
     Config cfg_;
-    
-    // TensorRT引擎
-    std::unique_ptr<nvinfer1::IRuntime> runtime_;
-    std::unique_ptr<nvinfer1::ICudaEngine> engine_;
-    std::unique_ptr<nvinfer1::IExecutionContext> context_;
-    cudaStream_t stream_;
-    
-    // GPU缓冲区
-    void* device_input_ = nullptr;
-    void* device_output_ = nullptr;
-    size_t input_size_ = 0;
-    size_t output_size_ = 0;
-    
+
+    // HAL 推理引擎后端（TensorRT/RKNN/Ascend 由工厂按编译配置选择）
+    hal::ActionRecognitionEnginePtr engine_;
+
     // CPU帧缓冲区（用于接收CPU预处理节点的输出）
     struct FrameBuffer {
         std::deque<std::pair<int64_t, cv::Mat>> frames;  // (frame_id, frame)

@@ -32,7 +32,7 @@ public:
     void setGpuDeviceId(int device_id) override;
     int getGpuDeviceId() const override;
     void setAsyncProcessing(bool async) override;
-    void setCudaStream(cudaStream_t stream) override;
+    void setCudaStream(void* stream) override;
     float getAverageLatencyMs() const override;
     void setTensorRTPreprocessEnabled(bool enable) override;
 

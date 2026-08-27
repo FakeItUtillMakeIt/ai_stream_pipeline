@@ -3,9 +3,9 @@
 #pragma once
 
 #include "ai_stream/hal/i_detection_inference_engine.h"
-#include <vector>
+#include "trt_core.h"
 #include <string>
-#include <memory>
+#include <vector>
 #include <unordered_map>
 
 // 前向声明 TensorRT 类型
@@ -23,6 +23,7 @@ namespace hal {
  *
  * 封装 TensorRT 推理逻辑到 IDetectionInferenceEngine 接口。
  * 支持多输出 tensor、异步推理、CUDA Graph。
+ * 引擎生命周期与缓冲区由 TrtCore 内核承担。
  */
 class TensorrtDetectionEngine : public IDetectionInferenceEngine {
 public:
@@ -58,24 +59,11 @@ public:
     nvinfer1::ICudaEngine* getTensorRTEngine() const;
 
 private:
-    static void deleteRuntime(nvinfer1::IRuntime* p);
-    static void deleteEngine(nvinfer1::ICudaEngine* p);
-    static void deleteContext(nvinfer1::IExecutionContext* p);
-
-    bool initEngine(const std::string& engine_path);
-    bool allocateBuffers();
-    void freeBuffers();
-
     DetectionInferenceConfig config_;
     bool loaded_ = false;
 
-    // TensorRT 资源
-    std::unique_ptr<nvinfer1::IRuntime, void(*)(nvinfer1::IRuntime*)> runtime_{
-        nullptr, &TensorrtDetectionEngine::deleteRuntime};
-    std::unique_ptr<nvinfer1::ICudaEngine, void(*)(nvinfer1::ICudaEngine*)> engine_{
-        nullptr, &TensorrtDetectionEngine::deleteEngine};
-    std::unique_ptr<nvinfer1::IExecutionContext, void(*)(nvinfer1::IExecutionContext*)> context_{
-        nullptr, &TensorrtDetectionEngine::deleteContext};
+    // 公共内核：引擎生命周期 / 缓冲区 / 执行
+    TrtCore core_;
 
     // Tensor 名称
     std::string input_name_ = "images";
@@ -85,29 +73,14 @@ private:
     std::string batch_ids_name_ = "det_batch_ids";
     std::string num_dets_name_ = "det_num_dets";
 
-    // GPU 缓冲区（由节点管理，引擎只保存指针）
+    // 节点自管缓冲区的指针记录
     std::unordered_map<std::string, void*> tensor_ptrs_;
-    std::unordered_map<std::string, size_t> tensor_sizes_;
-
-    // 输出缓冲区（可选，由引擎管理时使用）
-    void* d_boxes_ = nullptr;
-    void* d_scores_ = nullptr;
-    void* d_classes_ = nullptr;
-    void* d_batch_ids_ = nullptr;
-    void* d_num_dets_ = nullptr;
 
     // 输入尺寸
     int input_width_ = 640;
     int input_height_ = 640;
     int max_batch_size_ = 1;
     int max_detections_ = 200;
-
-    // 计算的大小
-    size_t out_boxes_size_ = 0;
-    size_t out_scores_size_ = 0;
-    size_t out_classes_size_ = 0;
-    size_t out_batch_ids_size_ = 0;
-    size_t out_num_dets_size_ = 0;
 };
 
 } // namespace hal

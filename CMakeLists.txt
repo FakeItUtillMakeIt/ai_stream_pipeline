@@ -154,7 +154,61 @@ if(WITH_TENSORRT)
 endif()
 
 if(WITH_CUDA)
-    set(CMAKE_CUDA_ARCHITECTURES "90" CACHE STRING "CUDA architectures")
+    # CUDA 架构：未显式指定时通过 nvidia-smi 探测本机 GPU 计算能力（如 8.6 → 86），
+    # 并钳制到当前 nvcc 支持的范围内（如 CUDA 12.6 不支持 compute_120）
+    if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "")
+        find_program(NVIDIA_SMI nvidia-smi)
+        set(_GPU_ARCH "")
+        if(NVIDIA_SMI)
+            execute_process(COMMAND ${NVIDIA_SMI} --query-gpu=compute_cap --format=csv,noheader
+                            OUTPUT_VARIABLE _GPU_COMPUTE_CAP
+                            OUTPUT_STRIP_TRAILING_WHITESPACE
+                            ERROR_QUIET RESULT_VARIABLE _NVSMI_RET)
+            if(_NVSMI_RET EQUAL 0 AND _GPU_COMPUTE_CAP MATCHES "([0-9]+)\\.([0-9]+)")
+                string(REPLACE "." "" _GPU_ARCH "${CMAKE_MATCH_1}${CMAKE_MATCH_2}")
+            endif()
+        endif()
+
+        # 钳制到 nvcc 支持的最高不超过探测值/默认值的架构
+        execute_process(COMMAND ${CMAKE_CUDA_COMPILER} --list-gpu-arch
+                        OUTPUT_VARIABLE _NVCC_ARCH_LIST
+                        OUTPUT_STRIP_TRAILING_WHITESPACE
+                        ERROR_QUIET RESULT_VARIABLE _NVCC_LIST_RET)
+        set(_SUPPORTED_ARCHS "")
+        if(_NVCC_LIST_RET EQUAL 0)
+            string(REPLACE "\n" ";" _NVCC_ARCH_LINES "${_NVCC_ARCH_LIST}")
+            foreach(_line ${_NVCC_ARCH_LINES})
+                if(_line MATCHES "compute_([0-9]+)")
+                    list(APPEND _SUPPORTED_ARCHS "${CMAKE_MATCH_1}")
+                endif()
+            endforeach()
+        endif()
+
+        set(_TARGET_ARCH "")
+        if(NOT _GPU_ARCH STREQUAL "")
+            set(_TARGET_ARCH "${_GPU_ARCH}")
+            message(STATUS "Detected GPU compute capability ${_GPU_ARCH}")
+        else()
+            set(_TARGET_ARCH "80")
+            message(STATUS "No GPU detected, defaulting to CUDA arch 80")
+        endif()
+
+        if(_SUPPORTED_ARCHS)
+            list(SORT _SUPPORTED_ARCHS)
+            list(GET _SUPPORTED_ARCHS -1 _MAX_SUPPORTED)
+            if(_GPU_ARCH GREATER _MAX_SUPPORTED)
+                message(WARNING
+                    "Local GPU compute capability ${_GPU_ARCH} exceeds max architecture "
+                    "${_MAX_SUPPORTED} supported by ${CMAKE_CUDA_COMPILER} "
+                    "(CUDA ${CMAKE_CUDA_COMPILER_VERSION}). Building for ${_MAX_SUPPORTED}; "
+                    "the binary may not run on this GPU. Upgrade CUDA toolkit to support it.")
+                set(_TARGET_ARCH "${_MAX_SUPPORTED}")
+            endif()
+        endif()
+
+        set(CMAKE_CUDA_ARCHITECTURES "${_TARGET_ARCH}" CACHE STRING "CUDA architectures" FORCE)
+        message(STATUS "Using CUDA arch: ${CMAKE_CUDA_ARCHITECTURES}")
+    endif()
 endif()
 
 # RKNN 后端（RK3588）

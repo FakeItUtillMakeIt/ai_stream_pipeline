@@ -1,4 +1,5 @@
 // src/nodes/evidence/evidence_node.cpp
+#include "utils/time_util.h"
 #include "evidence_node.h"
 #include "registry/node_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
@@ -342,8 +343,7 @@ std::string EvidenceNode::generateTimestamp() const {
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         now.time_since_epoch()) % 1000;
 
-    std::tm tm;
-    localtime_r(&tt, &tm);
+    std::tm tm = utils::TimeUtil::safeLocaltime(tt);
 
     std::ostringstream ss;
     ss << std::put_time(&tm, "%Y%m%d_%H%M%S")

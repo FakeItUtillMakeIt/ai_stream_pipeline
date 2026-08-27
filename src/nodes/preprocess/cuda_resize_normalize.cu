@@ -271,11 +271,11 @@ void CudaResizeNormalizeNode::setAsyncProcessing(bool async) {
     LOG_INFO_FMT("[CudaResizeNormalize] Set async processing: {}", async);
 }
 
-void CudaResizeNormalizeNode::setCudaStream(cudaStream_t stream) {
+void CudaResizeNormalizeNode::setCudaStream(void* stream) {
     if (stream_) {
         cudaStreamDestroy(stream_);
     }
-    stream_ = stream;
+    stream_ = static_cast<cudaStream_t>(stream);
     LOG_INFO_FMT("[CudaResizeNormalize] Set external CUDA stream");
 }
 

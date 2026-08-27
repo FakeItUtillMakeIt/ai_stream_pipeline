@@ -3,9 +3,8 @@
 
 #include "ai_stream/nodes/i_infer_node.h"
 #include "ai_stream/core/bounded_queue.h"
-
-#include <NvInfer.h>
-#include <cuda_runtime_api.h>
+#include "ai_stream/hal/i_pose_estimation.h"
+#include "ai_stream/hal/pose_estimation_factory.h"
 
 #include <thread>
 #include <atomic>
@@ -13,12 +12,6 @@
 #include <string>
 #include <memory>
 #include <deque>
-
-namespace nvinfer1 {
-    class IRuntime;
-    class ICudaEngine;
-    class IExecutionContext;
-}
 
 namespace ai_stream {
 namespace nodes {
@@ -46,12 +39,11 @@ public:
 
 private:
     void inferLoop();
-    bool initEngine(const std::string& engine_path);
 
     // 处理单帧 InferenceResultPacket
     void processFrame(std::shared_ptr<core::InferenceResultPacket> packet);
 
-    // 从 source_mat 按检测框 crop + letterbox resize + normalize
+    // 从 source_mat 按检测框 crop + letterbox resize + normalize（host 输入路径）
     bool cropAndPreprocess(
         const cv::Mat& source_mat,
         const core::InferenceResultPacket::BBox& det,
@@ -61,44 +53,11 @@ private:
         float& out_pad_x,
         float& out_pad_y);
 
-    // 单帧内多人 batch 后处理
-    void postprocessFrame(
-        std::shared_ptr<core::InferenceResultPacket> packet,
-        const std::vector<int>& person_indices,
-        int num_persons,
-        float* output_host,
-        const std::vector<float>& letterbox_params);
-
-    // TensorRT 资源
-    std::unique_ptr<nvinfer1::IRuntime, void(*)(nvinfer1::IRuntime*)> runtime_{
-        nullptr, [](nvinfer1::IRuntime* p){ if (p) delete p; }};
-    std::unique_ptr<nvinfer1::ICudaEngine, void(*)(nvinfer1::ICudaEngine*)> engine_{
-        nullptr, [](nvinfer1::ICudaEngine* p){ if (p) delete p; }};
-    std::unique_ptr<nvinfer1::IExecutionContext, void(*)(nvinfer1::IExecutionContext*)> context_{
-        nullptr, [](nvinfer1::IExecutionContext* p){ if (p) delete p; }};
-    cudaStream_t stream_ = nullptr;
-
-    // Tensor 名称
-    std::string input_name_ = "images";
-    std::string output_name_ = "output0_transposed";  // 转置后的输出
-
-    // GPU 缓冲区
-    void* d_input_ = nullptr;
-    void* d_output_ = nullptr;
-
-    // CPU 缓冲区
-    std::vector<float> h_output_;  // [max_batch, 8400, 56]
-    std::vector<float> h_letterbox_params_; // [num_persons, 3] (scale, pad_x, pad_y)
+    // HAL 姿态估计引擎后端（TensorRT/RKNN/Ascend 由工厂按编译配置选择）
+    hal::PoseEstimationEnginePtr engine_;
 
     // 常量
-    static constexpr int INPUT_H = 640;
-    static constexpr int INPUT_W = 640;
-    static constexpr int NUM_CANDIDATES = 8400;  // 80*80 + 40*40 + 20*20
-    static constexpr int POSE_DIM = 56;           // 4 box + 1 score + 51 kpts
     static constexpr int NUM_KEYPOINTS = 17;
-
-    size_t input_size_ = 0;
-    size_t output_size_ = 0;
 
     int input_width_ = 640;
     int input_height_ = 640;

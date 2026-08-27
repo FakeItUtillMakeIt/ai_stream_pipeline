@@ -17,6 +17,7 @@ struct ActionResult {
     int action_id = -1;
     std::string action_label;
     float confidence = 0.0f;
+    std::vector<float> scores;                         // 全类别概率（softmax 后）
     std::vector<std::pair<std::string, float>> top_k;  // top-k 预测
 };
 
@@ -58,6 +59,31 @@ public:
      */
     virtual bool infer(const uint8_t* clip_data, size_t clip_size,
                        ActionResult& result) = 0;
+
+    /**
+     * @brief 推理已预处理的 NCHW float 数据（上游预处理节点已完成 resize+normalize）
+     * @return 是否支持并成功；后端不支持时返回 false
+     */
+    virtual bool inferPreprocessed(const float* input_nchw, size_t size_bytes,
+                                   ActionResult& result) {
+        (void)input_nchw; (void)size_bytes; (void)result;
+        return false;
+    }
+
+    /**
+     * @brief 推理 GPU 帧 clip（每帧为设备端已预处理 NCHW float 数据的指针）
+     * @return 是否支持并成功；后端不支持时返回 false
+     */
+    virtual bool inferGpuFrames(const std::vector<void*>& gpu_frames,
+                                ActionResult& result) {
+        (void)gpu_frames; (void)result;
+        return false;
+    }
+
+    /**
+     * @brief 设置外部 CUDA 流（以 void* 传递，避免接口泄漏 CUDA 头文件）
+     */
+    virtual void setCudaStream(void* stream) { (void)stream; }
 
     /**
      * @brief 获取输入尺寸

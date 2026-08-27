@@ -41,6 +41,7 @@
 *.dwo
 
 /[Bb]uild
+/[Bb]uild-*
 
 [Rr]uns/
 

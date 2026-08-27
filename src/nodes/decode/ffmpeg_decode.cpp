@@ -1,4 +1,5 @@
 // src/nodes/decode/ffmpeg_decode.cpp
+#include "utils/time_util.h"
 // 解码节点——使用 VideoCodecFactory，支持多后端（NVDEC/MPP/DVPP/FFmpeg）
 #include "ffmpeg_decode.h"
 #include "ai_stream/core/packet.h"
@@ -381,8 +382,7 @@ void FFmpegDecodeNode::saveSnapshot(std::shared_ptr<core::VideoFramePacket> fram
         auto us = std::chrono::duration_cast<std::chrono::microseconds>(
             now.time_since_epoch()).count() % 1000000;
 
-        std::tm tm_buf;
-        localtime_r(&time_t, &tm_buf);
+        std::tm tm_buf = utils::TimeUtil::safeLocaltime(time_t);
 
         std::stringstream ss;
         ss << snapshot_dir_ << "/"
