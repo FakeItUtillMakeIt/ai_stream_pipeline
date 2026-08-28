@@ -54,14 +54,11 @@ void IDrawNode::addPanel(cv::Mat& origin, const std::vector<rules::AlertResult>&
     panel_width = std::min(panel_width, origin.cols - margin * 2);
 
     int logo_area_h = 0;
-    cv::Mat logo;
-    {
-        logo = cv::imread(logo_file_, cv::IMREAD_UNCHANGED);
-        if (!logo.empty()) {
-            double logo_scale = static_cast<double>(panel_width) / (logo.cols * 2.0);
-            int target_h = static_cast<int>(logo.rows * logo_scale);
-            logo_area_h = target_h + static_cast<int>(10 * scale_ratio);
-        }
+   
+    if (!logo_mat_.empty()) {
+        double logo_scale = static_cast<double>(panel_width) / (logo_mat_.cols * 2.0);
+        int target_h = static_cast<int>(logo_mat_.rows * logo_scale);
+        logo_area_h = target_h + static_cast<int>(10 * scale_ratio);
     }
 
     int total_lines = 0;
@@ -93,12 +90,12 @@ void IDrawNode::addPanel(cv::Mat& origin, const std::vector<rules::AlertResult>&
     // ============================================================
     // 5. 绘制 Logo
     // ============================================================
-    if (!logo.empty()) {
-        double logo_scale = static_cast<double>(panel_width) / (logo.cols * 2.0);
-        int target_w = static_cast<int>(logo.cols * logo_scale);
-        int target_h = static_cast<int>(logo.rows * logo_scale);
+    if (!logo_mat_.empty()) {
+        double logo_scale = static_cast<double>(panel_width) / (logo_mat_.cols * 2.0);
+        int target_w = static_cast<int>(logo_mat_.cols * logo_scale);
+        int target_h = static_cast<int>(logo_mat_.rows * logo_scale);
         cv::Mat resized_logo;
-        cv::resize(logo, resized_logo, cv::Size(target_w, target_h), 0, 0, cv::INTER_LINEAR);
+        cv::resize(logo_mat_, resized_logo, cv::Size(target_w, target_h), 0, 0, cv::INTER_LINEAR);
 
         int logo_x = (panel_width - target_w) / 2;
         int logo_y = static_cast<int>(5 * scale_ratio);

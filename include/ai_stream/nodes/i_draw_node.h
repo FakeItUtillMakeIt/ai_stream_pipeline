@@ -88,6 +88,7 @@ public:
     {
         logo_file_ = logo_path;
         LOG_INFO_FMT("[IDrawNode] Logo file set: {}", logo_path);
+        logo_mat_ = cv::imread(logo_file_, cv::IMREAD_UNCHANGED);
     }
 
     virtual void setFontFile(const std::string& font_path)
@@ -113,6 +114,7 @@ public:
 protected:
     std::string logo_file_;
     std::string font_file_;
+    cv::Mat logo_mat_;
 #ifdef HAVE_OPENCV_FREETYPE
     cv::Ptr<cv::freetype::FreeType2> m_ft2_;
 #endif
