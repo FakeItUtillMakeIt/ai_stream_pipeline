@@ -64,7 +64,7 @@ if(WITH_ASCEND)
     )
 endif()
 
-add_library(ai_stream_hal STATIC ${HAL_SOURCES})
+add_library(ai_stream_hal SHARED ${HAL_SOURCES})
 
 set_target_properties(ai_stream_hal PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
