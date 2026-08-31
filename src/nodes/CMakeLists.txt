@@ -113,8 +113,16 @@ endif()
 # ==================== RKNN 配置 ====================
 if(WITH_RKNN)
     target_compile_definitions(ai_stream_nodes PRIVATE WITH_RKNN)
-    target_include_directories(ai_stream_nodes PRIVATE ${RKNN_INCLUDE_DIRS})
-    target_link_libraries(ai_stream_nodes PRIVATE ${RKNN_LIBRARIES})
+    target_include_directories(ai_stream_nodes PRIVATE
+        ${RKNN_INCLUDE_DIRS}
+        ${CMAKE_SOURCE_DIR}/3rd_party/rk_platform/mpp/include
+        ${CMAKE_SOURCE_DIR}/3rd_party/rk_platform/rga/include)
+    # librknnrt.so 是 aarch64 库，x86_64 编译主机不链接（dlopen 动态加载）
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+        target_link_libraries(ai_stream_nodes PRIVATE ${RKNN_LIBRARIES})
+    else()
+        target_link_libraries(ai_stream_nodes PRIVATE dl)
+    endif()
 endif()
 
 # ==================== Ascend 配置 ====================

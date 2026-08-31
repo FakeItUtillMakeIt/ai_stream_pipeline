@@ -104,8 +104,16 @@ endif()
 
 if(WITH_RKNN)
     target_compile_definitions(ai_stream_hal PRIVATE WITH_RKNN)
-    target_include_directories(ai_stream_hal PRIVATE ${RKNN_INCLUDE_DIRS})
-    target_link_libraries(ai_stream_hal PRIVATE ${RKNN_LIBRARIES})
+    target_include_directories(ai_stream_hal PRIVATE
+        ${RKNN_INCLUDE_DIRS}
+        ${CMAKE_SOURCE_DIR}/3rd_party/rk_platform/mpp/include
+        ${CMAKE_SOURCE_DIR}/3rd_party/rk_platform/rga/include)
+    # librknnrt.so / librockchip_mpp.so / librga.so 均为 aarch64 库，x86_64 主机仅头文件编译
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+        target_link_libraries(ai_stream_hal PRIVATE ${RKNN_LIBRARIES})
+    else()
+        target_link_libraries(ai_stream_hal PRIVATE dl)
+    endif()
 endif()
 
 if(WITH_ASCEND)

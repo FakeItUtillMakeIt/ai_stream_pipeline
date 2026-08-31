@@ -5,6 +5,7 @@
 #include "ai_stream/nodes/i_infer_node.h"
 #include "ai_stream/core/bounded_queue.h"
 #include "ai_stream/hal/i_inference_engine.h"
+#include "ai_stream/hal/inference_engine_factory.h"
 
 #include <thread>
 #include <atomic>

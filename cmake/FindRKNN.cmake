@@ -13,6 +13,8 @@ find_path(RKNN_INCLUDE_DIR
     NAMES rknn_api.h
     PATHS
         ${RKNN_ROOT}/include
+        ${CMAKE_SOURCE_DIR}/3rd_party/rk_platform/rknn/include
+        ${CMAKE_SOURCE_DIR}/3rd_party/rknn/include
         /usr/include
         /usr/local/include
         /opt/rknn/include
@@ -20,9 +22,13 @@ find_path(RKNN_INCLUDE_DIR
 )
 
 find_library(RKNN_LIBRARY
-    NAMES rknn_api
+    NAMES rknnrt rknn_api
     PATHS
         ${RKNN_ROOT}/lib
+        ${CMAKE_SOURCE_DIR}/3rd_party/rk_platform/rknn/lib/aarch64
+        ${CMAKE_SOURCE_DIR}/3rd_party/rknn/lib/aarch64
+        ${CMAKE_SOURCE_DIR}/3rd_party/rk_platform/rknn/lib
+        ${CMAKE_SOURCE_DIR}/3rd_party/rknn/lib
         /usr/lib
         /usr/local/lib
         /opt/rknn/lib

@@ -3,14 +3,8 @@
 #pragma once
 
 #include "ai_stream/hal/i_inference_engine.h"
-#include <vector>
+#include "rknn_api.h"
 #include <string>
-
-// 前向声明 RKNN API 类型（避免头文件直接依赖 RKNN SDK）
-// 实际使用时需要包含 <rknn_api.h>
-struct rknn_context;
-struct rknn_input_output;
-struct rknn_tensor_attr;
 
 namespace ai_stream {
 namespace hal {
@@ -49,15 +43,15 @@ private:
     InferenceConfig config_;
     bool loaded_ = false;
 
-    // RKNN 句柄（使用 void* 避免头文件依赖）
-    void* rknn_ctx_ = nullptr;
-    int ctx_flags_ = 0;
+    // RKNN 句柄
+    rknn_context rknn_ctx_;
+    int ctx_flags_;
 
     // 输入输出属性
     std::vector<rknn_tensor_attr> input_attrs_;
     std::vector<rknn_tensor_attr> output_attrs_;
 
-    int core_mask_ = 0;  // 0 = 自动调度
+    int core_mask_;  // 0 = 自动调度
 };
 
 } // namespace hal
