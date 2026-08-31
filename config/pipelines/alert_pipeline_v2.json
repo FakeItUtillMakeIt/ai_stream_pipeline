@@ -49,7 +49,7 @@
       },
       {
         "id": "pose_infer1",
-        "type": "cuda_pose_infer",
+        "type": "pose_infer",
         "params": {
           "detector_type": "yolov8_pose",
           "detector_config": {

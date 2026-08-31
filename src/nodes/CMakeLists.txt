@@ -36,33 +36,22 @@ if(WITH_CUDA)
         preprocess/gpu_resize_normalize.cu
         preprocess/cuda_resize_normalize.cu
         postprocess/gpu_detection_post.cu
-        infer/cuda_pose_infer.cu
         draw/gpu_osd_draw.cu
     )
 endif()
 
-# 推理节点 - TensorRT 后端
+# 统一推理节点（HAL 抽象，自动选择后端）
+# detection 需要 GPU/CUDA（TRT）或 RKNN/Ascend；pose/videomae 可 CPU
+if(WITH_CUDA OR WITH_TENSORRT OR WITH_RKNN OR WITH_ASCEND)
+    list(APPEND NODES_SOURCES infer/detection_infer.cpp)
+endif()
+list(APPEND NODES_SOURCES
+    infer/pose_infer.cpp
+    infer/action_recognition_videomae.cpp
+)
+# INT8 校准仅 TensorRT 需要
 if(WITH_TENSORRT)
-    list(APPEND NODES_SOURCES
-        infer/detection_infer.cpp
-        infer/pose_infer.cpp
-        infer/int8_calibrator.cpp
-        infer/action_recognition_videomae.cpp
-    )
-endif()
-
-# 推理节点 - RKNN 后端（RK3588）
-if(WITH_RKNN)
-    list(APPEND NODES_SOURCES
-        infer/rknn_detection_infer.cpp
-    )
-endif()
-
-# 推理节点 - Ascend 后端
-if(WITH_ASCEND)
-    list(APPEND NODES_SOURCES
-        infer/ascend_detection_infer.cpp
-    )
+    list(APPEND NODES_SOURCES infer/int8_calibrator.cpp)
 endif()
 
 # 动态库
@@ -115,8 +104,8 @@ if(WITH_RKNN)
     target_compile_definitions(ai_stream_nodes PRIVATE WITH_RKNN)
     target_include_directories(ai_stream_nodes PRIVATE
         ${RKNN_INCLUDE_DIRS}
-        ${CMAKE_SOURCE_DIR}/3rd_party/rk_platform/mpp/include
-        ${CMAKE_SOURCE_DIR}/3rd_party/rk_platform/rga/include)
+        ${CMAKE_SOURCE_DIR}/3rd_party/rk_series/mpp/include
+        ${CMAKE_SOURCE_DIR}/3rd_party/rk_series/rga/include)
     # librknnrt.so 是 aarch64 库，x86_64 编译主机不链接（dlopen 动态加载）
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
         target_link_libraries(ai_stream_nodes PRIVATE ${RKNN_LIBRARIES})

@@ -12,7 +12,9 @@
 #include <chrono>
 #include <memory>
 
+#ifdef WITH_TENSORRT
 #include <NvInfer.h>
+#endif
 
 namespace ai_stream {
 namespace nodes {
@@ -280,16 +282,16 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
             return results;
         }
 
-        // 设置动态输入形状（通过原始 TensorRT context）
-        nvinfer1::IExecutionContext* raw_context =
-            static_cast<nvinfer1::IExecutionContext*>(engine_->getRawContext());
-        if (raw_context) {
+#ifdef WITH_TENSORRT
+        // 设置动态输入形状（通过原始 TensorRT context，仅 TensorRT 后端）
+        if (auto* raw_context = static_cast<nvinfer1::IExecutionContext*>(engine_->getRawContext())) {
             nvinfer1::Dims4 input_dims(valid_batch, 3, input_height_, input_width_);
             if (!raw_context->setInputShape(input_name_.c_str(), input_dims)) {
                 LOG_ERROR_FMT("[DetectionInfer] setInputShape failed for batch={}", valid_batch);
                 return results;
             }
         }
+#endif
 
         // ============================================================
         // GPU 路径 - 使用 transfer_stream_ 异步传输
@@ -555,9 +557,10 @@ std::vector<std::vector<core::InferenceResultPacket::BBox>> DetectionInferNode::
 // ============================================================
 // CUDA Graph 捕获 - 消除 kernel launch overhead
 // ============================================================
+#ifdef WITH_CUDA
 bool DetectionInferNode::captureCudaGraph(int batch_size) {
-    nvinfer1::IExecutionContext* raw_context =
-        static_cast<nvinfer1::IExecutionContext*>(engine_->getRawContext());
+#ifdef WITH_TENSORRT
+    auto* raw_context = static_cast<nvinfer1::IExecutionContext*>(engine_->getRawContext());
     if (!raw_context) return false;
 
     destroyCudaGraph();
@@ -611,6 +614,10 @@ bool DetectionInferNode::captureCudaGraph(int batch_size) {
         LOG_ERROR_FMT("[DetectionInfer] CUDA Graph capture exception: {}", e.what());
         return false;
     }
+#else
+    (void)batch_size;
+    return false;
+#endif
 }
 
 bool DetectionInferNode::executeCudaGraph() {
@@ -793,6 +800,8 @@ bool DetectionInferNode::cudaMallocChecked(void** ptr, size_t size, const char* 
     }
     return true;
 }
+#endif // WITH_CUDA
+
 
 REGISTER_NODE("detection_infer", DetectionInferNode)
 

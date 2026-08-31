@@ -8,7 +8,17 @@
 #include "ai_stream/hal/i_detection_inference_engine.h"
 #include "ai_stream/hal/detection_inference_engine_factory.h"
 
+#ifdef WITH_CUDA
 #include <cuda_runtime_api.h>
+#else
+typedef void* cudaStream_t;
+typedef void* cudaGraph_t;
+typedef void* cudaGraphExec_t;
+#ifndef cudaSuccess
+#define cudaSuccess 0
+#endif
+typedef int cudaError_t;
+#endif
 
 #include <thread>
 #include <atomic>
