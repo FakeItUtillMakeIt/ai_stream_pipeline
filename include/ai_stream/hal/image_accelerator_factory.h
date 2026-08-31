@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <mutex>
 
 namespace ai_stream {
 namespace hal {
@@ -39,6 +40,8 @@ public:
 private:
     ImageAcceleratorFactory() = default;
     std::unordered_map<ImageAcceleratorBackend, Creator> creators_;
+    mutable std::mutex mutex_;
+    mutable std::unordered_map<ImageAcceleratorBackend, std::pair<bool, std::string>> availability_cache_;
 };
 
 #define REGISTER_IMAGE_ACCELERATOR(backend_type, class_name) \

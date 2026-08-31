@@ -32,7 +32,6 @@ if(WITH_CUDA)
     find_package(CUDAToolkit REQUIRED)
 
     list(APPEND NODES_SOURCES
-        decode/hw_cuda_decode.cu
         draw/gpu_osd_draw.cu
     )
 endif()

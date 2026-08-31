@@ -12,7 +12,9 @@ ImageAcceleratorFactory& ImageAcceleratorFactory::instance() {
 }
 
 void ImageAcceleratorFactory::registerBackend(ImageAcceleratorBackend type, Creator creator) {
+    std::lock_guard<std::mutex> lock(mutex_);
     creators_[type] = std::move(creator);
+    availability_cache_.erase(type);
     LOG_DEBUG_FMT("[ImageAccelFactory] Registered backend: {}", static_cast<int>(type));
 }
 
@@ -26,9 +28,16 @@ ImageAcceleratorPtr ImageAcceleratorFactory::create(ImageAcceleratorBackend type
             ImageAcceleratorBackend::CPU
         };
         for (auto backend : priority) {
-            auto it = creators_.find(backend);
-            if (it != creators_.end()) {
-                auto accel = it->second();
+            Creator creator;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                auto it = creators_.find(backend);
+                if (it != creators_.end()) {
+                    creator = it->second;
+                }
+            }
+            if (creator) {
+                auto accel = creator();
                 if (accel && accel->isAvailable()) {
                     LOG_INFO_FMT("[ImageAccelFactory] Auto-selected backend: {}", accel->getName());
                     return accel;
@@ -39,13 +48,20 @@ ImageAcceleratorPtr ImageAcceleratorFactory::create(ImageAcceleratorBackend type
         return nullptr;
     }
 
-    auto it = creators_.find(type);
-    if (it == creators_.end()) {
+    Creator creator;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = creators_.find(type);
+        if (it != creators_.end()) {
+            creator = it->second;
+        }
+    }
+    if (!creator) {
         LOG_ERROR_FMT("[ImageAccelFactory] Backend not registered: {}", static_cast<int>(type));
         return nullptr;
     }
 
-    auto accel = it->second();
+    auto accel = creator();
     if (!accel || !accel->isAvailable()) {
         LOG_ERROR_FMT("[ImageAccelFactory] Backend not available: {}", static_cast<int>(type));
         return nullptr;
@@ -56,20 +72,39 @@ ImageAcceleratorPtr ImageAcceleratorFactory::create(ImageAcceleratorBackend type
 
 std::vector<std::pair<ImageAcceleratorBackend, std::string>> ImageAcceleratorFactory::getAvailableBackends() const {
     std::vector<std::pair<ImageAcceleratorBackend, std::string>> result;
+    std::lock_guard<std::mutex> lock(mutex_);
     for (const auto& [type, creator] : creators_) {
-        auto accel = creator();
-        if (accel && accel->isAvailable()) {
-            result.emplace_back(type, accel->getName());
+        auto cached = availability_cache_.find(type);
+        if (cached == availability_cache_.end()) {
+            auto accel = creator();
+            const bool available = accel && accel->isAvailable();
+            const std::string name = accel ? accel->getName() : std::string();
+            cached = availability_cache_.emplace(type, std::make_pair(available, name)).first;
+        }
+        if (cached->second.first) {
+            result.emplace_back(type, cached->second.second);
         }
     }
     return result;
 }
 
 bool ImageAcceleratorFactory::isBackendAvailable(ImageAcceleratorBackend type) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto cached = availability_cache_.find(type);
+    if (cached != availability_cache_.end()) {
+        return cached->second.first;
+    }
+
     auto it = creators_.find(type);
-    if (it == creators_.end()) return false;
+    if (it == creators_.end()) {
+        return false;
+    }
+
     auto accel = it->second();
-    return accel && accel->isAvailable();
+    const bool available = accel && accel->isAvailable();
+    const std::string name = accel ? accel->getName() : std::string();
+    availability_cache_.emplace(type, std::make_pair(available, name));
+    return available;
 }
 
 } // namespace hal
