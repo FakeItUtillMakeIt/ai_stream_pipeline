@@ -21,6 +21,11 @@ TensorrtInferenceEngine::~TensorrtInferenceEngine() {
 bool TensorrtInferenceEngine::loadModel(const InferenceConfig& config) {
     config_ = config;
 
+    if (cudaSetDevice(config.device_id) != cudaSuccess) {
+        LOG_ERROR_FMT("[TensorrtInferenceEngine] Cannot select CUDA device {}", config.device_id);
+        return false;
+    }
+
     if (!core_.loadEngine(config.model_path, "TensorrtInferenceEngine")) {
         return false;
     }
@@ -91,7 +96,8 @@ int TensorrtInferenceEngine::getBatchSize() const {
 
 bool TensorrtInferenceEngine::isAvailable() const {
 #ifdef WITH_TENSORRT
-    return true;
+    int device_count = 0;
+    return cudaGetDeviceCount(&device_count) == cudaSuccess && device_count > 0;
 #else
     return false;
 #endif

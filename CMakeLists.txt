@@ -8,6 +8,10 @@ project(ai_stream_pipeline
     LANGUAGES CXX
 )
 
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "ai_stream_pipeline currently supports Linux only; use a Linux target or add a platform port first")
+endif()
+
 # ------------------------------------------------------------------------------
 # 1. 选项配置
 # ------------------------------------------------------------------------------
@@ -31,6 +35,7 @@ option(WITH_NPP "Enable NPP library for GPU image processing" OFF)
 # 新平台推理后端
 option(WITH_RKNN  "Enable RKNN inference support (RK3588)" OFF)
 option(WITH_ASCEND "Enable Ascend CANN inference support" OFF)
+option(RKNN_ALLOW_X86_SIMULATOR "Allow RKNN backend on x86_64 for simulator-only builds" OFF)
 
 # CPU fallback：无 GPU 时用 CPU 实现预处理/后处理/绘制
 option(WITH_CPU_FALLBACK "Enable CPU fallback for preprocess/postprocess/draw" ON)
@@ -100,7 +105,7 @@ find_package(spdlog REQUIRED)
 find_package(nlohmann_json REQUIRED)
 
 # 视频/图像处理核心依赖
-find_package(OpenCV REQUIRED COMPONENTS core imgproc videoio)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc videoio dnn)
 
 # 可选的 OpenCV freetype 模块（用于中文绘制等高级文本渲染）
 # 当系统安装了 opencv_freetype 组件时，OpenCVConfig.cmake 会导出 opencv_freetype target
@@ -144,6 +149,9 @@ endif()
 
 # 推理后端可选依赖
 if(WITH_TENSORRT)
+    if(NOT WITH_CUDA)
+        message(FATAL_ERROR "WITH_TENSORRT requires WITH_CUDA=ON")
+    endif()
     find_package(TensorRT QUIET)
     if(TensorRT_FOUND)
         message(STATUS "Found TensorRT: ${TensorRT_INCLUDE_DIRS}")
@@ -304,7 +312,7 @@ target_link_libraries(ai_stream_nodes
         opencv_core
         opencv_imgproc
         opencv_videoio
-        ${FFMPEG_LIBRARIES}
+        FFmpeg::FFmpeg
 )
 
 # 条件链接 OpenCV freetype 模块
@@ -317,7 +325,7 @@ endif()
 if(WITH_TENSORRT)
     target_compile_definitions(ai_stream_nodes PRIVATE WITH_TENSORRT)
     target_include_directories(ai_stream_nodes PRIVATE ${TensorRT_INCLUDE_DIRS})
-    target_link_libraries(ai_stream_nodes PRIVATE ${TensorRT_LIBRARIES})
+    target_link_libraries(ai_stream_nodes PRIVATE ${TensorRT_LIBRARIES} nvinfer_plugin)
 endif()
 
 # ------------------------------------------------------------------------------

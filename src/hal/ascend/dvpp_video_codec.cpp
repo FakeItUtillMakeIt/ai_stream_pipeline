@@ -64,8 +64,8 @@ bool DvppVideoCodec::isAvailable() const {
 }
 
 bool DvppVideoCodec::initDvpp() {
-    LOG_DEBUG("[DvppVideoCodec] initDvpp (placeholder)");
-    return true;
+    LOG_WARN("[DvppVideoCodec] DVPP backend is not implemented");
+    return false;
 }
 
 void DvppVideoCodec::cleanup() {

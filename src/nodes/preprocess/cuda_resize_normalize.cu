@@ -47,7 +47,9 @@ CudaResizeNormalizeNode::~CudaResizeNormalizeNode() {
 
     if (input_gpu_ptr_) cudaFree(input_gpu_ptr_);
     if (output_gpu_ptr_) cudaFree(output_gpu_ptr_);
-    if (stream_) cudaStreamDestroy(stream_);
+    if (stream_ && owns_stream_) cudaStreamDestroy(stream_);
+    stream_ = nullptr;
+    owns_stream_ = false;
     cudaEventDestroy(start_event_);
     cudaEventDestroy(stop_event_);
 
@@ -67,6 +69,7 @@ void CudaResizeNormalizeNode::setStd(const std::vector<float>& std) {
 bool CudaResizeNormalizeNode::onStartup() {
     if (!stream_) {
         CUDA_CHECK_BOOL(cudaStreamCreate(&stream_));
+        owns_stream_ = true;
     }
 
     // 通过 HAL 工厂创建图像加速器
@@ -272,10 +275,11 @@ void CudaResizeNormalizeNode::setAsyncProcessing(bool async) {
 }
 
 void CudaResizeNormalizeNode::setCudaStream(void* stream) {
-    if (stream_) {
+    if (stream_ && owns_stream_) {
         cudaStreamDestroy(stream_);
     }
     stream_ = static_cast<cudaStream_t>(stream);
+    owns_stream_ = false;
     LOG_INFO_FMT("[CudaResizeNormalize] Set external CUDA stream");
 }
 

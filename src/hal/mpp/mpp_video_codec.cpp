@@ -65,8 +65,8 @@ bool MppVideoCodec::isAvailable() const {
 }
 
 bool MppVideoCodec::initMpp() {
-    LOG_DEBUG("[MppVideoCodec] initMpp (placeholder)");
-    return true;
+    LOG_WARN("[MppVideoCodec] MPP backend is not implemented");
+    return false;
 }
 
 void MppVideoCodec::cleanup() {

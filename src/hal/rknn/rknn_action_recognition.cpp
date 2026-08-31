@@ -66,7 +66,7 @@ int RknnActionRecognition::getNumFrames() const {
 
 bool RknnActionRecognition::isAvailable() const {
 #ifdef WITH_RKNN
-    return true;
+    return false;
 #else
     return false;
 #endif

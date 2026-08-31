@@ -23,76 +23,25 @@ DvppImageAccelerator::~DvppImageAccelerator() {
     LOG_DEBUG("[DvppImageAccelerator] Destroyed");
 }
 
-bool DvppImageAccelerator::resizeNormalize(const uint8_t* src, int src_w, int src_h, int src_fmt,
-                                            float* dst, int dst_w, int dst_h,
-                                            const float* mean, const float* std) {
-    if (!initialized_) {
-        LOG_ERROR("[DvppImageAccelerator] Not initialized");
-        return false;
-    }
-
-    // 实际实现：
-    // 1. 创建输入输出描述：VpcUserImageConfigure
-    // 2. 调用 vpc_resize()
-    // 3. 归一化需要在输出后手动处理（DVPP 不直接支持 float 归一化）
-
-    LOG_DEBUG_FMT("[DvppImageAccelerator] resizeNormalize: {}x{} -> {}x{}", src_w, src_h, dst_w, dst_h);
-    return true;
+bool DvppImageAccelerator::resizeNormalize(const uint8_t* src,
+                                           const ResizeNormalizeParams& params,
+                                           float* dst, LetterboxResult* letter) {
+    (void)src; (void)params; (void)dst; (void)letter;
+    LOG_ERROR("[DvppImageAccelerator] DVPP SDK implementation is not available");
+    return false;
 }
 
-bool DvppImageAccelerator::drawBoxes(uint8_t* image, int width, int height, int fmt,
-                                      const std::vector<Box>& boxes) {
-    if (!initialized_) {
-        LOG_ERROR("[DvppImageAccelerator] Not initialized");
-        return false;
-    }
-
-    // DVPP 不直接支持绘图，退回到 CPU 实现
-    LOG_DEBUG_FMT("[DvppImageAccelerator] drawBoxes: {} boxes (CPU fallback)", boxes.size());
-    return true;
+bool DvppImageAccelerator::drawBoxes(const std::vector<BBox>& boxes,
+                                     const DrawParams& draw) {
+    (void)boxes; (void)draw;
+    LOG_ERROR("[DvppImageAccelerator] DVPP does not implement drawing");
+    return false;
 }
 
-bool DvppImageAccelerator::nms(const std::vector<Box>& boxes, float thresh,
-                                std::vector<int>& keep) {
-    if (!initialized_) {
-        LOG_ERROR("[DvppImageAccelerator] Not initialized");
-        return false;
-    }
-
-    // NMS 是 CPU 操作
-    keep.clear();
-    int n = static_cast<int>(boxes.size());
-    if (n == 0) return true;
-
-    std::vector<float> areas(n);
-    for (int i = 0; i < n; ++i) {
-        areas[i] = boxes[i].area();
-    }
-
-    std::vector<int> order(n);
-    std::iota(order.begin(), order.end(), 0);
-    std::sort(order.begin(), order.end(), [&boxes](int a, int b) {
-        return boxes[a].score > boxes[b].score;
-    });
-
-    std::vector<bool> suppressed(n, false);
-    for (int idx : order) {
-        if (suppressed[idx]) continue;
-        keep.push_back(idx);
-        for (int j : order) {
-            if (suppressed[j]) continue;
-            float iou = boxes[idx].iou(boxes[j]);
-            if (iou > thresh) {
-                suppressed[j] = true;
-            }
-        }
-    }
-
-    return true;
-}
-
-std::string DvppImageAccelerator::getBackendName() const {
-    return "DVPP (Ascend)";
+bool DvppImageAccelerator::nms(std::vector<BBox>& boxes, float iou_threshold) {
+    (void)boxes; (void)iou_threshold;
+    LOG_ERROR("[DvppImageAccelerator] DVPP SDK implementation is not available");
+    return false;
 }
 
 bool DvppImageAccelerator::isAvailable() const {
@@ -116,8 +65,8 @@ bool DvppImageAccelerator::initDvpp() {
     // 3. acldvppCreateChannelDesc()
     // 4. acldvppCreateChannel()
 
-    LOG_DEBUG("[DvppImageAccelerator] initDvpp (placeholder)");
-    return true;
+    LOG_WARN("[DvppImageAccelerator] DVPP backend is not implemented");
+    return false;
 }
 
 void DvppImageAccelerator::cleanup() {

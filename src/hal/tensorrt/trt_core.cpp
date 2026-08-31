@@ -108,7 +108,7 @@ std::vector<TrtTensorMeta> TrtCore::tensors() const {
 }
 
 bool TrtCore::setInputShape(const std::string& name, const int64_t* dims, int nb_dims) {
-    if (!impl_->context) return false;
+    if (!impl_->context || !dims || nb_dims <= 0 || nb_dims > nvinfer1::Dims::MAX_DIMS) return false;
     nvinfer1::Dims shape{};
     shape.nbDims = nb_dims;
     for (int i = 0; i < nb_dims && i < nvinfer1::Dims::MAX_DIMS; ++i) {

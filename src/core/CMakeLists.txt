@@ -8,6 +8,8 @@ add_library(ai_stream_core SHARED
     # bounded_queue.h / queued_node.h 是 header-only，无需加入源列表
 )
 
+set_target_properties(ai_stream_core PROPERTIES EXPORT_NAME core)
+
 target_include_directories(ai_stream_core
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>

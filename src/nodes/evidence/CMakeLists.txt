@@ -38,7 +38,7 @@ target_link_libraries(evidence_node
         nlohmann_json::nlohmann_json
         ai_stream_core
     PRIVATE
-        ${FFMPEG_LIBRARIES}
+        FFmpeg::FFmpeg
         opencv_core
         opencv_imgproc
         opencv_videoio

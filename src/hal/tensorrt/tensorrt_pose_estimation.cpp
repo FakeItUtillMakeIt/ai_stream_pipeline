@@ -18,7 +18,8 @@ TensorrtPoseEstimation::~TensorrtPoseEstimation() = default;
 
 bool TensorrtPoseEstimation::isAvailable() const {
 #ifdef WITH_TENSORRT
-    return true;
+    int device_count = 0;
+    return cudaGetDeviceCount(&device_count) == cudaSuccess && device_count > 0;
 #else
     return false;
 #endif
@@ -38,6 +39,14 @@ std::pair<int, int> TensorrtPoseEstimation::getInputSize() const {
 
 bool TensorrtPoseEstimation::loadModel(const PoseEstimationConfig& config) {
     config_ = config;
+
+    int device_count = 0;
+    if (cudaGetDeviceCount(&device_count) != cudaSuccess ||
+        config.device_id < 0 || config.device_id >= device_count ||
+        cudaSetDevice(config.device_id) != cudaSuccess) {
+        LOG_ERROR_FMT("[TensorrtPose] Cannot select CUDA device {}", config.device_id);
+        return false;
+    }
 
     if (!core_.loadEngine(config.model_path, "TensorrtPose")) {
         return false;

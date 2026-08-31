@@ -393,6 +393,7 @@ bool ActionRecognitionVideoMAENode::loadModel() {
     hal_cfg.frame_interval = cfg_.frame_interval;
     hal_cfg.batch_size = cfg_.batch_size;
     hal_cfg.action_labels = cfg_.action_labels;
+    hal_cfg.device_id = device_id_;
 
     if (!engine_->loadModel(hal_cfg)) {
         LOG_ERROR_FMT("Failed to load model via HAL backend: {}", cfg_.model_path);

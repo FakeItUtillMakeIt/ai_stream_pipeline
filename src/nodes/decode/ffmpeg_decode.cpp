@@ -6,7 +6,6 @@
 #include "ai_stream/hal/video_codec_factory.h"
 #include "registry/node_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
-#include "hw_cuda_decode.h"
 #include <opencv2/opencv.hpp>
 #include <filesystem>
 #include <sstream>

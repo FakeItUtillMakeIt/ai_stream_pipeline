@@ -68,7 +68,7 @@ bool RknnInferenceEngine::isAvailable() const {
     // 实际实现：检查 /dev/rknpu 设备是否存在
     // 或尝试加载 rknn_api.so
 #ifdef WITH_RKNN
-    return true;
+    return false;
 #else
     return false;
 #endif

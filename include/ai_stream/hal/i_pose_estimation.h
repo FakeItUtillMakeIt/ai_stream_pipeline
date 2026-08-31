@@ -21,6 +21,7 @@ struct PoseEstimationConfig {
     int input_height = 640;
     int max_batch = 8;         // 单帧最大人数
     std::string precision = "fp16";
+    int device_id = 0;
 };
 
 /**

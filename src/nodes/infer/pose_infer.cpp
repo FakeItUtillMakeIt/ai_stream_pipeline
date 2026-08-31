@@ -52,6 +52,7 @@ bool PoseInferNode::loadModel(const std::string& model_path) {
     cfg.input_height = input_height_;
     cfg.max_batch = batch_size_;
     cfg.precision = precision_;
+    cfg.device_id = device_id_;
 
     if (!engine_->loadModel(cfg)) {
         LOG_ERROR_FMT("[PoseInfer] Failed to load model via HAL backend: {}", model_path);

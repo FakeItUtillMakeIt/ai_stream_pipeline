@@ -1,6 +1,7 @@
 // src/http/api_server.cpp
 #include "api_server.h"
 #include "ai_stream/core/metrics.h"
+#include "ai_stream/hal/backend_diagnostics.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 #include <nlohmann/json.hpp>
 #include <chrono>
@@ -17,6 +18,7 @@ ApiServer::ApiServer(bool async_mode) : async_mode_(async_mode) {
     } else {
         LOG_INFO_FMT("ApiServer pipeline management mode: SYNC");
     }
+    hal::logAvailableBackends();
     setupRoutes();
 }
 
@@ -71,6 +73,18 @@ void ApiServer::setupRoutes() {
     });
     server_.Post("/api/v1/metrics", [this](const auto& req, auto& res) {
         handleMetricsPipeline(req, res);
+    });
+
+    // 可用后端查询
+    server_.Get("/api/v1/backends", [](const auto& req, auto& res) {
+        (void)req;
+        try {
+            res.set_content(ai_stream::hal::availableBackendsJson(), "application/json");
+        } catch (const std::exception& e) {
+            res.status = 500;
+            json err = {{"error", e.what()}};
+            res.set_content(err.dump(), "application/json");
+        }
     });
 }
 

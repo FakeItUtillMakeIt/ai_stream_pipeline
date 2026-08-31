@@ -4,16 +4,44 @@ find_path(TensorRT_INCLUDE_DIR NvInfer.h
     PATHS /usr/include/x86_64-linux-gnu
           /usr/local/tensorrt/include
           $ENV{TENSORRT_DIR}/include
+          ${TENSORRT_DIR}/include
+          ${CMAKE_SYSROOT}/usr/include
+          ${CMAKE_SYSROOT}/usr/include/${CMAKE_LIBRARY_ARCHITECTURE}
 )
 find_library(TensorRT_LIBRARY NAMES nvinfer
     PATHS /usr/lib/x86_64-linux-gnu
           /usr/local/tensorrt/lib
           $ENV{TENSORRT_DIR}/lib
+          ${TENSORRT_DIR}/lib
+          ${CMAKE_SYSROOT}/usr/lib
+          ${CMAKE_SYSROOT}/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}
+)
+find_library(TensorRT_PLUGIN_LIBRARY NAMES nvinfer_plugin
+    PATHS /usr/lib/x86_64-linux-gnu
+          /usr/local/tensorrt/lib
+          $ENV{TENSORRT_DIR}/lib
+          ${TENSORRT_DIR}/lib
+          ${CMAKE_SYSROOT}/usr/lib
+          ${CMAKE_SYSROOT}/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}
+)
+find_library(TensorRT_ONNXPARSER_LIBRARY NAMES nvonnxparser
+    PATHS /usr/lib/x86_64-linux-gnu
+          /usr/local/tensorrt/lib
+          $ENV{TENSORRT_DIR}/lib
+          ${TENSORRT_DIR}/lib
+          ${CMAKE_SYSROOT}/usr/lib
+          ${CMAKE_SYSROOT}/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}
 )
 if(TensorRT_INCLUDE_DIR AND TensorRT_LIBRARY)
     set(TensorRT_FOUND TRUE)
     set(TensorRT_INCLUDE_DIRS ${TensorRT_INCLUDE_DIR})
     set(TensorRT_LIBRARIES ${TensorRT_LIBRARY})
+    if(TensorRT_PLUGIN_LIBRARY)
+        list(APPEND TensorRT_LIBRARIES ${TensorRT_PLUGIN_LIBRARY})
+    endif()
+    if(TensorRT_ONNXPARSER_LIBRARY)
+        list(APPEND TensorRT_LIBRARIES ${TensorRT_ONNXPARSER_LIBRARY})
+    endif()
 
     # 从 NvInferVersion.h 提取版本（NV_TENSORRT_MAJOR / NV_TENSORRT_MINOR / NV_TENSORRT_PATCH）
     set(TensorRT_VERSION "")
@@ -53,4 +81,5 @@ if(TensorRT_INCLUDE_DIR AND TensorRT_LIBRARY)
         message(STATUS "Found TensorRT version: ${TensorRT_VERSION}")
     endif()
 endif()
-mark_as_advanced(TensorRT_INCLUDE_DIR TensorRT_LIBRARY)
+mark_as_advanced(TensorRT_INCLUDE_DIR TensorRT_LIBRARY
+                 TensorRT_PLUGIN_LIBRARY TensorRT_ONNXPARSER_LIBRARY)

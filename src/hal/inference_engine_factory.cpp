@@ -28,8 +28,11 @@ InferenceEnginePtr InferenceEngineFactory::create(InferenceBackend type) {
         for (auto backend : priority) {
             auto it = creators_.find(backend);
             if (it != creators_.end()) {
-                LOG_INFO_FMT("[InferenceEngineFactory] Auto-selected backend: {}", static_cast<int>(backend));
-                return it->second();
+                auto engine = it->second();
+                if (engine && engine->isAvailable()) {
+                    LOG_INFO_FMT("[InferenceEngineFactory] Auto-selected backend: {}", static_cast<int>(backend));
+                    return engine;
+                }
             }
         }
         LOG_ERROR("[InferenceEngineFactory] No inference backend available");

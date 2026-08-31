@@ -56,6 +56,7 @@ bool CudaPoseInferNode::loadModel(const std::string& model_path) {
     cfg.input_height = input_height_;
     cfg.max_batch = batch_size_;
     cfg.precision = precision_;
+    cfg.device_id = device_id_;
 
     if (!engine_->loadModel(cfg)) {
         LOG_ERROR_FMT("[CudaPoseInfer] Failed to load model via HAL backend: {}", model_path);
@@ -64,6 +65,7 @@ bool CudaPoseInferNode::loadModel(const std::string& model_path) {
     }
 
     if (stream_ == nullptr) {
+        cudaSetDevice(device_id_);
         cudaStreamCreate(&stream_);
     }
     engine_->setCudaStream(stream_);

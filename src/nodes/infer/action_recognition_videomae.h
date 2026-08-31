@@ -52,6 +52,7 @@ public:
     void setActionLabels(const std::vector<std::string>& labels) override;
     void setConfidenceThreshold(float threshold) override;
     void setBatchSize(int batch_size) override;
+    void setDeviceId(int device_id) override { device_id_ = device_id; }
 
 private:
     // 推理（通过 HAL 后端引擎）
@@ -98,6 +99,7 @@ private:
     
     mutable std::mutex mutex_;
     bool is_initialized_ = false;
+    int device_id_ = 0;
 };
 
 } // namespace nodes

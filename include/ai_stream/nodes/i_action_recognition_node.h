@@ -64,6 +64,8 @@ public:
      */
     virtual void setBatchSize(int batch_size) = 0;
 
+    virtual void setDeviceId(int device_id) { (void)device_id; }
+
     bool configure(const std::string& node_id, const nlohmann::json& params) override {
         (void)node_id;
         if (params.contains("input_height") && params.contains("input_width")) {
@@ -83,6 +85,9 @@ public:
         }
         if (params.contains("batch_size")) {
             setBatchSize(params["batch_size"].get<int>());
+        }
+        if (params.contains("device_id")) {
+            setDeviceId(params["device_id"].get<int>());
         }
         if (params.contains("model_path")) {
             setModelPath(params["model_path"].get<std::string>());

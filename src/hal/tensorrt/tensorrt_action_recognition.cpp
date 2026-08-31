@@ -25,6 +25,14 @@ TensorrtActionRecognition::~TensorrtActionRecognition() {
 bool TensorrtActionRecognition::loadModel(const ActionRecognitionConfig& config) {
     config_ = config;
 
+    int device_count = 0;
+    if (cudaGetDeviceCount(&device_count) != cudaSuccess ||
+        config.device_id < 0 || config.device_id >= device_count ||
+        cudaSetDevice(config.device_id) != cudaSuccess) {
+        LOG_ERROR_FMT("[TensorrtActionRecognition] Cannot select CUDA device {}", config.device_id);
+        return false;
+    }
+
     if (!core_.loadEngine(config.model_path, "TensorrtActionRecognition")) {
         return false;
     }
@@ -150,7 +158,8 @@ int TensorrtActionRecognition::getNumFrames() const {
 
 bool TensorrtActionRecognition::isAvailable() const {
 #ifdef WITH_TENSORRT
-    return true;
+    int device_count = 0;
+    return cudaGetDeviceCount(&device_count) == cudaSuccess && device_count > 0;
 #else
     return false;
 #endif

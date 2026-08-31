@@ -67,6 +67,7 @@ endif()
 
 # 动态库
 add_library(ai_stream_nodes SHARED ${NODES_SOURCES})
+set_target_properties(ai_stream_nodes PROPERTIES EXPORT_NAME nodes)
 
 # 编译定义
 if(WITH_TENSORRT)
@@ -94,23 +95,18 @@ if(WITH_CUDA)
 
     target_link_libraries(ai_stream_nodes
         PRIVATE
-            ${FFMPEG_LIBRARIES}
-            # CUDA 运行时 + 设备运行时
-            ${CUDA_CUDART_LIBRARY}
-            ${CUDA_nppc_LIBRARY}
-            ${CUDA_nppig_LIBRARY}
-            ${CUDA_nppicc_LIBRARY}
-            # cuBLAS for GPU Kalman filter
-            ${CUDA_cublas_LIBRARY}
-            # TensorRT
-            nvinfer
-            nvonnxparser
-            nvinfer_plugin
+            FFmpeg::FFmpeg
+            CUDA::cudart
+            CUDA::nppc
+            CUDA::nppig
+            CUDA::nppicc
+            CUDA::cublas
+            CUDA::cusolver
     )
 else()
     target_link_libraries(ai_stream_nodes
         PRIVATE
-            ${FFMPEG_LIBRARIES}
+            FFmpeg::FFmpeg
     )
 endif()
 
@@ -143,9 +139,9 @@ if(WITH_TRACK)
         PUBLIC
             ai_stream_core
         PRIVATE
-            -Wl,--whole-archive
+            $<$<CXX_COMPILER_ID:GNU,Clang>:-Wl,--whole-archive>
             ai_stream_hal
-            -Wl,--no-whole-archive
+            $<$<CXX_COMPILER_ID:GNU,Clang>:-Wl,--no-whole-archive>
             ocsort
             bytetrack
             Eigen3::Eigen
@@ -155,9 +151,9 @@ else()
         PUBLIC
             ai_stream_core
         PRIVATE
-            -Wl,--whole-archive
+            $<$<CXX_COMPILER_ID:GNU,Clang>:-Wl,--whole-archive>
             ai_stream_hal
-            -Wl,--no-whole-archive
+            $<$<CXX_COMPILER_ID:GNU,Clang>:-Wl,--no-whole-archive>
     )
 endif()
 

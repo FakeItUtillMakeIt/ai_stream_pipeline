@@ -24,17 +24,17 @@ public:
     DvppImageAccelerator();
     ~DvppImageAccelerator() override;
 
-    bool resizeNormalize(const uint8_t* src, int src_w, int src_h, int src_fmt,
-                         float* dst, int dst_w, int dst_h,
-                         const float* mean, const float* std) override;
+    bool resizeNormalize(const uint8_t* src,
+                         const ResizeNormalizeParams& params,
+                         float* dst,
+                         LetterboxResult* letter = nullptr) override;
 
-    bool drawBoxes(uint8_t* image, int width, int height, int fmt,
-                   const std::vector<Box>& boxes) override;
+    bool drawBoxes(const std::vector<BBox>& boxes,
+                   const DrawParams& draw) override;
 
-    bool nms(const std::vector<Box>& boxes, float thresh,
-             std::vector<int>& keep) override;
+    bool nms(std::vector<BBox>& boxes, float iou_threshold) override;
 
-    std::string getBackendName() const override { return "DVPP (Ascend)"; }
+    std::string getName() const override { return "DVPP (Ascend)"; }
     bool isAvailable() const override;
 
     /**

@@ -29,8 +29,11 @@ DetectionInferenceEnginePtr DetectionInferenceEngineFactory::create(DetectionBac
         for (auto backend : priority) {
             auto it = creators_.find(backend);
             if (it != creators_.end()) {
-                LOG_INFO_FMT("[DetectionInferenceEngineFactory] Auto-selected backend: {}", static_cast<int>(backend));
-                return it->second();
+                auto engine = it->second();
+                if (engine && engine->isAvailable()) {
+                    LOG_INFO_FMT("[DetectionInferenceEngineFactory] Auto-selected backend: {}", static_cast<int>(backend));
+                    return engine;
+                }
             }
         }
         LOG_ERROR("[DetectionInferenceEngineFactory] No detection inference backend available");
@@ -57,14 +60,20 @@ std::vector<std::pair<DetectionBackend, std::string>> DetectionInferenceEngineFa
     for (const auto& [type, creator] : creators_) {
         auto it = names.find(type);
         if (it != names.end()) {
-            result.emplace_back(type, it->second);
+            auto engine = creator();
+            if (engine && engine->isAvailable()) {
+                result.emplace_back(type, it->second);
+            }
         }
     }
     return result;
 }
 
 bool DetectionInferenceEngineFactory::isBackendAvailable(DetectionBackend type) const {
-    return creators_.count(type) > 0;
+    auto it = creators_.find(type);
+    if (it == creators_.end()) return false;
+    auto engine = it->second();
+    return engine && engine->isAvailable();
 }
 
 } // namespace hal

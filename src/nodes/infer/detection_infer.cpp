@@ -723,6 +723,7 @@ bool DetectionInferNode::initEngine(const std::string& engine_path) {
         config.max_batch_size = max_batch_size_.load();
         config.max_detections = MAX_DETS;
         config.precision = precision_;
+        config.device_id = device_id_;
         config.enable_cuda_graph = cuda_graph_enabled_.load();
 
         if (!engine_->loadModel(config)) {

@@ -68,7 +68,7 @@ int AscendActionRecognition::getNumFrames() const {
 
 bool AscendActionRecognition::isAvailable() const {
 #ifdef WITH_ASCEND
-    return true;
+    return false;
 #else
     return false;
 #endif

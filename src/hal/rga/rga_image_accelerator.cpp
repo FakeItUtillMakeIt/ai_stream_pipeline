@@ -23,86 +23,25 @@ RgaImageAccelerator::~RgaImageAccelerator() {
     LOG_DEBUG("[RgaImageAccelerator] Destroyed");
 }
 
-bool RgaImageAccelerator::resizeNormalize(const uint8_t* src, int src_w, int src_h, int src_fmt,
-                                           float* dst, int dst_w, int dst_h,
-                                           const float* mean, const float* std) {
-    if (!initialized_) {
-        LOG_ERROR("[RgaImageAccelerator] Not initialized");
-        return false;
-    }
-
-    // 实际实现：
-    // 1. 使用 imresize() 进行硬件缩放
-    // 2. 使用 imcolor_convert() 进行颜色空间转换
-    // 3. 使用 imnormalize() 进行归一化
-    //
-    // 伪代码：
-    // rga_buffer_t src_buf = wrap_ptr_to_rga_buffer(src, src_w, src_h, src_fmt);
-    // rga_buffer_t dst_buf = wrap_ptr_to_rga_buffer(dst, dst_w, dst_h, RK_FORMAT_RGB_888);
-    // imresize(src_buf, dst_buf);
-    // // 然后做归一化
-
-    LOG_DEBUG_FMT("[RgaImageAccelerator] resizeNormalize: {}x{} -> {}x{}", src_w, src_h, dst_w, dst_h);
-    return true;
+bool RgaImageAccelerator::resizeNormalize(const uint8_t* src,
+                                          const ResizeNormalizeParams& params,
+                                          float* dst, LetterboxResult* letter) {
+    (void)src; (void)params; (void)dst; (void)letter;
+    LOG_ERROR("[RgaImageAccelerator] RGA SDK implementation is not available");
+    return false;
 }
 
-bool RgaImageAccelerator::drawBoxes(uint8_t* image, int width, int height, int fmt,
-                                     const std::vector<Box>& boxes) {
-    if (!initialized_) {
-        LOG_ERROR("[RgaImageAccelerator] Not initialized");
-        return false;
-    }
-
-    // 实际实现：
-    // 使用 imrectangle() 在图像上绘制矩形框
-
-    LOG_DEBUG_FMT("[RgaImageAccelerator] drawBoxes: {} boxes on {}x{}", boxes.size(), width, height);
-    return true;
+bool RgaImageAccelerator::drawBoxes(const std::vector<BBox>& boxes,
+                                    const DrawParams& draw) {
+    (void)boxes; (void)draw;
+    LOG_ERROR("[RgaImageAccelerator] RGA SDK implementation is not available");
+    return false;
 }
 
-bool RgaImageAccelerator::nms(const std::vector<Box>& boxes, float thresh,
-                               std::vector<int>& keep) {
-    if (!initialized_) {
-        LOG_ERROR("[RgaImageAccelerator] Not initialized");
-        return false;
-    }
-
-    // NMS 通常是 CPU 操作，RGA 不直接支持
-    // 这里退回到 CPU 实现
-
-    keep.clear();
-    int n = static_cast<int>(boxes.size());
-    if (n == 0) return true;
-
-    std::vector<float> areas(n);
-    for (int i = 0; i < n; ++i) {
-        areas[i] = boxes[i].area();
-    }
-
-    std::vector<int> order(n);
-    std::iota(order.begin(), order.end(), 0);
-    std::sort(order.begin(), order.end(), [&boxes](int a, int b) {
-        return boxes[a].score > boxes[b].score;
-    });
-
-    std::vector<bool> suppressed(n, false);
-    for (int idx : order) {
-        if (suppressed[idx]) continue;
-        keep.push_back(idx);
-        for (int j : order) {
-            if (suppressed[j]) continue;
-            float iou = boxes[idx].iou(boxes[j]);
-            if (iou > thresh) {
-                suppressed[j] = true;
-            }
-        }
-    }
-
-    return true;
-}
-
-std::string RgaImageAccelerator::getBackendName() const {
-    return "RGA (Rockchip 2D)";
+bool RgaImageAccelerator::nms(std::vector<BBox>& boxes, float iou_threshold) {
+    (void)boxes; (void)iou_threshold;
+    LOG_ERROR("[RgaImageAccelerator] RGA SDK implementation is not available");
+    return false;
 }
 
 bool RgaImageAccelerator::isAvailable() const {
@@ -124,8 +63,8 @@ bool RgaImageAccelerator::initRga() {
     // 初始化 RGA 设备，创建上下文
     // rga_init(&rga_ctx_);
 
-    LOG_DEBUG("[RgaImageAccelerator] initRga (placeholder)");
-    return true;
+    LOG_WARN("[RgaImageAccelerator] RGA backend is not implemented");
+    return false;
 }
 
 void RgaImageAccelerator::cleanup() {

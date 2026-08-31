@@ -38,6 +38,7 @@ bool RknnDetectionInferNode::loadModel(const std::string& model_path) {
     config.input_height = input_height_;
     config.batch_size = batch_size_;
     config.precision = precision_;
+    config.device_id = device_id_;
 
     if (!engine_->loadModel(config)) {
         LOG_ERROR_FMT("[RknnDetectionInfer] Failed to load model: {}", model_path);

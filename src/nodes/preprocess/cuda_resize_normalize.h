@@ -49,6 +49,7 @@ private:
     int device_id_;
     bool async_processing_;
     cudaStream_t stream_;
+    bool owns_stream_ = false;
     cudaEvent_t start_event_;
     cudaEvent_t stop_event_;
 

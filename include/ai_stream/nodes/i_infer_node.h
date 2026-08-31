@@ -49,6 +49,8 @@ public:
      */
     virtual void setBatchSize(int batch_size) = 0;
 
+    virtual void setDeviceId(int device_id) { (void)device_id; }
+
     /**
      * @brief 设置模型输入尺寸要求 [宽, 高]
      * @param width 输入宽度
@@ -96,6 +98,9 @@ public:
         }
         if (detector_config.contains("batch_size")) {
             setBatchSize(detector_config["batch_size"].get<int>());
+        }
+        if (detector_config.contains("device_id")) {
+            setDeviceId(detector_config["device_id"].get<int>());
         }
         if (detector_config.contains("model_path")) {
             std::string model_path = detector_config["model_path"].get<std::string>();

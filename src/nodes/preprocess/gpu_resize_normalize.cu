@@ -70,7 +70,9 @@ GPUResizeNormalizeNode::~GPUResizeNormalizeNode() {
         cudaFree(output_gpu_ptr_);
     }
     if (stream_) {
-        cudaStreamDestroy(stream_);
+        if (owns_stream_) cudaStreamDestroy(stream_);
+        stream_ = nullptr;
+        owns_stream_ = false;
     }
     cudaEventDestroy(start_event_);
     cudaEventDestroy(stop_event_);
@@ -82,6 +84,7 @@ bool GPUResizeNormalizeNode::onStartup() {
     // 创建 CUDA 流（如果未设置）
     if (!stream_) {
         CUDA_CHECK_BOOL(cudaStreamCreate(&stream_));
+        owns_stream_ = true;
     }
 
     LOG_INFO_FMT("[GPUResizeNormalize] Node started");
@@ -266,10 +269,11 @@ void GPUResizeNormalizeNode::setAsyncProcessing(bool async) {
 }
 
 void GPUResizeNormalizeNode::setCudaStream(void* stream) {
-    if (stream_) {
+    if (stream_ && owns_stream_) {
         cudaStreamDestroy(stream_);
     }
     stream_ = static_cast<cudaStream_t>(stream);
+    owns_stream_ = false;
     LOG_INFO_FMT("[GPUResizeNormalize] Set external CUDA stream");
 }
 

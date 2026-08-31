@@ -28,6 +28,7 @@ public:
     bool loadModel(const std::string& model_path) override;
     void setPrecision(const std::string& precision) override;
     void setBatchSize(int batch_size) override;
+    void setDeviceId(int device_id) override { device_id_ = device_id; }
     void setInputSize(int width, int height) override { input_width_ = width; input_height_ = height; }
     std::pair<int, int> getInputSize() const override;
     void setClassNames(const std::vector<std::string>& names) override { class_names_ = names; }
@@ -144,6 +145,7 @@ private:
     int input_width_ = 640;
     int input_height_ = 640;
     int batch_size_ = 1;
+    int device_id_ = 0;
     std::string precision_ = "fp16";
     DetectorType detector_type_ = DetectorType::DETECTION;
 

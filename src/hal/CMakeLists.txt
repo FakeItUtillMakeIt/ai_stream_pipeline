@@ -7,6 +7,7 @@ set(HAL_SOURCES
     image_accelerator_factory.cpp
     video_codec_factory.cpp
     action_recognition_factory.cpp
+    backend_diagnostics.cpp
 )
 
 # CPU fallback 始终编译
@@ -65,6 +66,7 @@ if(WITH_ASCEND)
 endif()
 
 add_library(ai_stream_hal SHARED ${HAL_SOURCES})
+set_target_properties(ai_stream_hal PROPERTIES EXPORT_NAME hal)
 
 set_target_properties(ai_stream_hal PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -83,9 +85,8 @@ target_link_libraries(ai_stream_hal
     PRIVATE
         opencv_core
         opencv_imgproc
-        avcodec
-        avutil
-        swscale
+        opencv_dnn
+        FFmpeg::FFmpeg
 )
 
 # 条件链接推理后端

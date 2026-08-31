@@ -33,6 +33,7 @@ struct ActionRecognitionConfig {
     int batch_size = 1;
     std::string precision = "fp16";
     std::vector<std::string> action_labels;
+    int device_id = 0;
 };
 
 /**

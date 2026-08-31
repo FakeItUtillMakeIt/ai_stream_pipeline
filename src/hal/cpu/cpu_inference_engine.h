@@ -3,6 +3,7 @@
 #pragma once
 
 #include "ai_stream/hal/i_inference_engine.h"
+#include <opencv2/dnn.hpp>
 
 namespace ai_stream {
 namespace hal {
@@ -23,8 +24,7 @@ public:
 private:
     InferenceConfig config_;
     bool loaded_ = false;
-    // OpenCV DNN 网络的占位——实际实现需要 cv::dnn::Net
-    // 这里作为编译通过的最小实现
+    cv::dnn::Net net_;
 };
 
 } // namespace hal
