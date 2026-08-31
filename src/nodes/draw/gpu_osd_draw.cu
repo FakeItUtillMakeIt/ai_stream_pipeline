@@ -240,7 +240,23 @@ void GpuOSDDrawNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
         cudaFree(d_clone);
     } else {
         // CPU 路径：深拷贝避免修改原始数据
-        draw_img = frame->mat->clone();
+        // preprocess 输出可能是 CV_32FC3（供推理使用），不能直接交给
+        // OSD/addPanel。优先使用保留的原始 BGR 帧作为绘制底图。
+        const cv::Mat* cpu_bgr = frame->mat.get();
+        if ((!cpu_bgr || cpu_bgr->empty() || cpu_bgr->type() != CV_8UC3) &&
+            frame->source_mat && !frame->source_mat->empty() &&
+            frame->source_mat->type() == CV_8UC3) {
+            cpu_bgr = frame->source_mat.get();
+        }
+        if (!cpu_bgr || cpu_bgr->empty() || cpu_bgr->type() != CV_8UC3) {
+            LOG_WARN_FMT("[GpuOSDDraw] No valid CV_8UC3 CPU BGR frame");
+            broadcast(packet);
+            return;
+        }
+        draw_img = cpu_bgr->clone();
+        width = draw_img.cols;
+        height = draw_img.rows;
+        pitch = static_cast<int>(draw_img.step);
 
         // 使用 OpenCV 绘制边界框
         for (const auto& det : infer_result->detections) {

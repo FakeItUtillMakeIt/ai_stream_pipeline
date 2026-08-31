@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <cmath>
 
-// 声明 CUDA kernel（定义在 cuda_resize_normalize.cu 和 gpu_osd_draw.cu 中）
+// 声明 CUDA kernel（定义在 cuda_kernels_wrapper.cu 和 gpu_osd_draw.cu 中）
 extern void launchResizeNormalizeKernel(
     const unsigned char* src,
     int src_w, int src_h, size_t src_pitch,

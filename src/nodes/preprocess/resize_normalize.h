@@ -3,6 +3,8 @@
 
 #include "ai_stream/nodes/i_preprocess_node.h"
 #include "ai_stream/core/queued_node.h"
+#include "ai_stream/hal/i_image_accelerator.h"
+#include "ai_stream/hal/image_accelerator_factory.h"
 #include <opencv2/core/mat.hpp>
 
 namespace ai_stream {
@@ -15,6 +17,8 @@ public:
 
     // QueuedNode 接口
     void processPacket(std::shared_ptr<core::BasePacket> packet) override;
+    bool onStartup() override;
+    void onShutdown() override;
 
     // 配置方法（可通过 JSON params 设置）
     void setTargetSize(int width, int height);
@@ -24,8 +28,43 @@ public:
     void setInterpolationMethod(const std::string& method);
     void setKeepAspectRatio(bool keep_aspect_ratio);
     void setOutputDataType(const std::string& dtype);
+    void setImageAcceleratorBackend(hal::ImageAcceleratorBackend backend);
 
 private:
+    bool processCpuFrame(const std::shared_ptr<core::VideoFramePacket>& frame);
+
+#ifdef WITH_CUDA
+    bool processGpuFrame(const std::shared_ptr<core::VideoFramePacket>& frame);
+    bool ensureGpuBuffers(int src_w, int src_h, int dst_w, int dst_h);
+#endif
+
+    hal::IImageAccelerator* getCpuAccelerator();
+#ifdef WITH_CUDA
+    hal::IImageAccelerator* getGpuAccelerator();
+#endif
+
+    std::shared_ptr<cv::Mat> convertNchwToMat(const float* nchw, int width, int height) const;
+
+    hal::ImageAcceleratorBackend backend_type_ = hal::ImageAcceleratorBackend::AUTO;
+    hal::ImageAcceleratorBackend cpu_backend_selected_ = hal::ImageAcceleratorBackend::AUTO;
+#ifdef WITH_CUDA
+    hal::ImageAcceleratorBackend gpu_backend_selected_ = hal::ImageAcceleratorBackend::AUTO;
+    bool gpu_backend_checked_ = false;
+#endif
+
+    hal::ImageAcceleratorPtr cpu_accelerator_;
+#ifdef WITH_CUDA
+    hal::ImageAcceleratorPtr gpu_accelerator_;
+    void* input_gpu_ptr_ = nullptr;
+    void* output_gpu_ptr_ = nullptr;
+    size_t input_buffer_size_ = 0;
+    size_t output_buffer_size_ = 0;
+    void* cuda_stream_ = nullptr;
+    bool owns_cuda_stream_ = false;
+#endif
+
+    std::vector<float> host_nchw_buffer_;
+
     int target_width_ = 640;
     int target_height_ = 640;
     std::vector<float> mean_{0.0f, 0.0f, 0.0f};

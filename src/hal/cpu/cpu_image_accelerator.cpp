@@ -1,6 +1,7 @@
 // src/hal/cpu/cpu_image_accelerator.cpp
 // CPU 图像加速实现——基于 OpenCV，无 GPU 依赖
 #include "cpu_image_accelerator.h"
+#include "ai_stream/hal/image_accelerator_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 #include <opencv2/imgproc.hpp>
 #include <algorithm>
@@ -19,7 +20,9 @@ bool CpuImageAccelerator::resizeNormalize(
         return false;
     }
 
-    cv::Mat src_mat(params.src_height, params.src_width, CV_8UC3, const_cast<uint8_t*>(src));
+    cv::Mat src_mat(params.src_height, params.src_width, CV_8UC3,
+                    const_cast<uint8_t*>(src),
+                    params.src_pitch > 0 ? params.src_pitch : cv::Mat::AUTO_STEP);
 
     int dst_w = params.dst_width;
     int dst_h = params.dst_height;
@@ -56,14 +59,9 @@ bool CpuImageAccelerator::resizeNormalize(
         float_mat.copyTo(dst_mat);
     }
 
-    // 转换到 NCHW 布局
-    std::vector<cv::Mat> channels(3);
-    for (int c = 0; c < 3; ++c) {
-        channels[c] = cv::Mat(dst_h, dst_w, CV_32FC1, dst + c * plane_size);
-    }
-    cv::split(dst_mat, channels);
-
-    // 应用均值和标准差
+    // BGR HWC -> RGB NCHW，并应用均值和标准差
+    std::vector<cv::Mat> bgr_channels;
+    cv::split(dst_mat, bgr_channels);
     float m[3] = {params.mean.size() > 0 ? params.mean[0] : 0.0f,
                   params.mean.size() > 1 ? params.mean[1] : 0.0f,
                   params.mean.size() > 2 ? params.mean[2] : 0.0f};
@@ -72,8 +70,11 @@ bool CpuImageAccelerator::resizeNormalize(
                   params.std.size() > 2 ? params.std[2] : 1.0f};
 
     for (int c = 0; c < 3; ++c) {
-        cv::Mat plane(dst_h, dst_w, CV_32FC1, dst + c * plane_size);
-        plane = (plane - m[c]) / s[c];
+        cv::Mat output_plane(dst_h, dst_w, CV_32FC1, dst + c * plane_size);
+        cv::subtract(bgr_channels[2 - c], m[c], output_plane);
+        if (s[c] != 0.0f) {
+            cv::divide(output_plane, s[c], output_plane);
+        }
     }
 
     // 输出 letterbox 参数
@@ -163,6 +164,8 @@ bool CpuImageAccelerator::nms(std::vector<BBox>& boxes, float iou_threshold) {
     boxes = std::move(result);
     return true;
 }
+
+REGISTER_IMAGE_ACCELERATOR(ImageAcceleratorBackend::CPU, CpuImageAccelerator)
 
 } // namespace hal
 } // namespace ai_stream

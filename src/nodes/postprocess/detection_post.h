@@ -3,6 +3,8 @@
 
 #include "ai_stream/nodes/i_postprocess_node.h"
 #include "ai_stream/core/queued_node.h"
+#include "ai_stream/hal/i_image_accelerator.h"
+#include "ai_stream/hal/image_accelerator_factory.h"
 
 namespace ai_stream
 {
@@ -29,13 +31,20 @@ namespace ai_stream
             void setPostProcessType(const std::string &type) override { postprocess_type_ = type; }
             std::string getPostProcessType() const override { return postprocess_type_; }
 
+            // 设置图像加速器后端类型（NMS 走 HAL）
+            void setImageAcceleratorBackend(hal::ImageAcceleratorBackend backend) { backend_type_ = backend; }
+
         private:
+            bool onStartup() override;
+
             float conf_thresh_ = 0.5f;
             float nms_thresh_ = 0.4f;
             int max_detections_ = 100;
             std::vector<std::string> class_whitelist_;
             bool track_id_enabled_ = false;
             std::string postprocess_type_ = "detection";
+            hal::ImageAcceleratorPtr accelerator_;
+            hal::ImageAcceleratorBackend backend_type_ = hal::ImageAcceleratorBackend::AUTO;
         };
 
     } // namespace nodes

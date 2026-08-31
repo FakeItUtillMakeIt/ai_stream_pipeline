@@ -33,9 +33,6 @@ if(WITH_CUDA)
 
     list(APPEND NODES_SOURCES
         decode/hw_cuda_decode.cu
-        preprocess/gpu_resize_normalize.cu
-        preprocess/cuda_resize_normalize.cu
-        postprocess/gpu_detection_post.cu
         draw/gpu_osd_draw.cu
     )
 endif()
