@@ -25,7 +25,7 @@
       },
       {
         "id": "preprocess1",
-        "type": "cuda_resize_normalize",
+        "type": "resize_normalize",
         "params": {
           
         }
@@ -99,7 +99,7 @@
       },
       {
         "id": "draw1",
-        "type": "gpu_osd_draw",
+        "type": "osd_draw",
         "params": {
           "snapshot": {
             "enabled": true,
