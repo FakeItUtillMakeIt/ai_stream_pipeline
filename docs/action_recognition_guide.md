@@ -48,7 +48,7 @@ cp <训练产物>/action_recognition.engine ./models/action_recognition/
         "params": { "url": "rtsp://localhost:8554/stream1", "skip_frames": 1 } },
       { "id": "decode1", "type": "ffmpeg_decode",
         "params": { "output_bgr": true, "hw_decoder": true, "hw_decoder_type": "h264_cuvid" } },
-      { "id": "preprocess_videomae", "type": "cuda_resize_normalize",
+      { "id": "preprocess_videomae", "type": "resize_normalize",
         "params": { "output_width": 224, "output_height": 224,
                     "keep_aspect_ratio": false,
                     "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225] } },

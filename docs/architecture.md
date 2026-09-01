@@ -114,16 +114,16 @@ worker 内自停已做 join 死锁防护。
 | RTSPSourceNode | `rtsp_source` | 自持拉流线程 |
 | FileSourceNode | `file_source` | 自持读文件线程（loop/realtime 可选） |
 | FFmpegDecodeNode | `ffmpeg_decode` | QueuedNode |
-| ResizeNormalizeNode / GPU / CUDA 版 | `resize_normalize` / `gpu_resize_normalize` / `cuda_resize_normalize` | QueuedNode |
+| ResizeNormalizeNode | `resize_normalize` | QueuedNode，通过 HAL 图像加速器选择 CPU/RGA/DVPP/NPP 路径 |
 | DetectionInferNode | `detection_infer` | 自持 BoundedQueue + 推理线程（动态 batch） |
 | PoseInferNode / CudaPoseInferNode | `pose_infer` / `cuda_pose_infer` | 自持队列 + worker（推理走 HAL `IPoseEstimationEngine`） |
 | RknnDetectionInferNode | `rknn_detection_infer` | QueuedNode（RK3588 平台） |
 | ActionRecognitionVideoMAENode | `action_recognition_videomae` | QueuedNode |
-| DetectionPostProcessNode / GPU 版 | `detection_post` / `gpu_detection_post` | QueuedNode |
+| DetectionPostProcessNode | `detection_post` | QueuedNode，NMS 通过 HAL 图像加速器执行 |
 | TrackerNode（OCSort/ByteTrack） | `tracker` | QueuedNode |
 | AlertNode | `alert` | QueuedNode（规则可并行 std::async） |
 | FusionNodeImpl | `fusion` | QueuedNode（双模式见下） |
-| OSDDrawNode / GpuOSDDrawNode | `osd_draw` / `gpu_osd_draw` | QueuedNode（中文绘制需 OpenCV freetype，缺失时英文回退 `cv::putText`） |
+| OSDDrawNode | `osd_draw` | QueuedNode（矩形框经 HAL drawBoxes 路由，GPU 数据自动走 NPP；文字/关键点/面板 CPU 绘制，中文需 OpenCV freetype，缺失时英文回退 `cv::putText`） |
 | EvidenceNode | `evidence` | 同步轻分发（内部组件各自带队列） |
 | RTMPSinkNode / MP4SaveNode | `rtmp_sink` / `mp4_save` | 自持 BoundedQueue + 编码线程（drop_oldest） |
 

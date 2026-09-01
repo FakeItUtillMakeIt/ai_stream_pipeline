@@ -32,16 +32,16 @@
 | `rtsp_source` | RTSPSourceNode | RTSP 拉流 |
 | `file_source` | FileSourceNode | 文件源（loop/realtime 可选） |
 | `ffmpeg_decode` | FFmpegDecodeNode | FFmpeg 解码 |
-| `resize_normalize` / `gpu_resize_normalize` / `cuda_resize_normalize` | 预处理 | CPU/GPU/CUDA 三版 |
+| `resize_normalize` | 预处理 | 通过 HAL 图像加速器选择 CPU/RGA/DVPP/NPP 路径 |
 | `detection_infer` | DetectionInferNode | TensorRT 目标检测（动态 batch） |
 | `rknn_detection_infer` | RknnDetectionInferNode | RK3588 目标检测 |
 | `pose_infer` / `cuda_pose_infer` | 姿态估计 | CPU/CUDA 版 |
 | `action_recognition_videomae` | ActionRecognitionVideoMAENode | VideoMAE 动作识别 |
-| `detection_post` / `gpu_detection_post` | 后处理（解码/NMS） | CPU/GPU 版 |
+| `detection_post` | 后处理（NMS） | 通过 HAL 图像加速器执行 |
 | `tracker` | TrackerNode | OCSort/ByteTrack 跟踪 |
 | `alert` | AlertNode | 告警规则容器 |
 | `fusion` | FusionNodeImpl | 多推理源融合 |
-| `osd_draw` / `gpu_osd_draw` | OSD 绘制 | 中文绘制需 OpenCV freetype |
+| `osd_draw` | OSD 绘制（CPU/GPU 自适应，框绘制走 HAL） | 中文绘制需 OpenCV freetype |
 | `evidence` | EvidenceNode | 证据链录制/上传 |
 | `rtmp_sink` / `mp4_save` | 推流/存盘 | 编码输出 |
 

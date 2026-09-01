@@ -60,16 +60,16 @@ ai_stream_pipeline/
 │   ├── nodes/
 │   │   ├── registry/              # 节点工厂（REGISTER_NODE 宏）
 │   │   ├── source/                # rtsp_source / file_source
-│   │   ├── decode/                # ffmpeg_decode / decoder_pool / hw_cuda_decode
-│   │   ├── preprocess/            # resize_normalize（CPU/GPU/CUDA 三版）
+│   │   ├── decode/                # ffmpeg_decode / decoder_pool
+│   │   ├── preprocess/            # resize_normalize（HAL 统一入口）
 │   │   ├── infer/                 # detection_infer / pose_infer / cuda_pose_infer /
 │   │   │                          # action_recognition_videomae / rknn_detection_infer /
 │   │   │                          # int8_calibrator
-│   │   ├── postprocess/           # detection_post / gpu_detection_post
+│   │   ├── postprocess/           # detection_post（HAL NMS）
 │   │   ├── track/                 # tracker_node + ocsort/bytetrack 适配器 + GPU Kalman
 │   │   ├── alert/                 # alert_node（规则容器，并行/串行）
 │   │   ├── fusion/                # fusion_node（动作+检测融合，跨源 NMS 去重）
-│   │   ├── draw/                  # osd_draw / gpu_osd_draw / draw_panel（告警面板）
+│   │   ├── draw/                  # osd_draw（HAL 路由，CPU/GPU 自适应）/ draw_panel（告警面板）
 │   │   ├── evidence/              # evidence_node / frame_buffer / video_recorder /
 │   │   │                          # video_rollover / ftp_uploader
 │   │   └── sink/                  # rtmp_sink / mp4_save / encoder_base
