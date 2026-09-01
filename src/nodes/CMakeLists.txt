@@ -30,10 +30,6 @@ endif()
 # 预处理节点：根据 CUDA 支持选择 CPU 或 GPU 版本
 if(WITH_CUDA)
     find_package(CUDAToolkit REQUIRED)
-
-    list(APPEND NODES_SOURCES
-        draw/gpu_osd_draw.cu
-    )
 endif()
 
 # 统一推理节点（HAL 抽象，自动选择后端）

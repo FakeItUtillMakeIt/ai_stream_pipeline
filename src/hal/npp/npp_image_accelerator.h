@@ -12,7 +12,7 @@ namespace hal {
  * @brief NVIDIA NPP 图像加速器
  *
  * 封装 CUDA kernel 实现的 resize+normalize 和 OSD 绘制。
- * 与 ResizeNormalizeNode 的 GPU 路径和 GpuOSDDrawNode 功能等价。
+ * 与 ResizeNormalizeNode 的 GPU 路径和 OSDDrawNode GPU 绘制功能等价。
  */
 class NppImageAccelerator : public IImageAccelerator {
 public:

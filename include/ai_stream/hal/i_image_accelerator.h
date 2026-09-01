@@ -62,6 +62,7 @@ struct DrawParams {
     int box_color_r = 0;
     int font_thickness = 1;
     bool show_confidence = true;
+    bool draw_labels = true;    // 是否绘制文本标签（GPU 后端无 glyph 光栅化，忽略）
     std::vector<int> class_filter;
 };
 

@@ -48,12 +48,22 @@ public:
     void setName(const std::string& name) { name_ = name; }
     
     // 添加下游节点 (一流多用的关键)
+    // gpu_needed 默认取下游节点自身的能力；Pipeline 建链时会传入
+    // "下游子图是否存在 GPU 消费者" 的传播结果，保证 GPU payload
+    // 能穿过中间的 CPU 节点（如 tracker/alert）到达更远处的 GPU 节点。
     void addDownstream(std::shared_ptr<Node> downstream) {
         if (downstream) {
-            downstreams_.push_back(downstream);
+            downstreams_.push_back({downstream, downstream->acceptsGpuFrame()});
         }
     }
-    
+
+    // 显式指定该分支是否需要 GPU payload（由 Pipeline 建链时传播）
+    void addDownstream(std::shared_ptr<Node> downstream, bool gpu_needed) {
+        if (downstream) {
+            downstreams_.push_back({downstream, gpu_needed});
+        }
+    }
+
     // 设置管道上下文 (用于获取全局配置等)
     void setPipeline(std::weak_ptr<Pipeline> pipeline) { pipeline_ = pipeline; }
 
@@ -69,8 +79,14 @@ protected:
     // 广播数据给所有下游节点，并自动记录当前节点的处理指标
     void broadcast(std::shared_ptr<BasePacket> packet);
 
+    // 下游弱引用 + 该分支是否需要 GPU payload
+    struct DownstreamRef {
+        std::weak_ptr<Node> node;
+        bool gpu_needed = false;
+    };
+
     std::string name_;
-    std::vector<std::weak_ptr<Node>> downstreams_;
+    std::vector<DownstreamRef> downstreams_;
     std::weak_ptr<Pipeline> pipeline_;
     std::atomic<bool> running_{false};
     uint64_t in_time_ms_ = 0;

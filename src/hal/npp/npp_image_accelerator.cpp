@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <cmath>
 
-// 声明 CUDA kernel（定义在 cuda_kernels_wrapper.cu 和 gpu_osd_draw.cu 中）
+// 声明 CUDA kernel（定义在 cuda_kernels_wrapper.cu 中）
 extern void launchResizeNormalizeKernel(
     const unsigned char* src,
     int src_w, int src_h, size_t src_pitch,
@@ -124,6 +124,14 @@ bool NppImageAccelerator::drawBoxes(
     const DrawParams& draw) {
 
     if (!draw.bgr || draw.width <= 0 || draw.height <= 0) {
+        return false;
+    }
+
+    // 设备端 kernel 只能操作设备内存。收到主机指针时直接拒绝，
+    // 避免 CUDA_ERROR_ILLEGAL_ADDRESS 毒化整个 context（sticky error，
+    // 之后所有 CUDA 调用都会失败）。
+    if (!draw.is_gpu) {
+        LOG_ERROR("[NppImageAccelerator] drawBoxes requires GPU memory (is_gpu=false)");
         return false;
     }
 

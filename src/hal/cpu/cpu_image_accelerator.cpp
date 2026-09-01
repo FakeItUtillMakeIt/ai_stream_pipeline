@@ -112,7 +112,7 @@ bool CpuImageAccelerator::drawBoxes(
         cv::Scalar color(draw.box_color_b, draw.box_color_g, draw.box_color_r);
         cv::rectangle(img, rect, color, draw.font_thickness);
 
-        if (!box.class_name.empty()) {
+        if (draw.draw_labels && !box.class_name.empty()) {
             std::string label = box.class_name;
             if (draw.show_confidence) {
                 label += " " + std::to_string(static_cast<int>(box.confidence * 100)) + "%";

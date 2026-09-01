@@ -67,8 +67,8 @@ void Node::broadcast(std::shared_ptr<BasePacket> packet) {
     packet->producer_id = name_;
     bool has_expired = false;
     for (auto& weak_down : downstreams_) {
-        if (auto down = weak_down.lock()) {
-            if (down->acceptsGpuFrame()) {
+        if (auto down = weak_down.node.lock()) {
+            if (weak_down.gpu_needed) {
                 down->pushData(packet);
             } else {
                 down->pushData(trimGpuPayload(packet));
@@ -81,7 +81,7 @@ void Node::broadcast(std::shared_ptr<BasePacket> packet) {
     if (has_expired) {
         downstreams_.erase(
             std::remove_if(downstreams_.begin(), downstreams_.end(),
-                           [](const std::weak_ptr<Node>& w) { return w.expired(); }),
+                           [](const DownstreamRef& w) { return w.node.expired(); }),
             downstreams_.end());
     }
 }

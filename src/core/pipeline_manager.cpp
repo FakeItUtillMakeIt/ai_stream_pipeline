@@ -68,7 +68,7 @@ namespace ai_stream
                     LOG_INFO_FMT("[Pipeline {}] Created node: {} (type: {})", id_, id, type);
                 }
 
-                // 2. 建立边连接（一流多用的关键）
+                // 2. 收集边（建立连接推迟到 GPU 需求传播之后）
                 std::vector<std::pair<std::string, std::string>> edge_list;
                 if (config.contains("edges") && config["edges"].is_array())
                 {
@@ -85,7 +85,6 @@ namespace ai_stream
                             return false;
                         }
 
-                        it_from->second->addDownstream(it_to->second);
                         edge_list.emplace_back(from, to);
                         LOG_INFO_FMT("[Pipeline {}] Connected: {} -> {}", id_, from, to);
                     }
@@ -95,6 +94,30 @@ namespace ai_stream
                 if (!computeTopologicalOrder(edge_list))
                 {
                     return false;
+                }
+
+                // 3.5 GPU 需求反向传播：按逆拓扑序计算每个节点的下游子图
+                // 是否包含 GPU 消费者（acceptsGpuFrame==true）。GPU payload
+                // 必须能穿过中间的 CPU 节点（tracker/alert 等）到达更远处的
+                // GPU 节点（osd_draw / pose_infer 等）；纯 CPU 子图分支则在
+                // 广播时裁剪掉 GPU 指针，避免显存随 packet 驻留。
+                std::unordered_map<std::string, bool> subtree_needs_gpu;
+                for (auto it = topo_order_.rbegin(); it != topo_order_.rend(); ++it)
+                {
+                    bool needs = nodes_[*it]->acceptsGpuFrame();
+                    for (const auto &[from, to] : edge_list)
+                    {
+                        if (from == *it && subtree_needs_gpu.count(to))
+                        {
+                            needs = needs || subtree_needs_gpu[to];
+                        }
+                    }
+                    subtree_needs_gpu[*it] = needs;
+                }
+
+                for (const auto &[from, to] : edge_list)
+                {
+                    nodes_[from]->addDownstream(nodes_[to], subtree_needs_gpu[to]);
                 }
 
                 // 4. 为每个节点设置管道弱引用（便于节点访问全局上下文）
