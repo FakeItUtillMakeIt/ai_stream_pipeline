@@ -28,8 +28,8 @@ void MP4SaveNode::setTarget(const std::string& target) {
 }
 
 void MP4SaveNode::setEncodingParams(int bitrate, const std::string& encoder) {
-    bitrate_ = bitrate;
-    encoder_name_ = encoder;
+    if (bitrate > 0) bitrate_ = bitrate;
+    if (!encoder.empty()) encoder_name_ = encoder;
 }
 
 void MP4SaveNode::setOutputSize(int width, int height) {

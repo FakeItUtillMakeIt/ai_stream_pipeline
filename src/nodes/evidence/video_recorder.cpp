@@ -12,10 +12,11 @@ VideoRecorder::~VideoRecorder() {
     stop();
 }
 
-bool VideoRecorder::initialize(const std::string& output_dir, int fps, int bitrate) {
+bool VideoRecorder::initialize(const std::string& output_dir, int fps, int bitrate, const std::string& codec) {
     output_dir_ = output_dir;
     fps_ = fps;
     bitrate_ = bitrate;
+    codec_ = codec;
 
     std::error_code ec;
     std::filesystem::create_directories(output_dir_, ec);
@@ -25,8 +26,8 @@ bool VideoRecorder::initialize(const std::string& output_dir, int fps, int bitra
         return false;
     }
 
-    LOG_INFO_FMT("[VideoRecorder] Initialized: dir={}, fps={}, bitrate={}",
-                 output_dir_, fps_, bitrate_);
+    LOG_INFO_FMT("[VideoRecorder] Initialized: dir={}, fps={}, bitrate={}, codec={}",
+                 output_dir_, fps_, bitrate_, codec_);
     return true;
 }
 
@@ -137,7 +138,7 @@ void VideoRecorder::encodingLoop() {
 
 bool VideoRecorder::initEncoder(const std::string& filepath, int width, int height) {
     encoder_ = std::make_unique<FileEncoder>();
-    return encoder_->init(filepath, "mp4", width, height, bitrate_, "libx264");
+    return encoder_->init(filepath, "mp4", width, height, bitrate_, codec_);
 }
 
 void VideoRecorder::closeEncoder() {

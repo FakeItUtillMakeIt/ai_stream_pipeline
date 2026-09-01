@@ -7,6 +7,7 @@
 
 struct AVFormatContext;
 struct AVCodecContext;
+struct AVCodec;
 struct AVStream;
 struct AVFrame;
 struct SwsContext;
@@ -42,6 +43,7 @@ protected:
 
     AVFormatContext* fmt_ctx_ = nullptr;
     AVCodecContext* codec_ctx_ = nullptr;
+    const AVCodec* video_codec_ = nullptr;  // addVideoStream 解析到的编码器，openVideoCodec 直接使用
     AVStream* video_stream_ = nullptr;
     AVFrame* av_frame_ = nullptr;
     SwsContext* sws_ctx_ = nullptr;

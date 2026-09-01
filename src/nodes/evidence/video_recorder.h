@@ -19,7 +19,7 @@ public:
     VideoRecorder();
     ~VideoRecorder();
 
-    bool initialize(const std::string& output_dir, int fps, int bitrate);
+    bool initialize(const std::string& output_dir, int fps, int bitrate, const std::string& codec);
     bool startRecording(const std::string& filename,
                        std::deque<std::shared_ptr<core::VideoFramePacket>> pre_frames);
     void enqueueFrame(std::shared_ptr<core::VideoFramePacket> frame);
@@ -35,6 +35,7 @@ private:
     std::string output_dir_;
     int fps_ = 25;
     int bitrate_ = 4000;
+    std::string codec_ = "libx264";
 
     std::atomic<bool> recording_{false};
     std::atomic<bool> stop_flag_{false};

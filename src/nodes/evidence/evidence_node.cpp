@@ -97,7 +97,7 @@ bool EvidenceNode::start() {
     running_ = true;
 
     if (video_config_.enabled) {
-        if (!video_recorder_.initialize(video_config_.output_dir, video_config_.fps, video_config_.bitrate)) {
+        if (!video_recorder_.initialize(video_config_.output_dir, video_config_.fps, video_config_.bitrate, video_config_.encoder)) {
             LOG_ERROR("[EvidenceNode] Failed to initialize video recorder");
             return false;
         }

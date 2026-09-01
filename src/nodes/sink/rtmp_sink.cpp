@@ -24,8 +24,8 @@ void RTMPSinkNode::setTarget(const std::string& target) {
 }
 
 void RTMPSinkNode::setEncodingParams(int bitrate, const std::string& encoder) {
-    bitrate_ = bitrate;
-    encoder_name_ = encoder;
+    if (bitrate > 0) bitrate_ = bitrate;
+    if (!encoder.empty()) encoder_name_ = encoder;
 }
 
 void RTMPSinkNode::setOutputSize(int width, int height) {

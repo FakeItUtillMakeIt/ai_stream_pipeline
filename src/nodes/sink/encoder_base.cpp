@@ -106,7 +106,10 @@ bool EncoderBase::addVideoStream(int width, int height, int bitrate,
         LOG_ERROR("[EncoderBase] No encoder found");
         return false;
     }
-    
+    // 保存解析结果：avcodec_open2 必须使用与 context 分配一致的编码器，
+    // 不能再按 codec_id 重新查找（H264 ID 会命中第一个注册的 libx264）
+    video_codec_ = codec;
+
     LOG_INFO_FMT("[EncoderBase] Using encoder: {}", codec->name);
     
     // 创建流
@@ -143,8 +146,15 @@ bool EncoderBase::addVideoStream(int width, int height, int bitrate,
     
     video_stream_->time_base = codec_ctx_->time_base;
     
-    // 设置 H.264 特定选项
-    if (codec_ctx_->codec_id == AV_CODEC_ID_H264) {
+    // 设置 H.264 特定选项（按编码器实现区分，选项名互不兼容）
+    if (video_codec_ && std::string(video_codec_->name).find("nvenc") != std::string::npos) {
+        // NVENC：preset p1-p7，tune 为 hq/ll/ull/lossless；延迟敏感场景用 ull
+        codec_ctx_->max_b_frames = 0;
+        av_opt_set(codec_ctx_->priv_data, "preset", "p4", 0);
+        av_opt_set(codec_ctx_->priv_data, "tune", "ull", 0);
+        av_opt_set(codec_ctx_->priv_data, "rc", "cbr", 0);
+    } else if (codec_ctx_->codec_id == AV_CODEC_ID_H264) {
+        // libx264：zerolatency 隐含关闭 B 帧
         av_opt_set(codec_ctx_->priv_data, "preset", "fast", 0);
         av_opt_set(codec_ctx_->priv_data, "tune", "zerolatency", 0);
         av_opt_set(codec_ctx_->priv_data, "crf", "23", 0);
@@ -155,13 +165,13 @@ bool EncoderBase::addVideoStream(int width, int height, int bitrate,
 }
 
 bool EncoderBase::openVideoCodec() {
-    const AVCodec* codec = avcodec_find_encoder(codec_ctx_->codec_id);
-    if (!codec) {
-        LOG_ERROR("[EncoderBase] Codec not found");
+    // 必须使用 addVideoStream 解析到的同一编码器打开 context
+    if (!video_codec_) {
+        LOG_ERROR("[EncoderBase] Codec not resolved in addVideoStream");
         return false;
     }
-    
-    int ret = avcodec_open2(codec_ctx_, codec, nullptr);
+
+    int ret = avcodec_open2(codec_ctx_, video_codec_, nullptr);
     if (ret < 0) {
         char errbuf[256] = {0};
         av_strerror(ret, errbuf, sizeof(errbuf));

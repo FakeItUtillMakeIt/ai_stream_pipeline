@@ -13,6 +13,7 @@ struct EvidenceVideoConfig {
     int post_frames = 40;
     int fps = 25;
     int bitrate = 4000;
+    std::string encoder = "libx264";
     std::string output_dir = "./evidence/videos";
 };
 
@@ -57,6 +58,7 @@ public:
             .post_frames = video_cfg.value("post_frames", 10),
             .fps = video_cfg.value("fps", 30),
             .bitrate = video_cfg.value("bitrate", 1000),
+            .encoder = video_cfg.value("encoder", "libx264"),
             .output_dir = video_cfg.value("output_dir", "./")
         });
 
