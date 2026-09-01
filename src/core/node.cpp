@@ -6,6 +6,58 @@
 namespace ai_stream {
 namespace core {
 
+namespace {
+
+static std::shared_ptr<BasePacket> trimGpuPayload(const std::shared_ptr<BasePacket>& packet);
+
+static bool videoFrameHasGpuPayload(const VideoFramePacket& frame) {
+    return frame.is_gpu || frame.d_ptr != nullptr || frame.d_bgr_ptr != nullptr;
+}
+
+static std::shared_ptr<VideoFramePacket> trimVideoFrameGpu(const std::shared_ptr<VideoFramePacket>& frame) {
+    if (!frame) return nullptr;
+    if (!videoFrameHasGpuPayload(*frame)) return frame;
+    auto trimmed = std::make_shared<VideoFramePacket>(*frame);
+    trimmed->is_gpu = false;
+    trimmed->d_ptr = nullptr;
+    trimmed->d_width = 0;
+    trimmed->d_height = 0;
+    trimmed->d_pitch = 0;
+    trimmed->d_buf_owner.reset();
+    trimmed->d_bgr_ptr = nullptr;
+    trimmed->d_bgr_pitch = 0;
+    trimmed->d_bgr_height = 0;
+    trimmed->d_bgr_width = 0;
+    trimmed->d_bgr_owner.reset();
+    return trimmed;
+}
+
+static std::shared_ptr<InferenceResultPacket> trimInferenceGpu(const std::shared_ptr<InferenceResultPacket>& packet) {
+    if (!packet) return nullptr;
+    if (!packet->source_frame || !videoFrameHasGpuPayload(*packet->source_frame)) return packet;
+    auto trimmed = std::make_shared<InferenceResultPacket>(*packet);
+    if (trimmed->source_frame) {
+        auto source_trimmed = std::dynamic_pointer_cast<VideoFramePacket>(trimmed->source_frame);
+        if (source_trimmed) {
+            trimmed->source_frame = trimVideoFrameGpu(source_trimmed);
+        }
+    }
+    return trimmed;
+}
+
+static std::shared_ptr<BasePacket> trimGpuPayload(const std::shared_ptr<BasePacket>& packet) {
+    if (!packet) return nullptr;
+    if (auto frame = std::dynamic_pointer_cast<VideoFramePacket>(packet)) {
+        return trimVideoFrameGpu(frame);
+    }
+    if (auto infer = std::dynamic_pointer_cast<InferenceResultPacket>(packet)) {
+        return trimInferenceGpu(infer);
+    }
+    return packet;
+}
+
+} // namespace
+
 void Node::broadcast(std::shared_ptr<BasePacket> packet) {
     auto it = packet->cost_time_map.find(name_);
     if (it != packet->cost_time_map.end()) {
@@ -16,7 +68,11 @@ void Node::broadcast(std::shared_ptr<BasePacket> packet) {
     bool has_expired = false;
     for (auto& weak_down : downstreams_) {
         if (auto down = weak_down.lock()) {
-            down->pushData(packet);
+            if (down->acceptsGpuFrame()) {
+                down->pushData(packet);
+            } else {
+                down->pushData(trimGpuPayload(packet));
+            }
         } else {
             has_expired = true;
         }

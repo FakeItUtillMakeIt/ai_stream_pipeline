@@ -18,6 +18,8 @@ public:
     GpuOSDDrawNode();
     ~GpuOSDDrawNode() override;
 
+    bool acceptsGpuFrame() const override { return true; }
+
     // QueuedNode 接口
     void processPacket(std::shared_ptr<core::BasePacket> packet) override;
     bool onStartup() override;

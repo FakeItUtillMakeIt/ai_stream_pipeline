@@ -80,7 +80,8 @@ void ActionRecognitionVideoMAENode::processPacket(std::shared_ptr<core::BasePack
     // 根据数据类型选择处理路径
     if (video_frame->is_gpu && video_frame->d_ptr) {
         // GPU预处理路径：直接缓冲GPU数据
-        updateGpuFrameBuffer(stream_id, video_frame->d_ptr, frame_id);
+        updateGpuFrameBuffer(stream_id, video_frame->d_ptr,
+                             video_frame->d_buf_owner, frame_id);
         
         if (shouldRunInference(stream_id)) {
             auto gpu_clip = getGpuClipFromBuffer(stream_id);
@@ -155,7 +156,7 @@ bool ActionRecognitionVideoMAENode::shouldRunInference(uint32_t stream_id) {
         state.frame_counter = 0;
         // 根据使用的缓冲区获取最后帧ID
         if (!gpu_frame_buffers_[stream_id].frames.empty()) {
-            state.last_inference_frame = gpu_frame_buffers_[stream_id].frames.back().first;
+            state.last_inference_frame = gpu_frame_buffers_[stream_id].frames.back().frame_id;
         } else if (!frame_buffers_[stream_id].frames.empty()) {
             state.last_inference_frame = frame_buffers_[stream_id].frames.back().first;
         }
@@ -165,14 +166,15 @@ bool ActionRecognitionVideoMAENode::shouldRunInference(uint32_t stream_id) {
     return false;
 }
 
-void ActionRecognitionVideoMAENode::updateGpuFrameBuffer(uint32_t stream_id, 
-                                                          void* d_ptr, 
+void ActionRecognitionVideoMAENode::updateGpuFrameBuffer(uint32_t stream_id,
+                                                          void* d_ptr,
+                                                          std::shared_ptr<void> owner,
                                                           int64_t frame_id) {
     std::lock_guard<std::mutex> lock(mutex_);
-    
+
     auto& buffer = gpu_frame_buffers_[stream_id];
-    buffer.frames.push_back({frame_id, d_ptr});
-    
+    buffer.frames.push_back({frame_id, d_ptr, std::move(owner)});
+
     // 限制缓冲区大小
     int max_buffer_size = cfg_.window_size * cfg_.frame_interval + 10;
     while (static_cast<int>(buffer.frames.size()) > max_buffer_size) {
@@ -205,17 +207,17 @@ std::vector<void*> ActionRecognitionVideoMAENode::getGpuClipFromBuffer(uint32_t 
     
     // 按间隔采样帧
     int step = cfg_.frame_interval;
-    
+
     // 从最新的帧开始，向前采样
-    for (int i = static_cast<int>(buffer.frames.size()) - 1; 
-         i >= 0 && static_cast<int>(clip.size()) < cfg_.num_frames; 
+    for (int i = static_cast<int>(buffer.frames.size()) - 1;
+         i >= 0 && static_cast<int>(clip.size()) < cfg_.num_frames;
          i -= step) {
-        clip.push_back(buffer.frames[i].second);
+        clip.push_back(buffer.frames[i].d_ptr);
     }
-    
+
     // 反转clip，使其按时间顺序排列
     std::reverse(clip.begin(), clip.end());
-    
+
     return clip;
 }
 

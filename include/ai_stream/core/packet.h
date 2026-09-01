@@ -335,6 +335,12 @@ struct VideoFramePacket : public BasePacket {
     int d_pitch = 0;
     bool is_gpu = false;
 
+    // GPU 缓冲区生命周期所有权（池化分配）：
+    // 只要持有 packet 的任一副本存在，对应设备内存就不会被池复用，
+    // 从而消除"上游单 buffer 每帧复用、下游队列深时读到新帧内容"的竞态。
+    std::shared_ptr<void> d_buf_owner;    // 持有 d_ptr 指向的设备内存
+    std::shared_ptr<void> d_bgr_owner;    // 持有 d_bgr_ptr 指向的设备内存
+
     int width = 0;
     int height = 0;
     int channels = 3;

@@ -195,7 +195,16 @@ void PoseInferNode::processFrame(std::shared_ptr<core::InferenceResultPacket> pa
         person_indices.resize(num_persons);
     }
 
-    // 3. 分配 host 输入缓冲区 [num_persons, 3, 640, 640]
+    // 3. GPU 路径：设备端 BGR 原图 + 检测框，后端内部完成 crop/letterbox/normalize。
+    //    免去 CPU crop 与 H2D 大缓冲传输；失败或不可用时回退 host 路径。
+    if (packet->source_frame->d_bgr_ptr) {
+        if (inferFromGpuImage(packet, person_indices, num_persons)) {
+            return;
+        }
+        LOG_WARN("[PoseInfer] GPU path unavailable/failed, falling back to host preprocess");
+    }
+
+    // 4. 分配 host 输入缓冲区 [num_persons, 3, 640, 640]
     const auto [input_w, input_h] = engine_->getInputSize();
     int hw = input_h * input_w;
     int person_stride = 3 * hw;
@@ -234,6 +243,84 @@ void PoseInferNode::processFrame(std::shared_ptr<core::InferenceResultPacket> pa
     pose_postprocess::decodeFrame(packet, person_indices, num_persons,
                                   output_host.data(), h_letterbox_params,
                                   conf_thresh_, kpt_conf_thresh_, "PoseInfer");
+}
+
+// ============================================================
+// GPU 推理路径：boxes_7 = [x1,y1,x2,y2,scale,pad_x,pad_y]（与
+// cropAndPreprocess 相同的 letterbox 公式），后端 kernel 按
+// src = box_origin + (dst - pad) / scale 采样，decodeFrame 用同参数反解。
+// ============================================================
+bool PoseInferNode::inferFromGpuImage(
+    std::shared_ptr<core::InferenceResultPacket> packet,
+    const std::vector<int>& person_indices,
+    int num_persons) {
+
+    if (!engine_ || num_persons <= 0) return false;
+
+    const auto& src = *packet->source_frame;
+    const void* d_bgr = src.d_bgr_ptr;
+    const int src_w = src.d_bgr_width;
+    const int src_h = src.d_bgr_height;
+    const size_t src_pitch = src.d_bgr_pitch > 0
+        ? static_cast<size_t>(src.d_bgr_pitch)
+        : static_cast<size_t>(src_w) * 3;
+    if (!d_bgr || src_w <= 0 || src_h <= 0) return false;
+
+    const auto [input_w, input_h] = engine_->getInputSize();
+
+    std::vector<float> boxes_7(static_cast<size_t>(num_persons) * 7);
+    std::vector<float> letterbox_params(static_cast<size_t>(num_persons) * 3);
+
+    for (int i = 0; i < num_persons; ++i) {
+        const auto& det = packet->detections[person_indices[i]];
+
+        int ix1 = std::max(0, static_cast<int>(det.x));
+        int iy1 = std::max(0, static_cast<int>(det.y));
+        int ix2 = std::min(src_w, static_cast<int>(det.x + det.w));
+        int iy2 = std::min(src_h, static_cast<int>(det.y + det.h));
+
+        if (ix1 >= ix2 || iy1 >= iy2) {
+            LOG_WARN_FMT("[PoseInfer] GPU path: invalid crop box for person {}", person_indices[i]);
+            return false;  // 退化框整帧回退 CPU 路径，保持行为一致
+        }
+
+        float crop_w = static_cast<float>(ix2 - ix1);
+        float crop_h = static_cast<float>(iy2 - iy1);
+        float scale = std::min(static_cast<float>(input_w) / crop_w,
+                               static_cast<float>(input_h) / crop_h);
+        float pad_x = (static_cast<float>(input_w) - crop_w * scale) / 2.0f;
+        float pad_y = (static_cast<float>(input_h) - crop_h * scale) / 2.0f;
+
+        float* box = boxes_7.data() + static_cast<size_t>(i) * 7;
+        box[0] = static_cast<float>(ix1);
+        box[1] = static_cast<float>(iy1);
+        box[2] = static_cast<float>(ix2);
+        box[3] = static_cast<float>(iy2);
+        box[4] = scale;
+        box[5] = pad_x;
+        box[6] = pad_y;
+
+        letterbox_params[static_cast<size_t>(i) * 3 + 0] = scale;
+        letterbox_params[static_cast<size_t>(i) * 3 + 1] = pad_x;
+        letterbox_params[static_cast<size_t>(i) * 3 + 2] = pad_y;
+    }
+
+    auto t0 = std::chrono::high_resolution_clock::now();
+    std::vector<float> output_host;
+    if (!engine_->inferFromDeviceImage(d_bgr, src_w, src_h, src_pitch,
+                                       boxes_7, num_persons, output_host)) {
+        return false;
+    }
+    auto t1 = std::chrono::high_resolution_clock::now();
+
+    float infer_ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
+    LOG_INFO_FMT("[PoseInfer] GPU backend inference: {} persons, {:.2f}ms",
+                 num_persons, infer_ms);
+
+    pose_postprocess::decodeFrame(packet, person_indices, num_persons,
+                                  output_host.data(), letterbox_params,
+                                  conf_thresh_, kpt_conf_thresh_, "PoseInfer");
+    return true;
 }
 
 // ============================================================

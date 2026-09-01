@@ -10,6 +10,7 @@
 
 #ifdef WITH_CUDA
 #include <cuda_runtime.h>
+#include "ai_stream/hal/gpu_buffer_pool.h"
 #endif
 
 namespace ai_stream {
@@ -49,16 +50,6 @@ void ResizeNormalizeNode::onShutdown() {
     }
     cuda_stream_ = nullptr;
     owns_cuda_stream_ = false;
-    if (input_gpu_ptr_) {
-        cudaFree(input_gpu_ptr_);
-        input_gpu_ptr_ = nullptr;
-    }
-    if (output_gpu_ptr_) {
-        cudaFree(output_gpu_ptr_);
-        output_gpu_ptr_ = nullptr;
-    }
-    input_buffer_size_ = 0;
-    output_buffer_size_ = 0;
     gpu_accelerator_.reset();
     gpu_backend_selected_ = hal::ImageAcceleratorBackend::AUTO;
     gpu_backend_checked_ = false;
@@ -184,37 +175,6 @@ hal::IImageAccelerator* ResizeNormalizeNode::getGpuAccelerator() {
     gpu_accelerator_ = std::move(accel);
     LOG_INFO_FMT("[ResizeNormalize] GPU backend: {}", gpu_accelerator_->getName());
     return gpu_accelerator_.get();
-}
-
-bool ResizeNormalizeNode::ensureGpuBuffers(int src_w, int src_h, int dst_w, int dst_h) {
-    size_t needed_input = static_cast<size_t>(src_w) * static_cast<size_t>(src_h) * kChannels;
-    size_t needed_output = static_cast<size_t>(dst_w) * static_cast<size_t>(dst_h) * kChannels * sizeof(float);
-
-    if (input_buffer_size_ < needed_input) {
-        if (input_gpu_ptr_) {
-            cudaFree(input_gpu_ptr_);
-            input_gpu_ptr_ = nullptr;
-        }
-        if (cudaMalloc(&input_gpu_ptr_, needed_input) != cudaSuccess) {
-            LOG_ERROR_FMT("[ResizeNormalize] cudaMalloc input failed: {}", needed_input);
-            return false;
-        }
-        input_buffer_size_ = needed_input;
-    }
-
-    if (output_buffer_size_ < needed_output) {
-        if (output_gpu_ptr_) {
-            cudaFree(output_gpu_ptr_);
-            output_gpu_ptr_ = nullptr;
-        }
-        if (cudaMalloc(&output_gpu_ptr_, needed_output) != cudaSuccess) {
-            LOG_ERROR_FMT("[ResizeNormalize] cudaMalloc output failed: {}", needed_output);
-            return false;
-        }
-        output_buffer_size_ = needed_output;
-    }
-
-    return true;
 }
 #endif
 
@@ -398,6 +358,12 @@ bool ResizeNormalizeNode::processGpuFrame(const std::shared_ptr<core::VideoFrame
     const uint8_t* src_ptr = nullptr;
     size_t src_pitch = 0;
 
+    // CPU 解码帧先上传到池化的设备 BGR 缓冲区；该缓冲区所有权随 packet
+    // 传递（d_bgr_owner），供下游 GPU 节点（如 pose 的 inferFromDeviceImage、
+    // GPU OSD）零拷贝使用。is_gpu 输入（如 NVDEC）暂无设备端 BGR，保持透传。
+    hal::GpuBufferPool::Buffer bgr_buf;
+    bool bgr_uploaded = false;
+
     if (frame->is_gpu && frame->d_ptr) {
         src_width = frame->d_width;
         src_height = frame->d_height;
@@ -407,19 +373,21 @@ bool ResizeNormalizeNode::processGpuFrame(const std::shared_ptr<core::VideoFrame
         src_width = frame->mat->cols;
         src_height = frame->mat->rows;
         src_pitch = static_cast<size_t>(frame->mat->step);
-        if (!ensureGpuBuffers(src_width, src_height, dst_width, dst_height)) {
+
+        size_t bgr_bytes = static_cast<size_t>(src_width) * static_cast<size_t>(src_height) * kChannels;
+        bgr_buf = hal::GpuBufferPool::instance().acquire(bgr_bytes);
+        if (!bgr_buf) {
             return false;
         }
 
-        size_t copy_bytes = static_cast<size_t>(src_height) * src_pitch;
         if (frame->mat->isContinuous()) {
-            if (cudaMemcpyAsync(input_gpu_ptr_, frame->mat->data, copy_bytes,
+            if (cudaMemcpyAsync(bgr_buf.get(), frame->mat->data, bgr_bytes,
                                 cudaMemcpyHostToDevice, stream) != cudaSuccess) {
                 LOG_ERROR("[ResizeNormalize] cudaMemcpy host->device failed");
                 return false;
             }
         } else {
-            if (cudaMemcpy2DAsync(input_gpu_ptr_, src_width * kChannels,
+            if (cudaMemcpy2DAsync(bgr_buf.get(), src_width * kChannels,
                                   frame->mat->data, frame->mat->step,
                                   src_width * kChannels, src_height,
                                   cudaMemcpyHostToDevice, stream) != cudaSuccess) {
@@ -427,14 +395,18 @@ bool ResizeNormalizeNode::processGpuFrame(const std::shared_ptr<core::VideoFrame
                 return false;
             }
         }
-        src_ptr = static_cast<const uint8_t*>(input_gpu_ptr_);
+        src_ptr = static_cast<const uint8_t*>(bgr_buf.get());
         src_pitch = static_cast<size_t>(src_width) * kChannels;
+        bgr_uploaded = true;
     } else {
         LOG_WARN("[ResizeNormalize] GPU path received empty frame");
         return false;
     }
 
-    if (!ensureGpuBuffers(src_width, src_height, dst_width, dst_height)) {
+    // 输出 NCHW 缓冲区同样按帧从池中分配，随 packet 持有。
+    size_t out_bytes = static_cast<size_t>(dst_width) * static_cast<size_t>(dst_height) * kChannels * sizeof(float);
+    auto out_buf = hal::GpuBufferPool::instance().acquire(out_bytes);
+    if (!out_buf) {
         return false;
     }
 
@@ -453,7 +425,7 @@ bool ResizeNormalizeNode::processGpuFrame(const std::shared_ptr<core::VideoFrame
     bool ok = accelerator->resizeNormalize(
         src_ptr,
         params,
-        static_cast<float*>(output_gpu_ptr_),
+        static_cast<float*>(out_buf.get()),
         keep_aspect_ratio_ ? &letter : nullptr);
 
     if (!ok) {
@@ -475,16 +447,28 @@ bool ResizeNormalizeNode::processGpuFrame(const std::shared_ptr<core::VideoFrame
     new_packet->channels = 3;
     new_packet->frame_id = frame->frame_id;
     new_packet->is_gpu = true;
-    new_packet->d_ptr = output_gpu_ptr_; // NCHW float buffer
+    new_packet->d_ptr = out_buf.get(); // NCHW float buffer
+    new_packet->d_buf_owner = out_buf;
     new_packet->d_pitch = dst_width * static_cast<int>(sizeof(float));
     new_packet->d_width = dst_width;
     new_packet->d_height = dst_height;
     new_packet->source_mat = frame->source_mat ? frame->source_mat : frame->mat;
     new_packet->mat = frame->mat;
-    new_packet->d_bgr_ptr = frame->d_bgr_ptr;
-    new_packet->d_bgr_pitch = frame->d_bgr_pitch;
-    new_packet->d_bgr_width = frame->d_bgr_width;
-    new_packet->d_bgr_height = frame->d_bgr_height;
+    if (bgr_uploaded) {
+        // 暴露设备端全分辨率 BGR（与 source_mat 同尺寸、BGR24 packed），
+        // 下游 GPU 后处理节点可直接使用，无需再次 H2D。
+        new_packet->d_bgr_ptr = bgr_buf.get();
+        new_packet->d_bgr_pitch = src_width * kChannels;
+        new_packet->d_bgr_width = src_width;
+        new_packet->d_bgr_height = src_height;
+        new_packet->d_bgr_owner = bgr_buf;
+    } else {
+        new_packet->d_bgr_ptr = frame->d_bgr_ptr;
+        new_packet->d_bgr_pitch = frame->d_bgr_pitch;
+        new_packet->d_bgr_width = frame->d_bgr_width;
+        new_packet->d_bgr_height = frame->d_bgr_height;
+        new_packet->d_bgr_owner = frame->d_bgr_owner;
+    }
 
     if (keep_aspect_ratio_) {
         new_packet->letterbox_used = true;

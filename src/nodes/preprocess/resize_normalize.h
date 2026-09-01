@@ -15,6 +15,8 @@ public:
     ResizeNormalizeNode();
     ~ResizeNormalizeNode();
 
+    bool acceptsGpuFrame() const override { return true; }
+
     // QueuedNode 接口
     void processPacket(std::shared_ptr<core::BasePacket> packet) override;
     bool onStartup() override;
@@ -35,7 +37,6 @@ private:
 
 #ifdef WITH_CUDA
     bool processGpuFrame(const std::shared_ptr<core::VideoFramePacket>& frame);
-    bool ensureGpuBuffers(int src_w, int src_h, int dst_w, int dst_h);
 #endif
 
     hal::IImageAccelerator* getCpuAccelerator();
@@ -55,10 +56,9 @@ private:
     hal::ImageAcceleratorPtr cpu_accelerator_;
 #ifdef WITH_CUDA
     hal::ImageAcceleratorPtr gpu_accelerator_;
-    void* input_gpu_ptr_ = nullptr;
-    void* output_gpu_ptr_ = nullptr;
-    size_t input_buffer_size_ = 0;
-    size_t output_buffer_size_ = 0;
+    // GPU 输入（BGR 上传）与输出（NCHW）缓冲区由 GpuBufferPool 按帧分配，
+    // 所有权随 packet 传递（d_buf_owner / d_bgr_owner），下游队列再深也不会
+    // 被后续帧覆盖。
     void* cuda_stream_ = nullptr;
     bool owns_cuda_stream_ = false;
 #endif

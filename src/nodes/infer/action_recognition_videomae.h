@@ -39,6 +39,8 @@ public:
     explicit ActionRecognitionVideoMAENode(const Config& cfg);
     ~ActionRecognitionVideoMAENode();
 
+    bool acceptsGpuFrame() const override { return true; }
+
     // QueuedNode接口实现
     void processPacket(std::shared_ptr<core::BasePacket> packet) override;
     bool onStartup() override;
@@ -61,7 +63,8 @@ private:
     void inferFromCpu(const std::vector<cv::Mat>& clip, core::InferenceResultPacket::ActionResult& result);
 
     // 帧缓冲和滑动窗口
-    void updateGpuFrameBuffer(uint32_t stream_id, void* d_ptr, int64_t frame_id);
+    void updateGpuFrameBuffer(uint32_t stream_id, void* d_ptr,
+                              std::shared_ptr<void> owner, int64_t frame_id);
     void updateFrameBuffer(uint32_t stream_id, const cv::Mat& frame, int64_t frame_id);
     bool shouldRunInference(uint32_t stream_id);
     std::vector<void*> getGpuClipFromBuffer(uint32_t stream_id);
@@ -85,8 +88,15 @@ private:
     std::unordered_map<uint32_t, FrameBuffer> frame_buffers_;
     
     // GPU帧缓冲区（用于接收GPU预处理节点的输出）
+    // owner 保持设备缓冲区所有权（池化分配），防止指针在 clip 推理前
+    // 被归还到缓冲池后被其他帧复用。
+    struct GpuFrameEntry {
+        int64_t frame_id;
+        void* d_ptr;
+        std::shared_ptr<void> owner;
+    };
     struct GpuFrameBuffer {
-        std::deque<std::pair<int64_t, void*>> frames;  // (frame_id, d_ptr)
+        std::deque<GpuFrameEntry> frames;
     };
     std::unordered_map<uint32_t, GpuFrameBuffer> gpu_frame_buffers_;
     

@@ -35,6 +35,8 @@ public:
     DetectionInferNode();
     ~DetectionInferNode() override;
 
+    bool acceptsGpuFrame() const override { return true; }
+
     bool loadModel(const std::string& model_path) override;
     void setPrecision(const std::string& precision) override;
     void setBatchSize(int batch_size) override;

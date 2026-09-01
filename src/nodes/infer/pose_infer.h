@@ -38,11 +38,22 @@ public:
     bool isRunning() const override{return running_.load();}
     void pushData(std::shared_ptr<core::BasePacket> packet) override;
 
+    // 消费 InferenceResultPacket 时需要保住 source_frame 的设备端 BGR
+    // （d_bgr_ptr），供 inferFromDeviceImage GPU 路径使用。
+    bool acceptsGpuFrame() const override { return true; }
+
 private:
     void inferLoop();
 
     // 处理单帧 InferenceResultPacket
     void processFrame(std::shared_ptr<core::InferenceResultPacket> packet);
+
+    // GPU 路径：设备端 BGR 原图 + 检测框（boxes_7），后端内部完成
+    // GPU crop/letterbox/normalize 与推理，随后解码关键点。
+    // 不可用（无 d_bgr_ptr / 后端不支持）时返回 false，调用方回退 CPU 路径。
+    bool inferFromGpuImage(std::shared_ptr<core::InferenceResultPacket> packet,
+                           const std::vector<int>& person_indices,
+                           int num_persons);
 
     // 从 source_mat 按检测框 crop + letterbox resize + normalize（host 输入路径）
     bool cropAndPreprocess(
