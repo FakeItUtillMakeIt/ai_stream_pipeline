@@ -59,8 +59,15 @@ cmake -B build -DWITH_CUDA=ON -DWITH_TENSORRT=ON \
 # x86 纯 CPU
 cmake -B build
 
-# RK3588
+# RK3588（本机编译，板上有完整工具链与依赖时）
 cmake -B build -DWITH_RKNN=ON
+
+# RK3588（交叉编译，推荐）——需准备目标 sysroot 与交叉工具链
+# 详见下文「RK3588 交叉编译」
+cmake -B build-rk3588 \
+      -DCMAKE_TOOLCHAIN_FILE=cmake/aarch64-rk3588.toolchain.cmake \
+      -DRK3588_SYSROOT=/path/to/sdk/sysroot \
+      -DWITH_RKNN=ON -DWITH_CUDA=OFF -DWITH_TENSORRT=OFF
 
 # 昇腾
 cmake -B build -DWITH_ASCEND=ON
@@ -95,7 +102,34 @@ ctest --test-dir build --output-on-failure
 | 基准工具 | `build/tools/benchmark/bench` |
 | 测试 | `build/tests/unit/test_core`、`test_nodes` |
 
-## 6. 注意事项
+## 6. RK3588 交叉编译
+
+工程内置 `cmake/aarch64-rk3588.toolchain.cmake`，配合 Rockchip SDK 使用：
+
+1. **准备 sysroot**：从 Rockchip SDK（buildroot/debian）导出目标架构 sysroot，
+   需包含 OpenCV、FFmpeg、Eigen3 等依赖的 aarch64 版本
+2. **准备工具链**：系统交叉编译器（`apt install gcc-aarch64-linux-gnu`）或
+   SDK 自带工具链（`prebuilts/gcc/.../bin/aarch64-buildroot-linux-gnu-`）
+3. **RKNN/RGA/MPP 无需另装**：aarch64 库已内置在 `3rd_party/rk_platform/`，
+   或通过 `-DRKNN_ROOT=<sdk>/rknn` 指定 SDK 路径
+
+```bash
+cmake -B build-rk3588 \
+      -DCMAKE_TOOLCHAIN_FILE=cmake/aarch64-rk3588.toolchain.cmake \
+      -DRK3588_SYSROOT=/path/to/sdk/sysroot \
+      -DRK_TOOLCHAIN_PREFIX=/usr/bin/aarch64-linux-gnu- \
+      -DWITH_RKNN=ON -DWITH_CUDA=OFF -DWITH_TENSORRT=OFF \
+      -DCMAKE_BUILD_TYPE=Release
+cmake --build build-rk3588 -j$(nproc)
+```
+
+已知限制：
+- 检测/姿态推理目前仅有 TensorRT 后端实现（`REGISTER_DETECTION_INFERENCE_BACKEND`
+  未注册 RKNN 版本），RK3588 上 `detection_infer` / `pose_infer` 以 mock 模式
+  运行；接入真实 RKNN 检测需实现 `IDetectionInferenceEngine` 后端
+- 视频输出编码走 FFmpeg `libx264`（软编码）；MPP 硬编码器尚未接入 sink
+
+## 7. 注意事项
 
 - 不要全局添加 `-Wl,--allow-multiple-definition`：会掩盖真实的符号重复问题，
   链接报错时应定位根因
