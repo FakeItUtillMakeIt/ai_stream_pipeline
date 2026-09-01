@@ -11,13 +11,46 @@
 #ifdef WITH_CUDA
 #include <cuda_runtime_api.h>
 #else
+// 无 CUDA 平台（纯 CPU / RKNN / Ascend-only）的回退类型与链接桩声明。
+// 实现见 cuda_stub.cpp（no-op）：引擎工厂在此类平台返回空，节点走 mock
+// 路径，运行时不会真正触达这些符号；桩仅用于满足链接。
 typedef void* cudaStream_t;
 typedef void* cudaGraph_t;
 typedef void* cudaGraphExec_t;
+typedef int cudaError_t;
+typedef int cudaMemcpyKind;
 #ifndef cudaSuccess
 #define cudaSuccess 0
 #endif
-typedef int cudaError_t;
+#define cudaMemcpyHostToDevice 1
+#define cudaMemcpyDeviceToHost 2
+#define cudaMemcpyDeviceToDevice 3
+#define cudaStreamNonBlocking 0x01
+#define cudaStreamCaptureModeGlobal 0
+
+cudaError_t cudaMalloc(void** ptr, size_t size);
+cudaError_t cudaFree(void* ptr);
+cudaError_t cudaMallocHostRaw(void** ptr, size_t size);
+cudaError_t cudaFreeHost(void* ptr);
+cudaError_t cudaMemcpyAsync(void* dst, const void* src, size_t count,
+                            cudaMemcpyKind kind, cudaStream_t stream);
+cudaError_t cudaStreamCreateWithFlags(cudaStream_t* stream, unsigned int flags);
+cudaError_t cudaStreamDestroy(cudaStream_t stream);
+cudaError_t cudaStreamSynchronize(cudaStream_t stream);
+cudaError_t cudaStreamBeginCapture(cudaStream_t stream, int mode);
+cudaError_t cudaStreamEndCapture(cudaStream_t stream, cudaGraph_t* graph);
+cudaError_t cudaGraphInstantiate(cudaGraphExec_t* exec, cudaGraph_t graph,
+                                 void* error_node, void* log_buffer, size_t log_size);
+cudaError_t cudaGraphLaunch(cudaGraphExec_t exec, cudaStream_t stream);
+cudaError_t cudaGraphExecDestroy(cudaGraphExec_t exec);
+cudaError_t cudaGraphDestroy(cudaGraph_t graph);
+const char* cudaGetErrorString(cudaError_t error);
+
+// 兼容真实 CUDA 头的模板重载：调用方直接传 &typed_ptr
+template <class T>
+cudaError_t cudaMallocHost(T** ptr, size_t size) {
+    return cudaMallocHostRaw(reinterpret_cast<void**>(ptr), size);
+}
 #endif
 
 #include <thread>

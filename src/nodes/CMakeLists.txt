@@ -33,9 +33,13 @@ if(WITH_CUDA)
 endif()
 
 # 统一推理节点（HAL 抽象，自动选择后端）
-# detection 需要 GPU/CUDA（TRT）或 RKNN/Ascend；pose/videomae 可 CPU
-if(WITH_CUDA OR WITH_TENSORRT OR WITH_RKNN OR WITH_ASCEND)
-    list(APPEND NODES_SOURCES infer/detection_infer.cpp)
+# 所有平台都编译：无 CUDA/RKNN/Ascend 后端时节点以 mock 模式运行
+# （生成假检测框），保证流水线可在无推理硬件的环境构建与验证。
+list(APPEND NODES_SOURCES infer/detection_infer.cpp)
+
+# 无 CUDA 平台：detection_infer 中的 CUDA Runtime 调用由链接桩满足
+if(NOT WITH_CUDA)
+    list(APPEND NODES_SOURCES infer/cuda_stub.cpp)
 endif()
 list(APPEND NODES_SOURCES
     infer/pose_infer.cpp
