@@ -14,7 +14,6 @@ set(NODES_SOURCES
     sink/rtmp_sink.cpp
     sink/mp4_save.cpp
     sink/encoder_base.cpp
-    sink/mpp_encoder.cpp
     preprocess/resize_normalize.cpp
     postprocess/detection_post.cpp
     fusion/fusion_node.cpp

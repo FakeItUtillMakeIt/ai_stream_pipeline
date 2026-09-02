@@ -15,6 +15,12 @@ void VideoEncoderFactory::registerBackend(const std::string& name, Creator creat
 }
 
 VideoEncoderPtr VideoEncoderFactory::create(const std::string& name) {
+    // AUTO：硬件可用则优先（MPP），否则 FFmpeg 软编
+    if (name == "auto") {
+        auto mpp = create("mpp_h264");
+        if (mpp && mpp->isAvailable()) return mpp;
+        return create("ffmpeg_h264");
+    }
     auto it = creators_.find(name);
     if (it == creators_.end()) return nullptr;
     return it->second();

@@ -26,7 +26,9 @@ struct VideoEncoderConfig {
     int bitrate_kbps = 4000;
     int fps = 25;
     int gop = 25;
-    std::string precision = "high";  // 预留
+    // 硬件后端忽略；FFmpeg 后端用作 avcodec_find_encoder_by_name 的名字
+    // （libx264 / h264_nvenc / hevc_nvenc ...）
+    std::string codec_name = "libx264";
     int device_id = 0;
 };
 
@@ -82,7 +84,13 @@ public:
     static VideoEncoderFactory& instance();
 
     void registerBackend(const std::string& name, Creator creator);
-    /** 按名称创建；找不到返回 nullptr（节点回退软件编码） */
+    /**
+     * 按名称创建后端：
+     * - "auto"      : mpp_h264 可用则优先，否则 ffmpeg_h264
+     * - "mpp_h264"  : Rockchip MPP 硬编
+     * - "ffmpeg_h264": FFmpeg 软编（codec_name 决定 libx264/nvenc 等）
+     * 找不到/不可用返回 nullptr（节点回退默认路径）
+     */
     VideoEncoderPtr create(const std::string& name);
     std::vector<std::string> getAvailableBackends() const;
 

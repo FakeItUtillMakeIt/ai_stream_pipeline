@@ -2,6 +2,7 @@
 // Rockchip MPP 硬件 H.264 编码器实现——见头文件说明
 #include "mpp_video_encoder.h"
 #include "ai_stream/hal/i_video_encoder.h"
+#include "h264_extradata.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 
 #include <dlfcn.h>
@@ -120,37 +121,6 @@ bool load_mpp_lib() {
          p_pkt_deinit;
     if (!ok) LOG_ERROR("[MppVideoEncoder] Failed to load MPP API symbols");
     return ok;
-}
-
-// AnnexB（00 00 00 01 + NAL）→ AVCC（4 字节长度前缀），用于容器序列头
-void annexb_to_avcc(const uint8_t* data, size_t size, std::vector<uint8_t>& out) {
-    out.clear();
-    // 收集 NAL：(payload 起点，起始码位置)
-    std::vector<std::pair<size_t, size_t>> nals;
-    size_t i = 0;
-    while (i + 3 <= size) {
-        if (i + 4 <= size && data[i] == 0 && data[i + 1] == 0 &&
-            data[i + 2] == 0 && data[i + 3] == 1) {
-            nals.emplace_back(i + 4, i);
-            i += 4;
-        } else if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) {
-            nals.emplace_back(i + 3, i);
-            i += 3;
-        } else {
-            ++i;
-        }
-    }
-    for (size_t n = 0; n < nals.size(); ++n) {
-        const size_t payload = nals[n].first;
-        const size_t end = (n + 1 < nals.size()) ? nals[n + 1].second : size;
-        if (end <= payload) continue;
-        const size_t len = end - payload;
-        out.push_back(static_cast<uint8_t>((len >> 24) & 0xFF));
-        out.push_back(static_cast<uint8_t>((len >> 16) & 0xFF));
-        out.push_back(static_cast<uint8_t>((len >> 8) & 0xFF));
-        out.push_back(static_cast<uint8_t>(len & 0xFF));
-        out.insert(out.end(), data + payload, data + end);
-    }
 }
 
 } // namespace

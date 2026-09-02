@@ -66,8 +66,8 @@ if(WITH_ASCEND)
     )
 endif()
 
-# MPP 编码器与工厂（dlopen 运行时加载，所有平台编译）
-list(APPEND HAL_SOURCES video_encoder_factory.cpp mpp/mpp_video_encoder.cpp)
+# 编码后端与工厂（dlopen 运行时加载，所有平台编译）
+list(APPEND HAL_SOURCES video_encoder_factory.cpp mpp/mpp_video_encoder.cpp ffmpeg/ffmpeg_video_encoder.cpp)
 
 add_library(ai_stream_hal SHARED ${HAL_SOURCES})
 set_target_properties(ai_stream_hal PROPERTIES EXPORT_NAME hal)
