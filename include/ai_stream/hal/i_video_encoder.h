@@ -65,7 +65,7 @@ public:
 
     virtual void close() = 0;
 
-    /** 序列头（AVCC 格式 extradata，供容器封装；返回借用指针） */
+    /** 序列头（AnnexB 格式 SPS/PPS；AVCDecoderConfigurationRecord 由 muxer 生成） */
     virtual const uint8_t* getExtradata(size_t& size) const = 0;
 
     virtual std::string getName() const = 0;

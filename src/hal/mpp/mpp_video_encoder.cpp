@@ -254,12 +254,10 @@ bool MppVideoEncoder::fetchHeaderSync() {
         p_pkt_deinit(&hdr);
         return false;
     }
-    annexb_to_avcc(data, size, extradata_);
+    // 契约：extradata 为 AnnexB（SPS/PPS）；AVCDecoderConfigurationRecord
+    // 由 muxer（ff_isom_write_avcc）生成，与 ffmpeg 软编路径行为一致
+    extradata_.assign(data, data + size);
     p_pkt_deinit(&hdr);
-    if (extradata_.empty()) {
-        LOG_ERROR("[MppVideoEncoder] annexb_to_avcc produced empty extradata");
-        return false;
-    }
     return true;
 }
 

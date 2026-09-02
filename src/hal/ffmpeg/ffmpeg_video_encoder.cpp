@@ -69,11 +69,9 @@ bool FFmpegVideoEncoder::open(const VideoEncoderConfig& config) {
         return false;
     }
 
-    // extradata：libx264 GLOBAL_HEADER 输出 AnnexB，转 AVCC 保持与 MPP 后端一致
-    annexb_to_avcc(codec_ctx_->extradata,
-                   static_cast<size_t>(codec_ctx_->extradata_size), extradata_);
-    if (extradata_.empty() && codec_ctx_->extradata_size > 0) {
-        // 非 AnnexB（已是 AVCC）则直接采用
+    // 契约：extradata 为 AnnexB 原样透传；AVCDecoderConfigurationRecord
+    // 由 muxer（ff_isom_write_avcc）生成
+    if (codec_ctx_->extradata_size > 0) {
         extradata_.assign(codec_ctx_->extradata,
                           codec_ctx_->extradata + codec_ctx_->extradata_size);
     }
