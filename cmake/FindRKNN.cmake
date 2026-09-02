@@ -9,6 +9,17 @@
 # 以下变量可设置以指定路径：
 #   RKNN_ROOT          - SDK 安装根目录
 
+# 交叉编译（CMAKE_FIND_ROOT_PATH_MODE=ONLY）时 find_path/find_library 的绝对
+# 候选路径会被 reroot 而失效，因此内置库先做确定性存在性检查。
+set(_RKNN_VENDORED_INC  "${CMAKE_SOURCE_DIR}/3rd_party/rk_platform/rknn/include")
+set(_RKNN_VENDORED_LIB  "${CMAKE_SOURCE_DIR}/3rd_party/rk_platform/rknn/lib/aarch64/librknnrt.so")
+if(NOT RKNN_INCLUDE_DIR AND EXISTS "${_RKNN_VENDORED_INC}/rknn_api.h")
+    set(RKNN_INCLUDE_DIR "${_RKNN_VENDORED_INC}")
+endif()
+if(NOT RKNN_LIBRARY AND EXISTS "${_RKNN_VENDORED_LIB}")
+    set(RKNN_LIBRARY "${_RKNN_VENDORED_LIB}")
+endif()
+
 find_path(RKNN_INCLUDE_DIR
     NAMES rknn_api.h
     PATHS
@@ -36,6 +47,16 @@ find_library(RKNN_LIBRARY
 )
 
 include(FindPackageHandleStandardArgs)
+
+# find_path/find_library 在 ONLY 模式下对源码树绝对路径 reroot 失败时，
+# 会把普通变量覆盖为 NOTFOUND——这里做最终恢复，保证内置 SDK 始终可用。
+if(NOT RKNN_INCLUDE_DIR AND EXISTS "${_RKNN_VENDORED_INC}/rknn_api.h")
+    set(RKNN_INCLUDE_DIR "${_RKNN_VENDORED_INC}")
+endif()
+if(NOT RKNN_LIBRARY AND EXISTS "${_RKNN_VENDORED_LIB}")
+    set(RKNN_LIBRARY "${_RKNN_VENDORED_LIB}")
+endif()
+
 find_package_handle_standard_args(RKNN
     REQUIRED_VARS RKNN_LIBRARY RKNN_INCLUDE_DIR
     FAIL_MESSAGE "RKNN SDK not found. Set RKNN_ROOT or install RKNN SDK."

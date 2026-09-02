@@ -36,6 +36,18 @@ set(CMAKE_STRIP        "${RK_TOOLCHAIN_PREFIX}strip")
 if(RK3588_SYSROOT)
     set(CMAKE_SYSROOT "${RK3588_SYSROOT}")
     set(CMAKE_FIND_ROOT_PATH "${RK3588_SYSROOT}")
+    # Debian/Ubuntu multiarch：OpenCV 等的 CMake config 包放在 lib/<arch>/cmake 下，
+    # 交叉配置时不会进入默认搜索路径，需显式加入
+    list(APPEND CMAKE_PREFIX_PATH
+        "${RK3588_SYSROOT}/usr/lib/aarch64-linux-gnu/cmake"
+        "${RK3588_SYSROOT}/usr/lib/aarch64-linux-gnu")
+    # FFmpeg 等库的头文件在 multiarch include 目录（include/<arch>/libavcodec/...）
+    list(APPEND CMAKE_INCLUDE_PATH "${RK3588_SYSROOT}/usr/include/aarch64-linux-gnu")
+    list(APPEND CMAKE_LIBRARY_PATH "${RK3588_SYSROOT}/usr/lib/aarch64-linux-gnu")
+    # 传递依赖解析：OpenCV→armadillo→lapack/blas（Debian 将其放在子目录，
+    # 链接器需要显式 rpath-link 才能解析这些间接 NEEDED）
+    set(CMAKE_EXE_LINKER_FLAGS_INIT
+        "-Wl,-rpath-link,${RK3588_SYSROOT}/usr/lib/aarch64-linux-gnu -Wl,-rpath-link,${RK3588_SYSROOT}/usr/lib/aarch64-linux-gnu/lapack -Wl,-rpath-link,${RK3588_SYSROOT}/usr/lib/aarch64-linux-gnu/blas -Wl,-rpath-link,${RK3588_SYSROOT}/lib/aarch64-linux-gnu")
 else()
     message(WARNING
         "RK3588_SYSROOT 未设置：将只使用工具链默认搜索路径。"
@@ -46,11 +58,12 @@ endif()
 list(APPEND CMAKE_FIND_ROOT_PATH "${CMAKE_CURRENT_LIST_DIR}/../3rd_party")
 
 # 头文件/库只在 sysroot 与 3rd_party 中查找；工具（如编译期生成的可执行）
-# 用主机版本
+# 用主机版本。ONLY 模式防止主机 x86 库泄漏进 aarch64 链接
+# （如 CURL：若 sysroot 未装 libcurl4-openssl-dev，WITH_FTP 自动禁用）
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
-set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY BOTH)
-set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE BOTH)
-set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE BOTH)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
 
 # aarch64 必要编译选项
 set(CMAKE_C_FLAGS_INIT   "-fPIC")

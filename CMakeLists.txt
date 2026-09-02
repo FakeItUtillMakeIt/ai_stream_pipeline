@@ -12,6 +12,10 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
     message(FATAL_ERROR "ai_stream_pipeline currently supports Linux only; use a Linux target or add a platform port first")
 endif()
 
+# 交叉编译（CMAKE_FIND_ROOT_PATH_MODE=ONLY）时，源码树内的 find_* 候选路径
+# 需要登记为合法 root，否则会被 reroot 而失效（如 3rd_party 内置 SDK 库）
+list(APPEND CMAKE_FIND_ROOT_PATH "${CMAKE_SOURCE_DIR}")
+
 # ------------------------------------------------------------------------------
 # 1. 选项配置
 # ------------------------------------------------------------------------------
