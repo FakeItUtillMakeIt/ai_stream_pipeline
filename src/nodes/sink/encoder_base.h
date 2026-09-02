@@ -23,20 +23,25 @@ public:
     EncoderBase() = default;
     virtual ~EncoderBase();
 
-    bool init(const std::string& output_url, 
+    // 释放编码与输出资源；硬件后端需先释放自身再调基类逻辑
+    virtual void close();
+
+    bool init(const std::string& output_url,
               const std::string& format_name,
-              int width, int height, 
-              int bitrate, 
+              int width, int height,
+              int bitrate,
               const std::string& encoder_name = "libx264");
-    
-    bool encodeFrame(const uint8_t* data, int width, int height, int step, int64_t pts);
-    void flush();
-    void close();
+
+    // 编码单帧：默认 FFmpeg 软编码路径；MPP 等硬件后端覆写（public：
+    // VideoRecorder 等外部组件直接调用）
+    virtual bool encodeFrame(const uint8_t* data, int width, int height,
+                             int step, int64_t pts);
+    virtual void flush();
 
 protected:
     virtual bool openOutput(const std::string& url, const std::string& format_name) = 0;
     bool addVideoStream(int width, int height, int bitrate, const std::string& encoder_name);
-    bool openVideoCodec();
+    virtual bool openVideoCodec();
     bool writeHeader();
     bool writeFrame(const uint8_t* data, int width, int height, int step, int64_t pts);
     void writeTrailer();
@@ -60,7 +65,7 @@ protected:
  * @brief 文件编码器
  */
 class FileEncoder : public EncoderBase {
-protected:
+public:
     bool openOutput(const std::string& url, const std::string& format_name) override;
 };
 
@@ -68,7 +73,7 @@ protected:
  * @brief RTMP 编码器
  */
 class RTMPEncoder : public EncoderBase {
-protected:
+public:
     bool openOutput(const std::string& url, const std::string& format_name) override;
 };
 

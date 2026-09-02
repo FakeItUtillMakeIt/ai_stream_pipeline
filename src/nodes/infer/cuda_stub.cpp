@@ -80,15 +80,8 @@ namespace ai_stream {
 namespace nodes {
 
 // 以下成员在 detection_infer.cpp 中整体位于 WITH_CUDA 守卫内，
-// 无 CUDA 构建在此提供定义：initEngine 直接进入 mock 模式
-// （engine_ 保持为空，processBatch 生成假检测框）。
-bool DetectionInferNode::initEngine(const std::string& engine_path) {
-    (void)engine_path;
-    LOG_WARN("[DetectionInfer] No inference backend available on this "
-             "platform, running in mock mode");
-    return true;
-}
-
+// 无 CUDA 构建在此提供定义。initEngine 不再是 stub：其在
+// detection_infer.cpp 内部已支持主机引擎路径（RKNN/Ascend）。
 bool DetectionInferNode::allocatePinnedMemory() { return false; }
 void DetectionInferNode::freePinnedMemory() {}
 bool DetectionInferNode::captureCudaGraph(int batch_size) { (void)batch_size; return false; }

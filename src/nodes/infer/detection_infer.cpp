@@ -284,6 +284,8 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
             return results;
         }
 
+
+#ifdef WITH_CUDA
 #ifdef WITH_TENSORRT
         // 设置动态输入形状（通过原始 TensorRT context，仅 TensorRT 后端）
         if (auto* raw_context = static_cast<nvinfer1::IExecutionContext*>(engine_->getRawContext())) {
@@ -481,6 +483,106 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
 
         LOG_INFO_FMT("[DetectionInfer] Batch done: gpu={} cpu={} valid_batch={} total_dets={}, detections={}",
                      gpu_batch, cpu_batch, valid_batch, total_dets, results[0]->detections.size());
+#else
+        // ============================================================
+        // 主机引擎路径（RKNN / Ascend 等）：逐帧推理，引擎自管输出
+        // ============================================================
+        const int hw = input_height_ * input_width_;
+        const size_t frame_floats = static_cast<size_t>(3) * hw;
+        h_input_host_.resize(static_cast<size_t>(valid_batch) * frame_floats);
+
+        std::vector<float> all_boxes, all_scores;
+        std::vector<int64_t> all_classes, all_batch_ids;
+        std::vector<float> v_scale_x(valid_batch), v_scale_y(valid_batch);
+        std::vector<float> v_ls(valid_batch, 1.0f);
+        std::vector<int> v_px(valid_batch, 0), v_py(valid_batch, 0), v_lu(valid_batch, 0);
+
+        int slot = 0;
+        for (int b = 0; b < actual_batch && slot < valid_batch; ++b) {
+            if (!(frames[b]->mat && !frames[b]->mat->empty() &&
+                  frames[b]->mat->type() == CV_32FC3)) {
+                continue;
+            }
+            const cv::Mat& m = *frames[b]->mat;
+            if (m.cols != input_width_ || m.rows != input_height_) {
+                LOG_WARN_FMT("[DetectionInfer] Frame[{}] size {}x{} != model input {}x{}, skip",
+                             b, m.cols, m.rows, input_width_, input_height_);
+                continue;
+            }
+
+            // HWC CV_32FC3 (BGR) → NCHW RGB
+            float* dst = h_input_host_.data() + static_cast<size_t>(slot) * frame_floats;
+            const float* img = m.ptr<float>();
+            for (int y = 0; y < input_height_; ++y) {
+                for (int x = 0; x < input_width_; ++x) {
+                    const int src_idx = (y * input_width_ + x) * 3;
+                    const int dst_idx = y * input_width_ + x;
+                    dst[0 * hw + dst_idx] = img[src_idx + 2];  // R
+                    dst[1 * hw + dst_idx] = img[src_idx + 1];  // G
+                    dst[2 * hw + dst_idx] = img[src_idx + 0];  // B
+                }
+            }
+
+            engine_->setInputTensor(input_name_, dst);
+            if (!engine_->infer()) {
+                LOG_ERROR_FMT("[DetectionInfer] Host engine infer failed for frame {}", b);
+                return results;
+            }
+
+            const int64_t n = *static_cast<const int64_t*>(engine_->getOutputTensor(num_dets_name_));
+            const int det_n = static_cast<int>(std::min<int64_t>(n, MAX_DETS));
+            const float* boxes = static_cast<const float*>(engine_->getOutputTensor(boxes_name_));
+            const float* scores = static_cast<const float*>(engine_->getOutputTensor(scores_name_));
+            const int64_t* classes = static_cast<const int64_t*>(engine_->getOutputTensor(classes_name_));
+
+            for (int i = 0; i < det_n; ++i) {
+                all_boxes.insert(all_boxes.end(), boxes + i * 4, boxes + i * 4 + 4);
+                all_scores.push_back(scores[i]);
+                all_classes.push_back(classes[i]);
+                all_batch_ids.push_back(slot);
+            }
+
+            // 记录该槽位的坐标反变换参数
+            v_scale_x[slot] = scale_x[b];
+            v_scale_y[slot] = scale_y[b];
+            v_ls[slot] = frames[b]->letter_scale;
+            v_px[slot] = frames[b]->letter_pad_x;
+            v_py[slot] = frames[b]->letter_pad_y;
+            v_lu[slot] = frames[b]->letterbox_used ? 1 : 0;
+            ++slot;
+        }
+
+        if (slot == 0) {
+            LOG_WARN_FMT("[DetectionInfer] No valid frames in batch (host path)");
+            return results;
+        }
+
+        // 复用成员 h_* 缓冲供 postprocessBatch 消费
+        const int total_dets = static_cast<int>(all_scores.size());
+        h_boxes_.assign(all_boxes.begin(), all_boxes.end());
+        h_scores_.assign(all_scores.begin(), all_scores.end());
+        h_classes_.assign(all_classes.begin(), all_classes.end());
+        h_batch_ids_.assign(all_batch_ids.begin(), all_batch_ids.end());
+        h_num_dets_ = total_dets;
+
+        auto all_detections = postprocessBatch(slot, total_dets,
+                                               v_scale_x.data(), v_scale_y.data(),
+                                               confidence_threshold_,
+                                               v_ls.data(), v_px.data(), v_py.data(),
+                                               v_lu.data());
+
+        int out_idx = 0;
+        for (int b = 0; b < actual_batch; ++b) {
+            if (frames[b]->mat && !frames[b]->mat->empty() &&
+                frames[b]->mat->type() == CV_32FC3 && frames[b]->mat->cols == input_width_) {
+                results[b]->detections = std::move(all_detections[out_idx++]);
+            }
+        }
+
+        LOG_INFO_FMT("[DetectionInfer] Host batch done: frames={} total_dets={}",
+                     slot, total_dets);
+        return results;
+#endif // 主机引擎路径结束
 
     } catch (const std::exception& e) {
         LOG_ERROR_FMT("[DetectionInfer] Batch inference exception: {}", e.what());
@@ -712,9 +814,10 @@ void DetectionInferNode::freePinnedMemory() {
     if (h_pinned_batch_ids_) { cudaFreeHost(h_pinned_batch_ids_); h_pinned_batch_ids_ = nullptr; }
     if (h_pinned_num_dets_) { cudaFreeHost(h_pinned_num_dets_); h_pinned_num_dets_ = nullptr; }
 }
+#endif // WITH_CUDA
 
 // ============================================================
-// 初始化引擎（通过 HAL 工厂创建）
+// 初始化引擎（通过 HAL 工厂创建；CUDA/主机路径见函数内条件编译）
 // ============================================================
 bool DetectionInferNode::initEngine(const std::string& engine_path) {
     try {
@@ -746,19 +849,20 @@ bool DetectionInferNode::initEngine(const std::string& engine_path) {
 
         LOG_INFO_FMT("[DetectionInfer] Engine loaded via backend: {}", engine_->getBackendName());
 
-        // 创建双流架构
-        cudaStreamCreateWithFlags(&compute_stream_, cudaStreamNonBlocking);
-        cudaStreamCreateWithFlags(&transfer_stream_, cudaStreamNonBlocking);
-
-        // 计算缓冲区大小
         int max_batch = max_batch_size_.load();
-        input_size_ = static_cast<size_t>(max_batch) * 3 * input_height_ * input_width_ * sizeof(float);
         out_boxes_size_ = static_cast<size_t>(max_batch) * MAX_DETS * 4 * sizeof(float);
         out_scores_size_ = static_cast<size_t>(max_batch) * MAX_DETS * sizeof(float);
         out_classes_size_ = static_cast<size_t>(max_batch) * MAX_DETS * sizeof(int64_t);
         out_batch_ids_size_ = static_cast<size_t>(max_batch) * MAX_DETS * sizeof(int64_t);
         out_num_dets_size_ = sizeof(int64_t);
 
+#ifdef WITH_CUDA
+        // 创建双流架构
+        cudaStreamCreateWithFlags(&compute_stream_, cudaStreamNonBlocking);
+        cudaStreamCreateWithFlags(&transfer_stream_, cudaStreamNonBlocking);
+
+        // 计算缓冲区大小
+        input_size_ = static_cast<size_t>(max_batch) * 3 * input_height_ * input_width_ * sizeof(float);
         // 分配 GPU 缓冲区
         if (!cudaMallocChecked(&d_input_, input_size_, "d_input_") ||
             !cudaMallocChecked(&d_boxes_, out_boxes_size_, "d_boxes_") ||
@@ -769,13 +873,6 @@ bool DetectionInferNode::initEngine(const std::string& engine_path) {
             LOG_ERROR("[DetectionInfer] Failed to allocate GPU buffers");
             return false;
         }
-
-        // 分配 CPU fallback 缓冲区
-        h_boxes_.resize(max_batch * MAX_DETS * 4);
-        h_scores_.resize(max_batch * MAX_DETS);
-        h_classes_.resize(max_batch * MAX_DETS);
-        h_batch_ids_.resize(max_batch * MAX_DETS);
-        h_num_dets_ = 0;
 
         // 分配 Pinned Memory
         allocatePinnedMemory();
@@ -789,6 +886,22 @@ bool DetectionInferNode::initEngine(const std::string& engine_path) {
                      engine_path, max_batch, MAX_DETS,
                      h_pinned_input_ ? "ON" : "OFF",
                      cuda_graph_ready_ ? "READY" : "OFF");
+#else
+        // 主机引擎路径（RKNN / Ascend 等）：引擎自管输出内存，
+        // 节点侧仅准备 host NCHW 输入缓冲
+        h_input_host_.resize(static_cast<size_t>(max_batch) * 3 * input_height_ * input_width_);
+        engine_->allocateOutputBuffers();
+        LOG_INFO_FMT("[DetectionInfer] Engine initialized (host path): {} (max_batch={}, max_dets={})",
+                     engine_path, max_batch, MAX_DETS);
+#endif
+
+        // 分配 CPU fallback 缓冲区（两种路径共用）
+        h_boxes_.resize(max_batch * MAX_DETS * 4);
+        h_scores_.resize(max_batch * MAX_DETS);
+        h_classes_.resize(max_batch * MAX_DETS);
+        h_batch_ids_.resize(max_batch * MAX_DETS);
+        h_num_dets_ = 0;
+
         return true;
 
     } catch (const std::exception& e) {
@@ -797,6 +910,7 @@ bool DetectionInferNode::initEngine(const std::string& engine_path) {
     }
 }
 
+#ifdef WITH_CUDA
 bool DetectionInferNode::cudaMallocChecked(void** ptr, size_t size, const char* name) {
     cudaError_t err = cudaMalloc(ptr, size);
     if (err != cudaSuccess) {

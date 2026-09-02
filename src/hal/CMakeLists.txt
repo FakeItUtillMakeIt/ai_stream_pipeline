@@ -48,6 +48,7 @@ if(WITH_RKNN)
     find_package(RKNN REQUIRED)
     list(APPEND HAL_SOURCES
         rknn/rknn_inference_engine.cpp
+        rknn/rknn_detection_engine.cpp
         rga/rga_image_accelerator.cpp
         mpp/mpp_video_codec.cpp
         rknn/rknn_action_recognition.cpp
@@ -64,6 +65,9 @@ if(WITH_ASCEND)
         ascend/ascend_action_recognition.cpp
     )
 endif()
+
+# MPP 编码器与工厂（dlopen 运行时加载，所有平台编译）
+list(APPEND HAL_SOURCES video_encoder_factory.cpp mpp/mpp_video_encoder.cpp)
 
 add_library(ai_stream_hal SHARED ${HAL_SOURCES})
 set_target_properties(ai_stream_hal PROPERTIES EXPORT_NAME hal)

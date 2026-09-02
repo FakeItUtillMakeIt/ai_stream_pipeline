@@ -170,6 +170,9 @@ private:
     std::vector<int64_t> h_batch_ids_;
     int64_t h_num_dets_ = 0;
 
+    // 主机引擎路径（RKNN/Ascend）输入缓冲：host NCHW float
+    std::vector<float> h_input_host_;
+
     // CUDA Graph 相关
     cudaGraph_t cuda_graph_ = nullptr;
     cudaGraphExec_t cuda_graph_exec_ = nullptr;

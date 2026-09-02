@@ -4,6 +4,7 @@
 #include "registry/node_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 #include "encoder_base.h"
+#include "mpp_encoder.h"
 #include <opencv2/opencv.hpp>
 
 namespace ai_stream {
@@ -125,6 +126,19 @@ void RTMPSinkNode::encoderLoop() {
 }
 
 bool RTMPSinkNode::initEncoder() {
+    // MPP 硬编码（RK 平台）：encoder_name 含 "mpp" 时尝试，失败回退软编
+    if (encoder_name_.find("mpp") != std::string::npos) {
+        auto mpp = std::make_unique<MppEncoder>();
+        if (mpp->init(output_url_, "flv",
+                      output_width_ > 0 ? output_width_ : 1920,
+                      output_height_ > 0 ? output_height_ : 1080,
+                      bitrate_, encoder_name_)) {
+            encoder_ = std::move(mpp);
+            LOG_INFO("[RTMPSink] Using MPP hardware encoder");
+            return true;
+        }
+        LOG_WARN("[RTMPSink] MPP encoder unavailable, falling back to software encoder");
+    }
     encoder_ = std::make_unique<RTMPEncoder>();
     return encoder_->init(output_url_, "flv",
                           output_width_ > 0 ? output_width_ : 1920,

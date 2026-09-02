@@ -4,6 +4,7 @@
 #include "registry/node_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 #include "encoder_base.h"
+#include "mpp_encoder.h"
 #include <filesystem>
 #include <chrono>
 
@@ -134,6 +135,15 @@ bool MP4SaveNode::initFileWriter() {
     int w = output_width_ > 0 ? output_width_ : 1920;
     int h = output_height_ > 0 ? output_height_ : 1080;
     
+    if (encoder_name_.find("mpp") != std::string::npos) {
+        auto mpp = std::make_unique<MppEncoder>();
+        if (mpp->init(file_path_, "mp4", w, h, bitrate_, encoder_name_)) {
+            encoder_ = std::move(mpp);
+            LOG_INFO("[MP4Save] Using MPP hardware encoder");
+            return true;
+        }
+        LOG_WARN("[MP4Save] MPP encoder unavailable, falling back to software encoder");
+    }
     encoder_ = std::make_unique<FileEncoder>();
     return encoder_->init(file_path_, "mp4", w, h, bitrate_, encoder_name_);
 }
