@@ -51,6 +51,7 @@ if(WITH_RKNN)
     list(APPEND HAL_SOURCES
         infer/rk/rknn_inference_engine.cpp
         infer/rk/rknn_detection_engine.cpp
+        infer/rk/rknn_pose_estimation.cpp
         image_accel/rk/rga_image_accelerator.cpp
         decode/rk/mpp_video_codec.cpp
         infer/rk/rknn_action_recognition.cpp
