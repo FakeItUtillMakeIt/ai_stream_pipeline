@@ -41,33 +41,37 @@ jobs:
       - name: Build
         run: cmake --build build -j$(nproc)
 
-  linux-aarch64:
-    # ARM64 交叉编译：验证可移植代码在非 x86 架构无编译错误（不含 CUDA/TRT）
+  linux-aarch64-rknn:
+    # RK3588 交叉编译（真实 arm64 sysroot）：验证 RKNN 后端 + 完整依赖链
+    # 在 aarch64 目标下可编译。构建期仅头文件/链接，不运行测试（无 qemu 执行）。
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - name: Install cross toolchain and dependencies (arm64)
+      - name: Install host cross toolchain + debootstrap
         run: |
-          sudo dpkg --add-architecture arm64
-          sudo sed -i 's/^deb /deb [arch=amd64] /' /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main universe" | \
-            sudo tee /etc/apt/sources.list.d/ports.list
-          sudo apt-get update || true
-          sudo apt-get install -y g++-aarch64-linux-gnu
-      - name: Configure (cross, no optional backends)
+          sudo apt-get update
+          sudo apt-get install -y debootstrap qemu-user-static g++-aarch64-linux-gnu
+      - name: Bootstrap aarch64 sysroot (jammy)
         run: |
-          cat > toolchain.cmake <<'EOF'
-          set(CMAKE_SYSTEM_NAME Linux)
-          set(CMAKE_SYSTEM_PROCESSOR aarch64)
-          set(CMAKE_C_COMPILER aarch64-linux-gnu-gcc)
-          set(CMAKE_CXX_COMPILER aarch64-linux-gnu-g++)
-          set(CMAKE_FIND_ROOT_PATH /usr/aarch64-linux-gnu)
-          set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
-          set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
-          set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
-          EOF
-          cmake -B build -DCMAKE_TOOLCHAIN_FILE=toolchain.cmake \
-                -DCMAKE_BUILD_TYPE=Release \
-                -DWITH_CUDA=OFF -DWITH_TENSORRT=OFF -DWITH_RKNN=OFF -DWITH_ASCEND=OFF
+          sudo debootstrap --arch=arm64 --variant=minbase jammy /opt/rk3588-sysroot \
+            http://ports.ubuntu.com/ubuntu-ports
+          sudo cp /usr/bin/qemu-aarch64-static /opt/rk3588-sysroot/usr/bin/
+          echo "deb http://ports.ubuntu.com/ubuntu-ports jammy main universe" | \
+            sudo tee /opt/rk3588-sysroot/etc/apt/sources.list
+      - name: Install target dependencies into sysroot
+        run: |
+          sudo chroot /opt/rk3588-sysroot /usr/bin/qemu-aarch64-static /bin/sh -c \
+            "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+             libopencv-dev libavcodec-dev libavformat-dev libavutil-dev \
+             libswscale-dev libspdlog-dev nlohmann-json3-dev libeigen3-dev \
+             libcurl4-openssl-dev liblapack-dev libblas-dev"
+      - name: Configure (repo toolchain + RKNN)
+        run: |
+          cmake -B build \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/aarch64-rk3588.toolchain.cmake \
+            -DRK3588_SYSROOT=/opt/rk3588-sysroot \
+            -DRK_TOOLCHAIN_PREFIX=/usr/bin/aarch64-linux-gnu- \
+            -DWITH_RKNN=ON -DWITH_CUDA=OFF -DWITH_TENSORRT=OFF -DWITH_ASCEND=OFF \
+            -DBUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build -j$(nproc)
