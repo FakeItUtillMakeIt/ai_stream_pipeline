@@ -21,9 +21,11 @@ ai_stream_pipeline/
 │       │   └── metrics.h          # 指标收集单例
 │       ├── hal/                   # 硬件抽象层接口
 │       │   ├── i_inference_engine.h / i_detection_inference_engine.h
-│       │   ├── i_action_recognition.h
+│       │   ├── i_action_recognition.h / i_pose_estimation.h
 │       │   ├── i_image_accelerator.h      # 图像处理加速（预处理/绘制/NMS）
-│       │   ├── i_video_codec.h            # 视频编解码抽象
+│       │   ├── i_video_codec.h / i_video_encoder.h   # 视频编解码/编码抽象
+│       │   ├── gpu_buffer_pool.h          # GPU 设备内存池（显存复用）
+│       │   ├── h264_extradata.h           # H.264 AnnexB↔AVCC 工具
 │       │   └── *_factory.h                # 各后端工厂（按平台选择实现）
 │       ├── nodes/                 # 节点插件接口
 │       │   ├── i_source_node.h    # 拉流/文件源（含通用 configure）
@@ -46,13 +48,20 @@ ai_stream_pipeline/
 │   │   ├── pipeline_manager.cpp   # Pipeline::buildFromJson/拓扑启停/自停后重启恢复
 │   │   ├── async_pipeline_manager.h/.cpp  # 异步管道管理（任务队列/资源监控/auto_batch）
 │   │   └── metrics.cpp
-│   ├── hal/                       # 硬件抽象层各后端实现
-│   │   ├── tensorrt/              # TensorRT 检测/通用推理/动作识别引擎
-│   │   ├── rknn/                  # RK3588 推理后端
-│   │   ├── ascend/                # 昇腾 CANN 后端
-│   │   ├── cpu/                   # CPU fallback（image accelerator 等）
-│   │   ├── ffmpeg/ nvdec/ mpp/ npp/ rga/  # 编解码与图像加速后端
-│   │   └── *_factory.cpp          # 工厂：运行时按编译选项选择后端
+│   ├── hal/                       # 硬件抽象层各后端实现（能力 → 厂商 两层）
+│   │   │                          # infer 推理 / encode 编码 / decode 解码 /
+│   │   │                          # image_accel 图像加速，各含厂商子目录
+│   │   ├── infer/nvidia/          # TensorRT（通用/检测/姿态/动作 + trt_core + kernels）
+│   │   ├── infer/rk/              # RKNN（通用/检测/姿态/动作，dlopen librknnrt）
+│   │   ├── infer/ascend/          # 昇腾 CANN（动作识别）
+│   │   ├── infer/cpu/             # CPU fallback（OpenCV DNN 推理）
+│   │   ├── encode/rk/ encode/cpu/ # MPP 硬编 / FFmpeg 软编（含 nvenc 通道）
+│   │   ├── decode/nvidia/ decode/rk/ decode/ascend/ decode/cpu/
+│   │   │                         # NVDEC / MPP / DVPP / FFmpeg 软解
+│   │   ├── image_accel/nvidia/ image_accel/rk/
+│   │   │   image_accel/ascend/ image_accel/cpu/
+│   │   │                         # NPP+CUDA / RGA / DVPP / OpenCV
+│   │   └── *_factory.cpp          # 工厂：运行时按编译选项选择后端（dlopen 惰性加载）
 │   ├── http/                      # REST API 服务
 │   │   ├── api_server.h/.cpp      # 同步/异步双模式 handler
 │   │   ├── handlers/              # 具体路由 handler

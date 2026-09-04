@@ -124,10 +124,11 @@ cmake --build build-rk3588 -j$(nproc)
 ```
 
 已知限制：
-- 检测/姿态推理目前仅有 TensorRT 后端实现（`REGISTER_DETECTION_INFERENCE_BACKEND`
-  未注册 RKNN 版本），RK3588 上 `detection_infer` / `pose_infer` 以 mock 模式
-  运行；接入真实 RKNN 检测需实现 `IDetectionInferenceEngine` 后端
-- 视频输出编码走 FFmpeg `libx264`（软编码）；MPP 硬编码器尚未接入 sink
+- 姿态估计的 RKNN 后端已实现（`RknnPoseEstimation`），但需在板子上用真实
+  `.rknn` 模型验证；未加载模型时节点以 mock 模式运行
+- 视频输出编码：RK 上 `VideoEncoderFactory::AUTO` 自动选 `mpp_h264`（MPP 硬编，
+  已接入 sink），x86 上选 `ffmpeg_h264`（软编，可 `encoder: h264_nvenc` 驱动 NVENC）
+- RKNN 库为 aarch64，x86 编译主机仅头文件编译、运行期 dlopen 失败自动回退
 
 ## 7. 注意事项
 

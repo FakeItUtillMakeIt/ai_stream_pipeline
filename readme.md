@@ -36,6 +36,7 @@
 | [api_reference.md](./docs/api_reference.md) | HTTP API 参考（同步/异步模式、管道 JSON 格式） |
 | [adding_new_node.md](./docs/adding_new_node.md) | 自定义节点开发指南 |
 | [action_recognition_guide.md](./docs/action_recognition_guide.md) | 动作识别（VideoMAE）使用指南 |
+| [hal_capability.md](./docs/hal_capability.md) | HAL 能力矩阵：各能力×厂商实现状态、注册与选择、roadmap |
 
 ## 快速开始
 
