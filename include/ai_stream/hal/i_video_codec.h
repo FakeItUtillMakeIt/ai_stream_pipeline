@@ -24,6 +24,14 @@ struct DecodedFrame {
     // 多平面格式支持（如 NV12 的 Y 和 UV 平面）
     uint8_t* data_uv = nullptr; // UV 平面数据（NV12/NV21 等）
     int pitch_uv = 0;           // UV 平面 pitch
+
+    // GPU 帧（NVDEC 等硬件解码器留在显存）：上游解码后为池化副本，
+    // 供 GPU 预处理直接消费，避免 D2H 后再 H2D 的整帧往返。
+    bool is_gpu = false;        // 数据是否在设备内存
+    uint8_t* d_data = nullptr;  // 设备端 Y 平面
+    int d_pitch = 0;
+    uint8_t* d_data_uv = nullptr;  // 设备端 UV 平面
+    int d_pitch_uv = 0;
 };
 
 /**

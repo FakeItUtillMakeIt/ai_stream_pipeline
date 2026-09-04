@@ -157,6 +157,62 @@ __global__ void drawRectKernel(
 }
 
 // ============================================================
+// NV12 → BGR24 Kernel（硬件解码帧颜色转换，BT.601 有限范围）
+// ============================================================
+
+__global__ void nv12ToBgrKernel(
+    const unsigned char* __restrict__ src_y, int src_pitch_y,
+    const unsigned char* __restrict__ src_uv, int src_pitch_uv,
+    unsigned char* __restrict__ dst, int dst_pitch,
+    int width, int height)
+{
+    int px = blockIdx.x * blockDim.x + threadIdx.x;
+    int py = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (px >= width || py >= height) return;
+
+    const int y_val = src_y[py * src_pitch_y + px];
+
+    const int uv_row = py >> 1;
+    const int uv_col = px >> 1;
+    const size_t uv_idx = static_cast<size_t>(uv_row) * src_pitch_uv + uv_col * 2;
+    const int u = src_uv[uv_idx];
+    const int v = src_uv[uv_idx + 1];
+
+    // BT.601 有限范围：C = Y-16, D = U-128, E = V-128
+    const int c = y_val - 16;
+    const int d = u - 128;
+    const int e = v - 128;
+
+    int r = (298 * c + 409 * e + 128) >> 8;
+    int g = (298 * c - 100 * d - 208 * e + 128) >> 8;
+    int b = (298 * c + 516 * d + 128) >> 8;
+
+    r = min(255, max(0, r));
+    g = min(255, max(0, g));
+    b = min(255, max(0, b));
+
+    const size_t idx = static_cast<size_t>(py) * dst_pitch + px * 3;
+    dst[idx + 0] = static_cast<unsigned char>(b);
+    dst[idx + 1] = static_cast<unsigned char>(g);
+    dst[idx + 2] = static_cast<unsigned char>(r);
+}
+
+void launchNv12ToBgrKernel(
+    const unsigned char* src_y, int src_pitch_y,
+    const unsigned char* src_uv, int src_pitch_uv,
+    unsigned char* dst, int dst_pitch,
+    int width, int height,
+    cudaStream_t stream)
+{
+    dim3 block_size(16, 16);
+    dim3 grid_size((width + 15) / 16, (height + 15) / 16);
+    nv12ToBgrKernel<<<grid_size, block_size, 0, stream>>>(
+        src_y, src_pitch_y, src_uv, src_pitch_uv,
+        dst, dst_pitch, width, height);
+}
+
+// ============================================================
 // Wrapper functions (C++ callable)
 // ============================================================
 

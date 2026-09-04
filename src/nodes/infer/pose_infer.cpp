@@ -204,6 +204,12 @@ void PoseInferNode::processFrame(std::shared_ptr<core::InferenceResultPacket> pa
         LOG_WARN("[PoseInfer] GPU path unavailable/failed, falling back to host preprocess");
     }
 
+    // mock 模式（未加载模型）下 engine_ 为空，跳过推理；空结果由调用方广播
+    if (!engine_) {
+        LOG_WARN_FMT("[PoseInfer] No engine loaded (mock mode), skipping {} persons", num_persons);
+        return;
+    }
+
     // 4. 分配 host 输入缓冲区 [num_persons, 3, 640, 640]
     const auto [input_w, input_h] = engine_->getInputSize();
     int hw = input_h * input_w;

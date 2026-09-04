@@ -45,6 +45,8 @@
 
 [Rr]uns/
 
+logs/
+
 __pycache__/
 
 .opencode/

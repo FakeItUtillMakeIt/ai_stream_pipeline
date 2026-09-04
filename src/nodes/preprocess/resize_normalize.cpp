@@ -367,8 +367,29 @@ bool ResizeNormalizeNode::processGpuFrame(const std::shared_ptr<core::VideoFrame
     if (frame->is_gpu && frame->d_ptr) {
         src_width = frame->d_width;
         src_height = frame->d_height;
-        src_ptr = static_cast<const uint8_t*>(frame->d_ptr);
-        src_pitch = frame->d_pitch > 0 ? static_cast<size_t>(frame->d_pitch) : static_cast<size_t>(src_width) * kChannels;
+        if (frame->d_data_uv && frame->d_pitch_uv > 0) {
+            // 硬件解码 NV12 帧：显存内 NV12→BGR（NPP kernel），免 H2D 整帧
+            // 上传；转换结果同时作为下游 GPU OSD 的 d_bgr_ptr。
+            const size_t bgr_pitch = static_cast<size_t>(src_width) * kChannels;
+            bgr_buf = hal::GpuBufferPool::instance().acquire(
+                static_cast<size_t>(src_height) * bgr_pitch);
+            if (!bgr_buf) return false;
+            if (!accelerator->cvtColorNv12ToBgr(
+                    frame->d_ptr, frame->d_pitch,
+                    frame->d_data_uv, frame->d_pitch_uv,
+                    src_width, src_height,
+                    static_cast<uint8_t*>(bgr_buf.get()),
+                    static_cast<int>(bgr_pitch), stream)) {
+                LOG_ERROR("[ResizeNormalize] GPU NV12->BGR failed");
+                return false;
+            }
+            src_ptr = static_cast<const uint8_t*>(bgr_buf.get());
+            src_pitch = bgr_pitch;
+            bgr_uploaded = true;
+        } else {
+            src_ptr = static_cast<const uint8_t*>(frame->d_ptr);
+            src_pitch = frame->d_pitch > 0 ? static_cast<size_t>(frame->d_pitch) : static_cast<size_t>(src_width) * kChannels;
+        }
     } else if (frame->mat && !frame->mat->empty()) {
         src_width = frame->mat->cols;
         src_height = frame->mat->rows;

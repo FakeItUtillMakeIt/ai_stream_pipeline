@@ -61,6 +61,6 @@ include/ai_stream/hal/                        抽象接口 + 共享工具
 | 项 | 说明 | 前置条件 |
 |---|---|---|
 | DVPP VENC（`encode/ascend/`） | Ascend 硬件编码器 | 昇腾设备 + CANN SDK |
-| 独立 NVENC HAL（`encode/nvidia/`） | GPU 帧零拷贝编码 | CUDA + NvEncodeAPI，做全链路零拷贝时 |
+| 独立 NVENC HAL（`encode/nvidia/`） | 当前 NVENC 经 FFmpeg（`h264_nvenc`）实现；独立直驱 NvEncodeAPI 用于 GPU 帧零拷贝输入。**暂缓**：sink 编码输入为 OSD 输出的 host BGR，零拷贝输入需 OSD 输出留显存（卡在 GPU 文字渲染） | NVIDIA Video Codec SDK 头文件 + OSD GPU 化 |
 | Ascend 检测/姿态/通用推理 | CANN 推理引擎补齐 | 昇腾设备 + CANN SDK |
 | CPU 检测/姿态后端 | 补全 CPU 矩阵（当前节点 mock 兜底） | 低优先级 |

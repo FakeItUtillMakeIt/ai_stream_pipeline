@@ -101,6 +101,29 @@ public:
         const DrawParams& draw) = 0;
 
     /**
+     * @brief NV12 → BGR24 颜色转换（硬件解码帧，支持 GPU/CPU 数据）
+     * @param src_y     Y 平面（设备或主机内存，与 src_uv 一致）
+     * @param src_pitch_y  Y 平面行 pitch（字节）
+     * @param src_uv    UV 平面
+     * @param src_pitch_uv UV 平面行 pitch
+     * @param width/height 图像尺寸
+     * @param dst_bgr   BGR24 输出（内存域与输入一致）
+     * @param dst_pitch 输出行 pitch（字节）
+     * @param stream    CUDA stream（GPU 数据时）
+     * @return 是否支持并成功
+     */
+    virtual bool cvtColorNv12ToBgr(
+        const void* src_y, int src_pitch_y,
+        const void* src_uv, int src_pitch_uv,
+        int width, int height,
+        uint8_t* dst_bgr, int dst_pitch,
+        void* stream = nullptr) {
+        (void)src_y; (void)src_pitch_y; (void)src_uv; (void)src_pitch_uv;
+        (void)width; (void)height; (void)dst_bgr; (void)dst_pitch; (void)stream;
+        return false;
+    }
+
+    /**
      * @brief 非极大值抑制
      * @param boxes 输入/输出边界框（原地过滤）
      * @param iou_threshold IoU 阈值

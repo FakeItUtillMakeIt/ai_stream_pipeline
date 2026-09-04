@@ -206,7 +206,20 @@ bool NvdecVideoCodec::decode(const uint8_t* packet_data, int packet_size,
         return false;
     }
 
-    // 如果帧在 GPU 内存中，转移到系统内存
+    // 硬件帧留在显存，暴露 GPU 平面指针供 GPU 预处理零拷贝消费。
+    // 帧内容在下次 decode() 前有效，消费方（decode 节点）需在本调用内
+    // 复制到池化缓冲（D2D），否则后续帧会复用同一批 NVDEC 显存。
+    if (frame_->format == AV_PIX_FMT_CUDA) {
+        frame.is_gpu = true;
+        frame.d_data = frame_->data[0];
+        frame.d_pitch = frame_->linesize[0];
+        frame.d_data_uv = frame_->data[1];
+        frame.d_pitch_uv = frame_->linesize[1];
+    } else {
+        frame.is_gpu = false;
+    }
+
+    // 如果帧在 GPU 内存中，转移到系统内存（供 sws 生成 source_mat 等 CPU 消费）
     if (frame_->format == AV_PIX_FMT_CUDA && hw_device_ctx_) {
         ret = av_hwframe_transfer_data(hw_frame_, frame_, 0);
         if (ret < 0) {

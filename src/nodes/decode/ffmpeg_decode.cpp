@@ -10,6 +10,9 @@
 #include <filesystem>
 #include <sstream>
 #include <iomanip>
+#ifdef WITH_CUDA
+#include "ai_stream/hal/gpu_buffer_pool.h"
+#endif
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -28,6 +31,12 @@ FFmpegDecodeNode::FFmpegDecodeNode() : core::QueuedNode<IDecodeNode>("FFmpegDeco
 
 FFmpegDecodeNode::~FFmpegDecodeNode() {
     stop();
+#ifdef WITH_CUDA
+    if (cuda_stream_) {
+        cudaStreamDestroy(cuda_stream_);
+        cuda_stream_ = nullptr;
+    }
+#endif
     LOG_DEBUG_FMT("[FFmpegDecode] Destructor");
 }
 
@@ -210,6 +219,35 @@ std::shared_ptr<core::VideoFramePacket> FFmpegDecodeNode::decodePacket(
         return nullptr;
     }
 
+#ifdef WITH_CUDA
+    // 硬件解码帧留在显存：本调用内 D2D 复制到池化缓冲，供 resize_normalize
+    // 的 GPU 路径零拷贝消费（NPP NV12→BGR），免 H2D 整帧上传。
+    // 复制必须在下次 decode() 前完成（NVDEC 帧缓冲会被复用）。
+    hal::GpuBufferPool::Buffer d_y, d_uv;
+    if (decoded.is_gpu && decoded.d_data && decoded.d_data_uv &&
+        decoded.d_pitch > 0 && decoded.d_pitch_uv > 0) {
+        if (!cuda_stream_) {
+            cudaStreamCreate(&cuda_stream_);
+        }
+        d_y = hal::GpuBufferPool::instance().acquire(
+            static_cast<size_t>(decoded.d_pitch) * decoded.height);
+        d_uv = hal::GpuBufferPool::instance().acquire(
+            static_cast<size_t>(decoded.d_pitch_uv) * (decoded.height / 2));
+        bool y_ok = d_y && cudaMemcpy2DAsync(d_y.get(), decoded.d_pitch,
+                                             decoded.d_data, decoded.d_pitch,
+                                             decoded.d_pitch, decoded.height,
+                                             cudaMemcpyDeviceToDevice, cuda_stream_) == cudaSuccess;
+        bool uv_ok = d_uv && cudaMemcpy2DAsync(d_uv.get(), decoded.d_pitch_uv,
+                                               decoded.d_data_uv, decoded.d_pitch_uv,
+                                               decoded.d_pitch_uv, decoded.height / 2,
+                                               cudaMemcpyDeviceToDevice, cuda_stream_) == cudaSuccess;
+        if (!y_ok || !uv_ok) {
+            d_y.reset();
+            d_uv.reset();
+        }
+    }
+#endif
+
     int width = decoded.width;
     int height = decoded.height;
 
@@ -363,6 +401,22 @@ std::shared_ptr<core::VideoFramePacket> FFmpegDecodeNode::decodePacket(
     new_frame->height = height;
     new_frame->channels = 3;
     new_frame->frame_id = raw_pkt->frame_id;
+#ifdef WITH_CUDA
+    // GPU NV12 平面随包传递（池化所有权），is_gpu 供 GPU 预处理零拷贝消费
+    if (d_y && d_uv) {
+        new_frame->is_gpu = true;
+        new_frame->d_ptr = d_y.get();
+        new_frame->d_pitch = decoded.d_pitch;
+        new_frame->d_width = width;
+        new_frame->d_height = height;
+        new_frame->d_buf_owner = d_y;
+        new_frame->d_data_uv = d_uv.get();
+        new_frame->d_pitch_uv = decoded.d_pitch_uv;
+        new_frame->d_uv_owner = d_uv;
+        LOG_DEBUG_FMT("[FFmpegDecode] GPU NV12 frame {}x{} (pitch={}/{})",
+                      width, height, decoded.d_pitch, decoded.d_pitch_uv);
+    }
+#endif
     new_frame->cost_ms = utils::TimeUtil::currentTimeMs() - in_time_ms_;
     new_frame->cost_time_map = raw_pkt->cost_time_map;
     new_frame->cost_time_map.insert({name_, utils::TimeUtil::currentTimeMs() - in_time_ms_});

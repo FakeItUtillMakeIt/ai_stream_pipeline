@@ -11,7 +11,8 @@ namespace {
 static std::shared_ptr<BasePacket> trimGpuPayload(const std::shared_ptr<BasePacket>& packet);
 
 static bool videoFrameHasGpuPayload(const VideoFramePacket& frame) {
-    return frame.is_gpu || frame.d_ptr != nullptr || frame.d_bgr_ptr != nullptr;
+    return frame.is_gpu || frame.d_ptr != nullptr || frame.d_bgr_ptr != nullptr ||
+           frame.d_data_uv != nullptr;
 }
 
 static std::shared_ptr<VideoFramePacket> trimVideoFrameGpu(const std::shared_ptr<VideoFramePacket>& frame) {
@@ -24,6 +25,9 @@ static std::shared_ptr<VideoFramePacket> trimVideoFrameGpu(const std::shared_ptr
     trimmed->d_height = 0;
     trimmed->d_pitch = 0;
     trimmed->d_buf_owner.reset();
+    trimmed->d_data_uv = nullptr;
+    trimmed->d_pitch_uv = 0;
+    trimmed->d_uv_owner.reset();
     trimmed->d_bgr_ptr = nullptr;
     trimmed->d_bgr_pitch = 0;
     trimmed->d_bgr_height = 0;

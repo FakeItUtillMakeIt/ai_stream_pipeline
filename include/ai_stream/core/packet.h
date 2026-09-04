@@ -335,6 +335,12 @@ struct VideoFramePacket : public BasePacket {
     int d_pitch = 0;
     bool is_gpu = false;
 
+    // GPU NV12 平面（硬件解码帧）：d_ptr 为 Y 平面，d_data_uv 为 UV 平面，
+    // 供 resize_normalize 的 GPU 路径直接消费（NPP NV12→BGR），免 H2D 上传。
+    void* d_data_uv = nullptr;
+    int d_pitch_uv = 0;
+    std::shared_ptr<void> d_uv_owner;  // 持有 d_data_uv 指向的设备内存
+
     // GPU 缓冲区生命周期所有权（池化分配）：
     // 只要持有 packet 的任一副本存在，对应设备内存就不会被池复用，
     // 从而消除"上游单 buffer 每帧复用、下游队列深时读到新帧内容"的竞态。

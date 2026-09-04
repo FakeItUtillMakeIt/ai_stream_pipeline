@@ -33,6 +33,13 @@ extern void launchDrawRectKernel(
     unsigned char b, unsigned char g, unsigned char r,
     cudaStream_t stream);
 
+extern void launchNv12ToBgrKernel(
+    const unsigned char* src_y, int src_pitch_y,
+    const unsigned char* src_uv, int src_pitch_uv,
+    unsigned char* dst, int dst_pitch,
+    int width, int height,
+    cudaStream_t stream);
+
 namespace ai_stream {
 namespace hal {
 
@@ -164,6 +171,27 @@ bool NppImageAccelerator::drawBoxes(
             stream);
     }
 
+    return true;
+}
+
+bool NppImageAccelerator::cvtColorNv12ToBgr(
+    const void* src_y, int src_pitch_y,
+    const void* src_uv, int src_pitch_uv,
+    int width, int height,
+    uint8_t* dst_bgr, int dst_pitch,
+    void* stream) {
+    if (!src_y || !src_uv || !dst_bgr || width <= 0 || height <= 0) {
+        return false;
+    }
+    if (!cuda_initialized_) {
+        LOG_ERROR("[NppImageAccelerator] CUDA not initialized");
+        return false;
+    }
+    launchNv12ToBgrKernel(
+        static_cast<const unsigned char*>(src_y), src_pitch_y,
+        static_cast<const unsigned char*>(src_uv), src_pitch_uv,
+        dst_bgr, dst_pitch, width, height,
+        static_cast<cudaStream_t>(stream));
     return true;
 }
 

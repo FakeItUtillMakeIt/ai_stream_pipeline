@@ -126,6 +126,29 @@ bool CpuImageAccelerator::drawBoxes(
     return true;
 }
 
+bool CpuImageAccelerator::cvtColorNv12ToBgr(
+    const void* src_y, int src_pitch_y,
+    const void* src_uv, int src_pitch_uv,
+    int width, int height,
+    uint8_t* dst_bgr, int dst_pitch,
+    void* /*stream*/) {
+    if (!src_y || !src_uv || !dst_bgr || width <= 0 || height <= 0) {
+        return false;
+    }
+    try {
+        cv::Mat y_plane(height, width, CV_8UC1,
+                        const_cast<void*>(src_y), src_pitch_y);
+        cv::Mat uv_plane(height / 2, width / 2, CV_8UC2,
+                         const_cast<void*>(src_uv), src_pitch_uv);
+        cv::Mat dst(height, width, CV_8UC3, dst_bgr, dst_pitch);
+        cv::cvtColorTwoPlane(y_plane, uv_plane, dst, cv::COLOR_YUV2BGR_NV12);
+        return true;
+    } catch (const cv::Exception& e) {
+        LOG_ERROR_FMT("[CpuImageAccelerator] NV12->BGR failed: {}", e.what());
+        return false;
+    }
+}
+
 bool CpuImageAccelerator::nms(std::vector<BBox>& boxes, float iou_threshold) {
     if (boxes.empty()) return true;
 

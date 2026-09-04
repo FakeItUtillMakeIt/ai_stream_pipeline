@@ -23,6 +23,13 @@ public:
         const std::vector<BBox>& boxes,
         const DrawParams& draw) override;
 
+    bool cvtColorNv12ToBgr(
+        const void* src_y, int src_pitch_y,
+        const void* src_uv, int src_pitch_uv,
+        int width, int height,
+        uint8_t* dst_bgr, int dst_pitch,
+        void* stream = nullptr) override;
+
     bool nms(std::vector<BBox>& boxes, float iou_threshold) override;
 
     std::string getName() const override { return "CPU (OpenCV)"; }
