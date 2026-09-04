@@ -2,7 +2,7 @@
 // FFmpeg 软件编码 IVideoEncoder 后端实现——见头文件说明
 #include "ffmpeg_video_encoder.h"
 #include "ai_stream/hal/i_video_encoder.h"
-#include "h264_extradata.h"
+#include "ai_stream/hal/h264_extradata.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 
 extern "C" {

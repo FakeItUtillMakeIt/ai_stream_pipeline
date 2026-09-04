@@ -1,5 +1,7 @@
 # src/hal/CMakeLists.txt
-# 硬件抽象层（HAL）——推理引擎、图像加速、视频编解码的后端抽象
+# 硬件抽象层（HAL）——按能力分目录：infer（推理）/ encode（编码）/
+# decode（解码）/ image_accel（图像加速）/ common（共享工具），
+# 能力目录内按厂商分子目录或前缀；根目录为各能力的工厂实现。
 
 set(HAL_SOURCES
     inference_engine_factory.cpp
@@ -12,9 +14,9 @@ set(HAL_SOURCES
 
 # CPU fallback 始终编译
 list(APPEND HAL_SOURCES
-    cpu/cpu_image_accelerator.cpp
-    cpu/cpu_inference_engine.cpp
-    ffmpeg/ffmpeg_video_codec.cpp
+    image_accel/cpu/cpu_image_accelerator.cpp
+    infer/cpu/cpu_inference_engine.cpp
+    decode/cpu/ffmpeg_video_codec.cpp
     pose_estimation_factory.cpp
 )
 
@@ -22,24 +24,24 @@ list(APPEND HAL_SOURCES
 if(WITH_TENSORRT)
     find_package(TensorRT REQUIRED)
     list(APPEND HAL_SOURCES
-        tensorrt/trt_core.cpp
-        tensorrt/tensorrt_inference_engine.cpp
-        tensorrt/tensorrt_detection_engine.cpp
-        tensorrt/tensorrt_action_recognition.cpp
-        tensorrt/tensorrt_pose_estimation.cpp
+        infer/nvidia/trt_core.cpp
+        infer/nvidia/tensorrt_inference_engine.cpp
+        infer/nvidia/tensorrt_detection_engine.cpp
+        infer/nvidia/tensorrt_action_recognition.cpp
+        infer/nvidia/tensorrt_pose_estimation.cpp
     )
     # 姿态估计 GPU 预处理 kernel（需 CUDA 语言）
     if(WITH_CUDA)
-        list(APPEND HAL_SOURCES tensorrt/tensorrt_pose_kernels.cu)
+        list(APPEND HAL_SOURCES infer/nvidia/tensorrt_pose_kernels.cu)
     endif()
 endif()
 
 if(WITH_CUDA)
     find_package(CUDAToolkit REQUIRED)
     list(APPEND HAL_SOURCES
-        npp/npp_image_accelerator.cpp
-        npp/cuda_kernels_wrapper.cu
-        nvdec/nvdec_video_codec.cpp
+        image_accel/nvidia/npp_image_accelerator.cpp
+        image_accel/nvidia/cuda_kernels_wrapper.cu
+        decode/nvidia/nvdec_video_codec.cpp
     )
 endif()
 
@@ -47,11 +49,11 @@ endif()
 if(WITH_RKNN)
     find_package(RKNN REQUIRED)
     list(APPEND HAL_SOURCES
-        rknn/rknn_inference_engine.cpp
-        rknn/rknn_detection_engine.cpp
-        rga/rga_image_accelerator.cpp
-        mpp/mpp_video_codec.cpp
-        rknn/rknn_action_recognition.cpp
+        infer/rk/rknn_inference_engine.cpp
+        infer/rk/rknn_detection_engine.cpp
+        image_accel/rk/rga_image_accelerator.cpp
+        decode/rk/mpp_video_codec.cpp
+        infer/rk/rknn_action_recognition.cpp
     )
 endif()
 
@@ -59,15 +61,14 @@ endif()
 if(WITH_ASCEND)
     find_package(Ascend REQUIRED)
     list(APPEND HAL_SOURCES
-        ascend/ascend_inference_engine.cpp
-        ascend/dvpp_image_accelerator.cpp
-        ascend/dvpp_video_codec.cpp
-        ascend/ascend_action_recognition.cpp
+        image_accel/ascend/dvpp_image_accelerator.cpp
+        decode/ascend/dvpp_video_codec.cpp
+        infer/ascend/ascend_action_recognition.cpp
     )
 endif()
 
 # 编码后端与工厂（dlopen 运行时加载，所有平台编译）
-list(APPEND HAL_SOURCES video_encoder_factory.cpp mpp/mpp_video_encoder.cpp ffmpeg/ffmpeg_video_encoder.cpp)
+list(APPEND HAL_SOURCES video_encoder_factory.cpp encode/rk/mpp_video_encoder.cpp encode/cpu/ffmpeg_video_encoder.cpp)
 
 add_library(ai_stream_hal SHARED ${HAL_SOURCES})
 set_target_properties(ai_stream_hal PROPERTIES EXPORT_NAME hal)

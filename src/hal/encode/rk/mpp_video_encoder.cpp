@@ -2,7 +2,7 @@
 // Rockchip MPP 硬件 H.264 编码器实现——见头文件说明
 #include "mpp_video_encoder.h"
 #include "ai_stream/hal/i_video_encoder.h"
-#include "h264_extradata.h"
+#include "ai_stream/hal/h264_extradata.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 
 #include <dlfcn.h>
