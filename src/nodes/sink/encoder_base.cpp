@@ -101,7 +101,10 @@ bool EncoderBase::addVideoStream(int width, int height, int bitrate,
                                   const std::string& encoder_name) {
     // 编码上下文在此仅作封装载体（codecpar/time_base）；实际编码在 HAL。
     // legacy 路径复用该上下文执行 avcodec_open2。
-    if (encoder_name.find("mpp") == std::string::npos) {
+    // mpp/nvv4l2 是 HAL 后端名而非 FFmpeg 编码器名，直接按 H264 处理，
+    // 避免 avcodec_find_encoder_by_name 报"not found"误导日志。
+    if (encoder_name.find("mpp") == std::string::npos &&
+        encoder_name.find("nvv4l2") == std::string::npos) {
         const AVCodec* codec = avcodec_find_encoder_by_name(encoder_name.c_str());
         if (!codec) {
             LOG_WARN_FMT("[EncoderBase] Encoder '{}' not found, trying default H264",
@@ -154,8 +157,18 @@ bool EncoderBase::addVideoStream(int width, int height, int bitrate,
 
 bool EncoderBase::openVideoCodec() {
     // 1. 创建 HAL 编码后端
-    // 名称映射：mpp_h264 → mpp；auto → auto；其余（libx264/nvenc...）→ ffmpeg 后端
+    // 2. 名称映射：mpp_h264 → mpp；nvenc/nvv4l2 → 优先 Jetson GStreamer nvv4l2
+    //    硬编（本机可用），桌面平台该后端未注册会回退 legacy avcodec；其余 → ffmpeg 后端
     std::string backend = "auto";
+    if (configEncoderName_.find("nvenc") != std::string::npos ||
+        configEncoderName_.find("nvv4l2") != std::string::npos) {
+        backend = "nvv4l2_h264";
+    } else if (configEncoderName_.find("mpp") != std::string::npos) {
+        backend = "mpp_h264";
+    } else if (configEncoderName_ != "auto") {
+        backend = "ffmpeg_h264";
+    }
+
     hal::VideoEncoderConfig cfg;
     cfg.width = width_;
     cfg.height = height_;
@@ -163,12 +176,6 @@ bool EncoderBase::openVideoCodec() {
     cfg.fps = codec_ctx_->time_base.den;
     cfg.gop = codec_ctx_->gop_size;
     cfg.codec_name = video_codec_ ? video_codec_->name : "libx264";
-
-    if (configEncoderName_.find("mpp") != std::string::npos) {
-        backend = "mpp_h264";
-    } else if (configEncoderName_ != "auto") {
-        backend = "ffmpeg_h264";
-    }
 
     hal_encoder_ = hal::VideoEncoderFactory::instance().create(backend);
     if (hal_encoder_ && hal_encoder_->isAvailable() && hal_encoder_->open(cfg)) {

@@ -16,7 +16,9 @@ namespace hal {
  */
 enum class VideoCodecBackend {
     AUTO,       // 自动选择可用后端
-    NVDEC,      // NVIDIA NVDEC/NVENC
+    NVDEC,      // NVIDIA NVDEC/NVENC (cuvid，桌面平台)
+    NVV4L2,     // NVIDIA Jetson GStreamer nvv4l2 (NvMM/GPU 路径，本机可用)
+    V4L2,       // NVIDIA Jetson 裸 V4L2 M2M (/dev/v4l2-nvdec，真实硬件可用)
     MPP,        // Rockchip MPP (RK3588)
     DVPP,       // Huawei Ascend DVPP
     FFMPEG      // FFmpeg 软件编解码

@@ -18,9 +18,11 @@ void VideoCodecFactory::registerBackend(VideoCodecBackend type, Creator creator)
 
 VideoCodecPtr VideoCodecFactory::create(VideoCodecBackend type) {
     if (type == VideoCodecBackend::AUTO) {
-        // 优先级：NVDEC > MPP > DVPP > FFmpeg
+        // 优先级：NVDEC(cuvid) > NVV4L2(GStreamer/Jetson) > V4L2(裸/Jetson) > MPP > DVPP > FFmpeg
         std::vector<VideoCodecBackend> priority = {
             VideoCodecBackend::NVDEC,
+            VideoCodecBackend::NVV4L2,
+            VideoCodecBackend::V4L2,
             VideoCodecBackend::MPP,
             VideoCodecBackend::DVPP,
             VideoCodecBackend::FFMPEG

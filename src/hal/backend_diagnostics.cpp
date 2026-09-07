@@ -78,6 +78,8 @@ const char* videoCodecBackendName(VideoCodecBackend b) {
     switch (b) {
         case VideoCodecBackend::AUTO:   return "auto";
         case VideoCodecBackend::NVDEC:  return "nvdec";
+        case VideoCodecBackend::NVV4L2: return "nvv4l2";
+        case VideoCodecBackend::V4L2:   return "v4l2";
         case VideoCodecBackend::MPP:    return "mpp";
         case VideoCodecBackend::DVPP:   return "dvpp";
         case VideoCodecBackend::FFMPEG: return "ffmpeg";

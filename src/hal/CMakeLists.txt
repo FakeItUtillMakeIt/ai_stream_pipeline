@@ -43,6 +43,14 @@ if(WITH_CUDA)
         image_accel/nvidia/cuda_kernels_wrapper.cu
         decode/nvidia/nvdec_video_codec.cpp
     )
+    # Jetson V4L2 NVDEC/NVENC 后端（aarch64 平台，设备节点 + 头文件仅存在于 Jetson）
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+        list(APPEND HAL_SOURCES
+            decode/nvidia/v4l2_video_codec.cpp
+            decode/nvidia/gst_v4l2_video_codec.cpp
+            encode/nvidia/gst_v4l2_video_encoder.cpp
+        )
+    endif()
 endif()
 
 # RKNN 后端
@@ -106,6 +114,15 @@ if(WITH_CUDA)
     find_package(CUDAToolkit REQUIRED)
     target_compile_definitions(ai_stream_hal PRIVATE WITH_CUDA)
     target_link_libraries(ai_stream_hal PRIVATE CUDA::cudart)
+    # Jetson V4L2 后端需要 NVIDIA Multimedia API 扩展头文件 + GStreamer
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+        target_include_directories(ai_stream_hal PRIVATE /usr/src/jetson_multimedia_api/include)
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(GST REQUIRED gstreamer-1.0 gstreamer-app-1.0 gstreamer-base-1.0)
+        target_include_directories(ai_stream_hal PRIVATE ${GST_INCLUDE_DIRS})
+        target_link_libraries(ai_stream_hal PRIVATE ${GST_LIBRARIES})
+        target_compile_options(ai_stream_hal PRIVATE ${GST_CFLAGS_OTHER})
+    endif()
 endif()
 
 if(WITH_RKNN)
