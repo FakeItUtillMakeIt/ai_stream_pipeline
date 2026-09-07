@@ -40,6 +40,9 @@ public:
 private:
     bool initDecoder();
     void cleanup();
+    // 将解码帧统一转换为 BGR24（单次 swscale），避免 decode 节点再做
+    // 一次 NV12->BGR 转换，减少 CPU 开销（软件解码本就吃紧）。
+    bool ensureBgrConverter(int width, int height, int src_format);
 
     std::string codec_name_;
     const uint8_t* extradata_ = nullptr;
@@ -47,6 +50,7 @@ private:
 
     AVCodecContext* codec_ctx_ = nullptr;
     AVFrame* frame_ = nullptr;
+    AVFrame* bgr_frame_ = nullptr;
     AVPacket* packet_ = nullptr;
     SwsContext* sws_ctx_ = nullptr;
     bool initialized_ = false;

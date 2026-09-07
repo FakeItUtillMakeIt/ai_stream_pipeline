@@ -5,6 +5,7 @@
 #include "3rd_party/log_mgr/log_mgr.h"
 
 #include <cuda_runtime.h>
+#include <dlfcn.h>
 
 extern "C" {
 #include <libavutil/imgutils.h>
@@ -30,6 +31,15 @@ bool NvdecVideoCodec::isAvailable() const {
     if (err != cudaSuccess || device_count == 0) {
         return false;
     }
+
+    // FFmpeg 的 cuvid 解码器依赖 libnvcuvid.so.1（桌面驱动专属）。
+    // Jetson 等平台缺失该库，若仍选中 NVDEC 会在 avcodec_open2 中崩溃，
+    // 这里视为不可用，让工厂回退到 FFmpeg 软件解码。
+    void* nvcuvid = dlopen("libnvcuvid.so.1", RTLD_LAZY);
+    if (!nvcuvid) {
+        return false;
+    }
+    dlclose(nvcuvid);
 
     // 检查 FFmpeg 是否支持 CUDA hwaccel
     AVHWDeviceType hw_type = av_hwdevice_find_type_by_name("cuda");
@@ -86,12 +96,22 @@ bool NvdecVideoCodec::initDecoder() {
     }
 
     const AVCodec* codec = nullptr;
+    bool use_cuvid = false;
 
-    // 首先尝试 cuvid 专用解码器
+    // 首先尝试 cuvid 专用解码器（需确认 libnvcuvid.so.1 可用，
+    // 否则 avcodec_open2 可能在缺失该库的平台上崩溃）
     if (cuvid_name) {
         codec = avcodec_find_decoder_by_name(cuvid_name);
         if (codec) {
-            LOG_INFO_FMT("[NvdecVideoCodec] Found cuvid decoder: {}", cuvid_name);
+            void* nvcuvid = dlopen("libnvcuvid.so.1", RTLD_LAZY);
+            if (nvcuvid) {
+                dlclose(nvcuvid);
+                use_cuvid = true;
+                LOG_INFO_FMT("[NvdecVideoCodec] Found cuvid decoder: {}", cuvid_name);
+            } else {
+                LOG_WARN_FMT("[NvdecVideoCodec] cuvid library unavailable, using software decoder");
+                codec = nullptr;
+            }
         }
     }
 
@@ -116,30 +136,34 @@ bool NvdecVideoCodec::initDecoder() {
         return false;
     }
 
-    // 尝试设置 CUDA hwaccel
-    AVHWDeviceType hw_type = av_hwdevice_find_type_by_name("cuda");
-    if (hw_type != AV_HWDEVICE_TYPE_NONE) {
-        int ret = av_hwdevice_ctx_create(&hw_device_ctx_, hw_type, nullptr, nullptr, 0);
-        if (ret == 0) {
-            codec_ctx_->hw_device_ctx = av_buffer_ref(hw_device_ctx_);
+    // 仅在使用 cuvid 解码器时启用 CUDA hwaccel（同样依赖 libnvcuvid.so.1）；
+    // 软件解码路径不做硬件加速，避免缺失该库时崩溃
+    if (use_cuvid) {
+        // 尝试设置 CUDA hwaccel
+        AVHWDeviceType hw_type = av_hwdevice_find_type_by_name("cuda");
+        if (hw_type != AV_HWDEVICE_TYPE_NONE) {
+            int ret = av_hwdevice_ctx_create(&hw_device_ctx_, hw_type, nullptr, nullptr, 0);
+            if (ret == 0) {
+                codec_ctx_->hw_device_ctx = av_buffer_ref(hw_device_ctx_);
 
-            // 设置 get_format 回调以使用 CUDA 格式
-            codec_ctx_->get_format = [](AVCodecContext* ctx, const enum AVPixelFormat* pix_fmts) -> enum AVPixelFormat {
-                for (const enum AVPixelFormat* p = pix_fmts; *p != AV_PIX_FMT_NONE; p++) {
-                    if (*p == AV_PIX_FMT_CUDA) {
-                        return *p;
+                // 设置 get_format 回调以使用 CUDA 格式
+                codec_ctx_->get_format = [](AVCodecContext* ctx, const enum AVPixelFormat* pix_fmts) -> enum AVPixelFormat {
+                    for (const enum AVPixelFormat* p = pix_fmts; *p != AV_PIX_FMT_NONE; p++) {
+                        if (*p == AV_PIX_FMT_CUDA) {
+                            return *p;
+                        }
                     }
-                }
-                // 没有 CUDA 格式可用，使用第一个
-                return pix_fmts[0];
-            };
+                    // 没有 CUDA 格式可用，使用第一个
+                    return pix_fmts[0];
+                };
 
-            LOG_INFO("[NvdecVideoCodec] CUDA hwaccel enabled");
-        } else {
-            LOG_WARN("[NvdecVideoCodec] Failed to create CUDA hw device, using software");
-            if (hw_device_ctx_) {
-                av_buffer_unref(&hw_device_ctx_);
-                hw_device_ctx_ = nullptr;
+                LOG_INFO("[NvdecVideoCodec] CUDA hwaccel enabled");
+            } else {
+                LOG_WARN("[NvdecVideoCodec] Failed to create CUDA hw device, using software");
+                if (hw_device_ctx_) {
+                    av_buffer_unref(&hw_device_ctx_);
+                    hw_device_ctx_ = nullptr;
+                }
             }
         }
     }

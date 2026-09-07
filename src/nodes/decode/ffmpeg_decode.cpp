@@ -262,6 +262,12 @@ std::shared_ptr<core::VideoFramePacket> FFmpegDecodeNode::decodePacket(
 
     cv::Mat mat;
 
+    // 软件解码后端已直接输出 BGR24：不再需要 sws 转换，仅按 pitch 拷贝到
+    // cv::Mat（codec 内部帧缓冲每帧复用，必须 clone）。
+    if (decoded.format == AV_PIX_FMT_BGR24 && output_bgr_ && decoded.data) {
+        cv::Mat bgr(height, width, CV_8UC3, decoded.data, decoded.pitch);
+        mat = bgr.clone();
+    } else {
     // 检查是否为硬件解码的 NV12 格式，需要转换为 BGR
     bool is_nv12 = (decoded.format == AV_PIX_FMT_NV12 ||
                     decoded.format == AV_PIX_FMT_CUDA);
@@ -388,6 +394,7 @@ std::shared_ptr<core::VideoFramePacket> FFmpegDecodeNode::decodePacket(
         // 直接输出原始格式
         mat = cv::Mat(height, width, CV_8UC3);
     }
+    } // else: BGR24 fast path
 
     ctx->in_use = false;
 

@@ -193,23 +193,69 @@ bool EncoderBase::openVideoCodec() {
     hal_encoder_.reset();
 
     // 2. legacy：avcodec 软编直驱
+    //    指定编码器打开失败时（如 Jetson 环境缺少 libnvidia-encode.so.1，
+    //    导致 h264_nvenc 不可用），自动回退到 libx264 软编，避免管线启动失败。
+    auto open_legacy = [this](const char* codec_name, int bitrate_bps) -> bool {
+        const AVCodec* codec = avcodec_find_encoder_by_name(codec_name);
+        if (!codec) {
+            LOG_WARN_FMT("[EncoderBase] Encoder '{}' not found", codec_name);
+            return false;
+        }
+        video_codec_ = codec;
+
+        AVCodecContext* new_ctx = avcodec_alloc_context3(codec);
+        if (!new_ctx) {
+            LOG_ERROR_FMT("[EncoderBase] Failed to allocate codec context for '{}'", codec_name);
+            return false;
+        }
+        avcodec_free_context(&codec_ctx_);
+        codec_ctx_ = new_ctx;
+
+        codec_ctx_->codec_type = AVMEDIA_TYPE_VIDEO;
+        codec_ctx_->bit_rate = bitrate_bps;
+        codec_ctx_->width = width_;
+        codec_ctx_->height = height_;
+        codec_ctx_->time_base = (AVRational){1, 25};
+        codec_ctx_->framerate = (AVRational){25, 1};
+        codec_ctx_->gop_size = 12;
+        codec_ctx_->max_b_frames = 2;
+        codec_ctx_->pix_fmt = AV_PIX_FMT_YUV420P;
+        if (fmt_ctx_ && (fmt_ctx_->oformat->flags & AVFMT_GLOBALHEADER)) {
+            codec_ctx_->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+        }
+
+        int ret = avcodec_open2(codec_ctx_, codec, nullptr);
+        if (ret < 0) {
+            char errbuf[256] = {0};
+            av_strerror(ret, errbuf, sizeof(errbuf));
+            LOG_ERROR_FMT("[EncoderBase] Failed to open codec '{}': {}", codec_name, errbuf);
+            return false;
+        }
+        if (avcodec_parameters_from_context(video_stream_->codecpar, codec_ctx_) < 0) {
+            LOG_ERROR("[EncoderBase] avcodec_parameters_from_context failed");
+            return false;
+        }
+        legacy_codec_opened_ = true;
+        LOG_INFO_FMT("[EncoderBase] Legacy avcodec encoder active: {}", codec_name);
+        return true;
+    };
+
     if (!video_codec_) {
         LOG_ERROR("[EncoderBase] Codec not resolved");
         return false;
     }
-    int ret = avcodec_open2(codec_ctx_, video_codec_, nullptr);
-    if (ret < 0) {
-        char errbuf[256] = {0};
-        av_strerror(ret, errbuf, sizeof(errbuf));
-        LOG_ERROR_FMT("[EncoderBase] Failed to open codec: {}", errbuf);
+    const int bitrate_bps = codec_ctx_->bit_rate;
+    if (open_legacy(video_codec_->name, bitrate_bps)) {
+        return true;
+    }
+    if (strcmp(video_codec_->name, "libx264") == 0) {
         return false;
     }
-    if (avcodec_parameters_from_context(video_stream_->codecpar, codec_ctx_) < 0) {
-        LOG_ERROR("[EncoderBase] avcodec_parameters_from_context failed");
+    LOG_WARN_FMT("[EncoderBase] Encoder '{}' unavailable, falling back to libx264",
+                 video_codec_->name);
+    if (!open_legacy("libx264", bitrate_bps)) {
         return false;
     }
-    legacy_codec_opened_ = true;
-    LOG_INFO("[EncoderBase] Legacy avcodec encoder active");
     return true;
 }
 

@@ -66,12 +66,29 @@ bool FFmpegVideoCodec::decode(const uint8_t* packet_data, int packet_size,
         return false;
     }
 
+    // 软件解码器输出多为平面格式（YUV420P 等），而下游 decode 节点期望
+    // 单平面 BGR（或 NV12 的 Y+UV）。这里统一转换为 BGR24，只需一次
+    // swscale，解码节点直接封装为 cv::Mat，避免二次转换拖慢软件解码。
+    AVFrame* out = frame_;
+    if (frame_->format != AV_PIX_FMT_BGR24) {
+        if (!ensureBgrConverter(frame_->width, frame_->height, frame_->format)) {
+            return false;
+        }
+        sws_scale(sws_ctx_,
+                  (const uint8_t* const*)frame_->data, frame_->linesize,
+                  0, frame_->height,
+                  bgr_frame_->data, bgr_frame_->linesize);
+        out = bgr_frame_;
+    }
+
     // 填充输出帧
-    frame.data = frame_->data[0];
-    frame.width = codec_ctx_->width;
-    frame.height = codec_ctx_->height;
-    frame.pitch = frame_->linesize[0];
-    frame.format = codec_ctx_->pix_fmt;
+    frame.data = out->data[0];
+    frame.width = out->width;
+    frame.height = out->height;
+    frame.pitch = out->linesize[0];
+    frame.data_uv = nullptr;
+    frame.pitch_uv = 0;
+    frame.format = AV_PIX_FMT_BGR24;
     frame.owns_data = false;
 
     return true;
@@ -80,6 +97,48 @@ bool FFmpegVideoCodec::decode(const uint8_t* packet_data, int packet_size,
 void FFmpegVideoCodec::release() {
     cleanup();
     LOG_DEBUG("[FFmpegVideoCodec] Released");
+}
+
+bool FFmpegVideoCodec::ensureBgrConverter(int width, int height, int src_format) {
+    if (src_format == AV_PIX_FMT_BGR24) {
+        return true;
+    }
+
+    if (bgr_frame_ &&
+        bgr_frame_->width == width && bgr_frame_->height == height &&
+        bgr_frame_->format == AV_PIX_FMT_BGR24) {
+        return true;
+    }
+
+    if (sws_ctx_) {
+        sws_freeContext(sws_ctx_);
+        sws_ctx_ = nullptr;
+    }
+    if (bgr_frame_) {
+        av_frame_free(&bgr_frame_);
+    }
+
+    bgr_frame_ = av_frame_alloc();
+    if (!bgr_frame_) {
+        LOG_ERROR("[FFmpegVideoCodec] Failed to allocate BGR frame");
+        return false;
+    }
+    bgr_frame_->format = AV_PIX_FMT_BGR24;
+    bgr_frame_->width = width;
+    bgr_frame_->height = height;
+    if (av_frame_get_buffer(bgr_frame_, 32) < 0) {
+        LOG_ERROR("[FFmpegVideoCodec] Failed to allocate BGR frame buffer");
+        return false;
+    }
+
+    sws_ctx_ = sws_getContext(width, height, static_cast<AVPixelFormat>(src_format),
+                              width, height, AV_PIX_FMT_BGR24,
+                              SWS_FAST_BILINEAR, nullptr, nullptr, nullptr);
+    if (!sws_ctx_) {
+        LOG_ERROR("[FFmpegVideoCodec] Failed to create sws context");
+        return false;
+    }
+    return true;
 }
 
 bool FFmpegVideoCodec::isAvailable() const {
@@ -144,6 +203,9 @@ void FFmpegVideoCodec::cleanup() {
     if (sws_ctx_) {
         sws_freeContext(sws_ctx_);
         sws_ctx_ = nullptr;
+    }
+    if (bgr_frame_) {
+        av_frame_free(&bgr_frame_);
     }
     if (packet_) {
         av_packet_free(&packet_);
