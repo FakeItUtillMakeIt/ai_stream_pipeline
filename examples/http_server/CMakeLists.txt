@@ -1,5 +1,5 @@
 find_package(nlohmann_json REQUIRED)
-find_package(spdlog REQUIRED)
+#find_package(spdlog REQUIRED)
 
 add_executable(ai_stream_server 
     ${PROJECT_SOURCE_DIR}/3rd_party/log_mgr/log_mgr.cpp

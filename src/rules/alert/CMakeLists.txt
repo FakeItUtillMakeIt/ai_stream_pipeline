@@ -25,6 +25,7 @@ target_include_directories(alert_rules
 target_link_libraries(alert_rules
     PUBLIC
         nlohmann_json::nlohmann_json
+        spdlog::spdlog
     PRIVATE
         opencv_core
         opencv_imgproc

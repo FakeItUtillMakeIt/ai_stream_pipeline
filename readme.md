@@ -51,7 +51,7 @@ ctest --test-dir build --output-on-failure
 ./build/src/http/http_server 0.0.0.0 8080
 ```
 
-详细说明见 [compile.md](compile.md) 与 [deployment.md](deployment.md)。
+详细说明见 [compile.md](./docs/compile.md) 与 [deployment.md](./docs/deployment.md)。
 
 ## 支持的平台后端
 

@@ -22,6 +22,7 @@ target_include_directories(alert_node
 target_link_libraries(alert_node
     PUBLIC
         nlohmann_json::nlohmann_json
+        spdlog::spdlog
 )   
 
 if(WITH_ALERT)

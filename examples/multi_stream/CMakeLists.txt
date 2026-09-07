@@ -1,7 +1,7 @@
 
 
 find_package(nlohmann_json REQUIRED)
-find_package(spdlog REQUIRED)
+#find_package(spdlog REQUIRED)
 
 add_executable(multi_stream main.cpp)
 

@@ -104,8 +104,37 @@ if(NOT spdlog_FOUND)
     set(SPDLOG_BUILD_SHARED ON CACHE BOOL "" FORCE)
     set(SPDLOG_INSTALL OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(spdlog)
+    # 注意：FetchContent_MakeAvailable 会自动创建 spdlog::spdlog 目标
+    # 设置一个变量表示使用FetchContent版本
+    set(SPDLOG_FETCHED TRUE)
+else()
+    find_package(spdlog REQUIRED)
+    set(SPDLOG_FETCHED FALSE)
 endif()
-find_package(spdlog REQUIRED)
+
+# FetchContent 方式获取的 spdlog 是普通（非 find_package 导入）目标，
+# 无法被 install(EXPORT) 引用，否则生成阶段报
+# "requires target spdlog that is not in any export set"。
+# 因此把 spdlog 一并加入导出集并随包安装（含头文件）。
+if(SPDLOG_FETCHED)
+    set_target_properties(spdlog PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES
+            "$<BUILD_INTERFACE:${spdlog_SOURCE_DIR}/include>;$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+    )
+    install(TARGETS spdlog
+        EXPORT ai_stream_pipeline-targets
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    )
+    install(DIRECTORY ${spdlog_SOURCE_DIR}/include/spdlog
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    )
+endif()
+
+# 不再需要再次 find_package(spdlog REQUIRED)
+# 直接使用 spdlog::spdlog 目标
 find_package(nlohmann_json REQUIRED)
 
 # 视频/图像处理核心依赖
@@ -278,6 +307,7 @@ target_include_directories(ai_stream_core
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
         ${OpenCV_INCLUDE_DIRS}
+        ${spdlog_INCLUDE_DIRS}
 )
 
 # 核心库链接基础依赖

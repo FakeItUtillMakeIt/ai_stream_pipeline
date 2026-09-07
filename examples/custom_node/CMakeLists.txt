@@ -1,7 +1,7 @@
 
 find_package(OpenCV REQUIRED)
 find_package(nlohmann_json REQUIRED)
-find_package(spdlog REQUIRED)
+#find_package(spdlog REQUIRED)
 
 # 将自定义节点编译为静态库（可选），或直接加入可执行文件
 add_library(my_custom_node STATIC my_custom_node.cpp)

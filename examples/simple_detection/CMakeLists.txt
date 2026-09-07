@@ -1,5 +1,5 @@
 find_package(nlohmann_json REQUIRED)
-find_package(spdlog REQUIRED)
+#find_package(spdlog REQUIRED)
 find_package(OpenCV REQUIRED)
 
 add_executable(simple_detection
