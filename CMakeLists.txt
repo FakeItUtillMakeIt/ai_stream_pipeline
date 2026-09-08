@@ -46,6 +46,7 @@ option(WITH_CPU_FALLBACK "Enable CPU fallback for preprocess/postprocess/draw" O
 
 option(WITH_TRACK "Enable tracking node" ON)
 option(WITH_ALERT "Enable alert node" ON)
+option(WITH_FTP "Enable FTP upload (libcurl)" ON)
 
 # ------------------------------------------------------------------------------
 # 2. 全局编译设置
@@ -151,14 +152,57 @@ else()
 endif()
 find_package(FFmpeg REQUIRED COMPONENTS avcodec avformat avutil swscale)
 
-# FTP上传依赖（可选）
+# FTP上传依赖（可选）——与 spdlog 同策略：
+# 优先系统 libcurl，找不到则从 GitHub FetchContent 拉取构建
+if(WITH_FTP)
 find_package(CURL QUIET)
 if(CURL_FOUND)
     message(STATUS "Found CURL: ${CURL_LIBRARIES}")
-    set(WITH_FTP ON)
+    set(CURL_FETCHED FALSE)
 else()
-    message(WARNING "CURL not found, FTP upload feature will be disabled")
-    set(WITH_FTP OFF)
+    message(STATUS "System CURL not found, fetching libcurl from GitHub...")
+    include(FetchContent)
+    FetchContent_Declare(
+        curl
+        GIT_REPOSITORY https://github.com/curl/curl.git
+        GIT_TAG curl-8_7_1
+        GIT_SHALLOW TRUE
+    )
+    # 最小化构建：仅静态 libcurl，禁用测试/示例与不必要协议，
+    # 避免拉入 OpenSSL/PSL 等额外依赖（FTP/FTPS 无需 TLS 后端也可用）
+    set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    set(CURL_DISABLE_LDAP ON CACHE BOOL "" FORCE)
+    set(CURL_DISABLE_LDAPS ON CACHE BOOL "" FORCE)
+    set(CURL_DISABLE_DICT ON CACHE BOOL "" FORCE)
+    set(CURL_DISABLE_TELNET ON CACHE BOOL "" FORCE)
+    set(CURL_DISABLE_TFTP ON CACHE BOOL "" FORCE)
+    set(CURL_DISABLE_POP3 ON CACHE BOOL "" FORCE)
+    set(CURL_DISABLE_IMAP ON CACHE BOOL "" FORCE)
+    set(CURL_DISABLE_SMTP ON CACHE BOOL "" FORCE)
+    set(CURL_DISABLE_GOPHER ON CACHE BOOL "" FORCE)
+    set(CURL_DISABLE_SMB ON CACHE BOOL "" FORCE)
+    set(CURL_DISABLE_MQTT ON CACHE BOOL "" FORCE)
+    set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
+    set(CURL_USE_LIBSSH2 OFF CACHE BOOL "" FORCE)
+    set(CURL_USE_LIBIDN2 OFF CACHE BOOL "" FORCE)
+    # 仅本子工程内静态构建 + 位置无关（静态库要链接进共享的 ai_stream_nodes，
+    # 必须 -fPIC），不污染全局 BUILD_SHARED_LIBS
+    set(_saved_build_shared_libs "${BUILD_SHARED_LIBS}")
+    set(_saved_position_independent "${CMAKE_POSITION_INDEPENDENT_CODE}")
+    set(BUILD_SHARED_LIBS OFF)
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+    FetchContent_MakeAvailable(curl)
+    set(BUILD_SHARED_LIBS "${_saved_build_shared_libs}")
+    set(CMAKE_POSITION_INDEPENDENT_CODE "${_saved_position_independent}")
+    # curl 的 CMake 自带 CURL::libcurl 别名（普通目标，PRIVATE 链接无需导出）
+    if(NOT TARGET CURL::libcurl)
+        add_library(CURL::libcurl ALIAS libcurl)
+    endif()
+    set(CURL_FETCHED TRUE)
+endif()
+else()
+    message(STATUS "FTP upload disabled (WITH_FTP=OFF)")
 endif()
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
