@@ -47,6 +47,10 @@ public:
     bool isAvailable() const override;
     void* getRawContext() const override;
     void* getRawEngine() const override;
+    size_t getDeviceMemorySize() const override;
+    size_t updateDeviceMemorySizeForShapes() override;
+    bool setDeviceMemory(void* ptr) override;
+    bool setDeviceMemoryV2(void* ptr, int64_t size) override;
 
     /**
      * @brief 获取原始 TensorRT context（用于 CUDA Graph 等高级优化）

@@ -142,6 +142,22 @@ void* TensorrtDetectionEngine::getRawEngine() const {
     return core_.engine();
 }
 
+size_t TensorrtDetectionEngine::getDeviceMemorySize() const {
+    return core_.getDeviceMemorySize();
+}
+
+size_t TensorrtDetectionEngine::updateDeviceMemorySizeForShapes() {
+    return core_.updateDeviceMemorySizeForShapes();
+}
+
+bool TensorrtDetectionEngine::setDeviceMemory(void* ptr) {
+    return core_.setDeviceMemory(ptr);
+}
+
+bool TensorrtDetectionEngine::setDeviceMemoryV2(void* ptr, int64_t size) {
+    return core_.setDeviceMemoryV2(ptr, size);
+}
+
 nvinfer1::IExecutionContext* TensorrtDetectionEngine::getTensorRTContext() const {
     return static_cast<nvinfer1::IExecutionContext*>(core_.context());
 }

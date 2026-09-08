@@ -89,6 +89,26 @@ public:
     /** 同步指定流（nullptr 时同步内部流） */
     bool synchronize();
 
+    /** 获取执行推理所需的设备端 workspace 大小（基于 engine 静态估算） */
+    size_t getDeviceMemorySize() const;
+
+    /**
+     * @brief 根据当前已设置的 input shape 重新计算所需设备内存（含 activation + scratch）
+     * 必须在 setInputShape 之后调用；返回 0 表示失败
+     */
+    size_t updateDeviceMemorySizeForShapes();
+
+    /**
+     * @brief 设置预分配的设备端 workspace（TRT 10.3: deprecated 但仍可用）
+     * 需在 loadEngine 之后、enqueue 之前调用
+     */
+    bool setDeviceMemory(void* ptr);
+
+    /**
+     * @brief 设置预分配的设备端 workspace 及其大小（TRT 10.3 新 API）
+     */
+    bool setDeviceMemoryV2(void* ptr, int64_t size);
+
     // 原生句柄（CUDA Graph 等高级用途）
     void* context() const;   // nvinfer1::IExecutionContext*
     void* engine() const;    // nvinfer1::ICudaEngine*

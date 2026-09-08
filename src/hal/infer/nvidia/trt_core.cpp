@@ -165,6 +165,28 @@ bool TrtCore::synchronize() {
     return cudaStreamSynchronize(static_cast<cudaStream_t>(impl_->stream)) == cudaSuccess;
 }
 
+size_t TrtCore::getDeviceMemorySize() const {
+    if (!impl_->engine) return 0;
+    return static_cast<size_t>(impl_->engine->getDeviceMemorySize());
+}
+
+size_t TrtCore::updateDeviceMemorySizeForShapes() {
+    if (!impl_->context) return 0;
+    return impl_->context->updateDeviceMemorySizeForShapes();
+}
+
+bool TrtCore::setDeviceMemory(void* ptr) {
+    if (!impl_->context) return false;
+    impl_->context->setDeviceMemory(ptr);
+    return true;
+}
+
+bool TrtCore::setDeviceMemoryV2(void* ptr, int64_t size) {
+    if (!impl_->context) return false;
+    impl_->context->setDeviceMemoryV2(ptr, size);
+    return true;
+}
+
 void* TrtCore::context() const { return impl_->context; }
 void* TrtCore::engine() const { return impl_->engine; }
 

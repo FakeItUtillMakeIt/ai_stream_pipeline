@@ -3,6 +3,7 @@
 
 #include "ai_stream/core/node.h"
 #include "3rd_party/log_mgr/log_mgr.h"
+#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 
@@ -102,6 +103,11 @@ public:
         if (detector_config.contains("device_id")) {
             setDeviceId(detector_config["device_id"].get<int>());
         }
+        // cuda_graph 必须在 loadModel 之前设置，因为 initEngine 内部
+        // 根据 cuda_graph_enabled_ 决定是否预捕获 CUDA Graph。
+        if (detector_config.contains("cuda_graph")) {
+            setExtraParam("cuda_graph", detector_config["cuda_graph"]);
+        }
         if (detector_config.contains("model_path")) {
             std::string model_path = detector_config["model_path"].get<std::string>();
             if (!loadModel(model_path)) {
@@ -113,6 +119,11 @@ public:
             setClassNames(detector_config["model_class_names"].get<std::vector<std::string>>());
         }
         return true;
+    }
+
+    // 子类可覆盖以处理额外参数（如 cuda_graph）
+    virtual void setExtraParam(const std::string& key, const nlohmann::json& value) {
+        (void)key; (void)value;
     }
 };
 

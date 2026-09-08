@@ -140,6 +140,27 @@ public:
      * @brief 获取原始引擎指针（用于高级优化）
      */
     virtual void* getRawEngine() const = 0;
+
+    /**
+     * @brief 获取执行推理所需的设备端 workspace 大小（用于 CUDA Graph 预分配）
+     */
+    virtual size_t getDeviceMemorySize() const { return 0; }
+
+    /**
+     * @brief 根据当前已设置的 input shape 重新计算所需设备内存（含 activation + scratch）
+     * 必须在 setInputShape 之后调用
+     */
+    virtual size_t updateDeviceMemorySizeForShapes() { return 0; }
+
+    /**
+     * @brief 设置预分配的设备端 workspace（避免 enqueueV3 内部 cudaMallocAsync）
+     */
+    virtual bool setDeviceMemory(void* ptr) { (void)ptr; return false; }
+
+    /**
+     * @brief 设置预分配的设备端 workspace 及其大小（TRT 10.3+ 推荐）
+     */
+    virtual bool setDeviceMemoryV2(void* ptr, int64_t size) { (void)ptr; (void)size; return false; }
 };
 
 using DetectionInferenceEnginePtr = std::shared_ptr<IDetectionInferenceEngine>;

@@ -684,13 +684,63 @@ bool DetectionInferNode::captureCudaGraph(int batch_size) {
         engine_->setOutputTensor(batch_ids_name_, d_batch_ids_);
         engine_->setOutputTensor(num_dets_name_, d_num_dets_);
 
+        // TRT 10.3: 使用 updateDeviceMemorySizeForShapes 获取实际所需大小（含 activation + scratch）
+        size_t actual_mem_size = engine_->updateDeviceMemorySizeForShapes();
+        size_t static_mem_size = engine_->getDeviceMemorySize();
+        size_t workspace_size = (actual_mem_size > 0) ? actual_mem_size : static_mem_size;
+
+        LOG_INFO_FMT("[DetectionInfer] CUDA Graph: workspace size: static={}KB, actual={}KB",
+                     static_mem_size / 1024, actual_mem_size / 1024);
+
+        // 预分配 workspace，避免 enqueueV3 在 capture 期间调用 cudaMallocAsync
+        void* d_workspace = nullptr;
+        if (workspace_size > 0) {
+            // 多分配 256MB 作为安全余量，应对 TRT 内部额外分配
+            size_t alloc_size = workspace_size + 256 * 1024 * 1024;
+            cudaError_t err = cudaMalloc(&d_workspace, alloc_size);
+            if (err != cudaSuccess) {
+                LOG_ERROR_FMT("[DetectionInfer] CUDA Graph: cudaMalloc workspace failed ({}KB): {}",
+                              alloc_size / 1024, cudaGetErrorString(err));
+                return false;
+            }
+            // 使用 setDeviceMemoryV2 设置内存和大小
+            if (!engine_->setDeviceMemoryV2(d_workspace, static_cast<int64_t>(alloc_size))) {
+                LOG_ERROR_FMT("[DetectionInfer] CUDA Graph: setDeviceMemoryV2 failed");
+                cudaFree(d_workspace);
+                return false;
+            }
+        }
+
+        // warmup: enqueueV3 首次调用可能触发内部初始化
+        if (!raw_context->enqueueV3(compute_stream_)) {
+            LOG_ERROR_FMT("[DetectionInfer] CUDA Graph warmup enqueueV3 failed");
+            if (d_workspace) cudaFree(d_workspace);
+            return false;
+        }
+        cudaStreamSynchronize(compute_stream_);
+
+        // 二次 warmup: 确保所有内部状态已初始化
+        if (!raw_context->enqueueV3(compute_stream_)) {
+            LOG_ERROR_FMT("[DetectionInfer] CUDA Graph second warmup enqueueV3 failed");
+            if (d_workspace) cudaFree(d_workspace);
+            return false;
+        }
+        cudaStreamSynchronize(compute_stream_);
+
         // 开始捕获 CUDA Graph
-        cudaStreamBeginCapture(compute_stream_, cudaStreamCaptureModeGlobal);
+        cudaError_t begin_err = cudaStreamBeginCapture(compute_stream_, cudaStreamCaptureModeGlobal);
+        if (begin_err != cudaSuccess) {
+            LOG_ERROR_FMT("[DetectionInfer] CUDA Graph: beginCapture failed: {} — disabling CUDA Graph",
+                          cudaGetErrorString(begin_err));
+            if (d_workspace) cudaFree(d_workspace);
+            return false;
+        }
 
         // 执行推理（会被捕获到 graph 中）
         if (!raw_context->enqueueV3(compute_stream_)) {
             LOG_ERROR_FMT("[DetectionInfer] CUDA Graph capture: enqueueV3 failed");
             cudaStreamEndCapture(compute_stream_, &cuda_graph_);
+            if (d_workspace) cudaFree(d_workspace);
             return false;
         }
 
@@ -698,6 +748,7 @@ bool DetectionInferNode::captureCudaGraph(int batch_size) {
         cudaError_t err = cudaStreamEndCapture(compute_stream_, &cuda_graph_);
         if (err != cudaSuccess || !cuda_graph_) {
             LOG_ERROR_FMT("[DetectionInfer] CUDA Graph capture failed: {}", cudaGetErrorString(err));
+            if (d_workspace) cudaFree(d_workspace);
             return false;
         }
 
@@ -705,13 +756,18 @@ bool DetectionInferNode::captureCudaGraph(int batch_size) {
         err = cudaGraphInstantiate(&cuda_graph_exec_, cuda_graph_, nullptr, nullptr, 0);
         if (err != cudaSuccess) {
             LOG_ERROR_FMT("[DetectionInfer] CUDA Graph instantiate failed: {}", cudaGetErrorString(err));
+            if (d_workspace) cudaFree(d_workspace);
             return false;
         }
 
+        // workspace 指针需要在 graph 执行期间保持有效，不能在这里释放
+        // 它会在 destroyCudaGraph() 时释放
+        cuda_graph_workspace_ = d_workspace;
         cuda_graph_batch_size_ = batch_size;
         cuda_graph_ready_ = true;
 
-        LOG_INFO_FMT("[DetectionInfer] CUDA Graph captured and instantiated for batch_size={}", batch_size);
+        LOG_INFO_FMT("[DetectionInfer] CUDA Graph captured and instantiated for batch_size={} (workspace={}KB, alloc={}KB)",
+                     batch_size, workspace_size / 1024, (workspace_size + 256 * 1024 * 1024) / 1024);
         return true;
 
     } catch (const std::exception& e) {
@@ -744,6 +800,10 @@ void DetectionInferNode::destroyCudaGraph() {
     if (cuda_graph_) {
         cudaGraphDestroy(cuda_graph_);
         cuda_graph_ = nullptr;
+    }
+    if (cuda_graph_workspace_) {
+        cudaFree(cuda_graph_workspace_);
+        cuda_graph_workspace_ = nullptr;
     }
     cuda_graph_ready_ = false;
     cuda_graph_batch_size_ = 0;

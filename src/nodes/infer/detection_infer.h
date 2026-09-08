@@ -89,6 +89,12 @@ public:
     // CUDA Graph 开关
     void setCudaGraphEnabled(bool enable) { cuda_graph_enabled_ = enable; }
 
+    void setExtraParam(const std::string& key, const nlohmann::json& value) override {
+        if (key == "cuda_graph" && value.is_boolean()) {
+            cuda_graph_enabled_ = value.get<bool>();
+        }
+    }
+
     // 设置置信度阈值
     void setConfidenceThreshold(float thresh) { confidence_threshold_ = thresh; }
 
@@ -176,6 +182,7 @@ private:
     // CUDA Graph 相关
     cudaGraph_t cuda_graph_ = nullptr;
     cudaGraphExec_t cuda_graph_exec_ = nullptr;
+    void* cuda_graph_workspace_ = nullptr;
     int cuda_graph_batch_size_ = 0;
     std::atomic<bool> cuda_graph_enabled_{false};
     bool cuda_graph_ready_ = false;
