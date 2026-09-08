@@ -109,6 +109,12 @@ public:
      */
     bool setDeviceMemoryV2(void* ptr, int64_t size);
 
+    /** 引擎自管 workspace 指针（kUSER_MANAGED 分配，供 CUDA Graph 复用） */
+    void* workspace() const;
+
+    /** 引擎自管 workspace 大小（字节） */
+    size_t workspaceSize() const;
+
     // 原生句柄（CUDA Graph 等高级用途）
     void* context() const;   // nvinfer1::IExecutionContext*
     void* engine() const;    // nvinfer1::ICudaEngine*
