@@ -337,8 +337,12 @@ void RTSPSourceNode::workerFunc() {
         if (pkt->stream_index == video_stream_index_) {
             frame_count++;
             // 抽帧
-            if (frame_count % skip_frames_ != 0)
+            if (frame_count % skip_frames_ != 0) {
+                // av_read_frame() 为当前 AVPacket 持有了引用；跳过该帧时
+                // 也必须释放，否则抽帧比例越高，内存增长越快。
+                av_packet_unref(pkt);
                 continue;
+            }
             // 每 100 帧打印一次日志
             if (frame_count % 100 == 0) {
                 LOG_INFO_FMT("[RTSPSource] Received {} frames (stream_id={})", frame_count, my_stream_id_);
