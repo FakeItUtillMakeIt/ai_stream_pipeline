@@ -22,28 +22,20 @@ static void* g_mpp_handle = nullptr;
 static bool g_mpp_tried = false;
 static bool g_mpp_loaded = false;
 
-// 关键符号
+// 关键符号 typedef
 typedef MPP_RET (*mpp_create_fn)(MppCtx*, MppApi**);
 typedef MPP_RET (*mpp_init_fn)(MppCtx, MppCtxType, MppCodingType);
 typedef MPP_RET (*mpp_destroy_fn)(MppCtx);
 typedef MPP_RET (*mpp_packet_init_fn)(MppPacket*, void*, size_t);
 typedef MPP_RET (*mpp_packet_deinit_fn)(MppPacket*);
-typedef void (*mpp_packet_set_data_fn)(MppPacket, void*);
-typedef void (*mpp_packet_set_size_fn)(MppPacket, size_t);
-typedef void (*mpp_packet_set_pos_fn)(MppPacket, void*);
-typedef void (*mpp_packet_set_length_fn)(MppPacket, size_t);
-typedef void (*mpp_packet_set_pts_fn)(MppPacket, RK_S64);
-typedef void (*mpp_packet_set_eos_fn)(MppPacket);
-typedef MPP_RET (*mpp_buffer_group_get_internal_fn)(MppBufferGroup*, MppBufferType);
+// mpp_buffer_group_get: (group, type, mode, tag, func) — header 中 mpp_buffer_group_get_internal 是宏
+typedef MPP_RET (*mpp_buffer_group_get_fn)(MppBufferGroup*, MppBufferType, int mode, const char* tag, const char* func);
+#define MPP_BUF_MODE_INTERNAL 0
 typedef MPP_RET (*mpp_buffer_group_put_fn)(MppBufferGroup);
 typedef MPP_RET (*mpp_frame_deinit_fn)(MppFrame*);
 typedef MPP_RET (*mpp_dec_cfg_init_fn)(MppDecCfg*);
 typedef MPP_RET (*mpp_dec_cfg_deinit_fn)(MppDecCfg);
 typedef MPP_RET (*mpp_dec_cfg_set_u32_fn)(MppDecCfg, const char*, RK_U32);
-typedef void (*mpp_packet_set_data_fn2)(MppPacket, void*);
-typedef void (*mpp_packet_set_size_fn2)(MppPacket, size_t);
-typedef void (*mpp_packet_set_pos_fn2)(MppPacket, void*);
-typedef void (*mpp_packet_set_length_fn2)(MppPacket, size_t);
 typedef RK_U32 (*mpp_frame_get_width_fn)(MppFrame);
 typedef RK_U32 (*mpp_frame_get_height_fn)(MppFrame);
 typedef RK_U32 (*mpp_frame_get_hor_stride_fn)(MppFrame);
@@ -51,7 +43,7 @@ typedef RK_U32 (*mpp_frame_get_ver_stride_fn)(MppFrame);
 typedef size_t (*mpp_frame_get_buf_size_fn)(MppFrame);
 typedef RK_U32 (*mpp_frame_get_info_change_fn)(MppFrame);
 typedef MppBuffer (*mpp_frame_get_buffer_fn)(MppFrame);
-typedef void* (*mpp_buffer_get_ptr_fn)(MppBuffer);
+typedef void* (*mpp_buffer_get_ptr_with_caller_fn)(MppBuffer, const char*);
 
 static mpp_create_fn p_mpp_create = nullptr;
 static mpp_init_fn p_mpp_init = nullptr;
@@ -83,13 +75,12 @@ struct MppPriv {
     MppApi* api = nullptr;
     MppBufferGroup frm_grp = nullptr;
     MppCodingType coding = MPP_VIDEO_CodingAVC;
-    bool need_split = true;
+    bool info_changed = false;
 #endif
     std::mutex mtx;
 };
 
 MppVideoCodec::MppVideoCodec(): mpp_ctx_(nullptr), mpp_api_(nullptr) {
-    // mpp_priv_ 用 void* 持有，避免头文件依赖
     mpp_ctx_ = new MppPriv();
     initialized_ = initMpp();
     if (initialized_) LOG_DEBUG("[MppVideoCodec] Initialized");
@@ -112,9 +103,7 @@ bool MppVideoCodec::initMpp() {
 #ifdef WITH_RKNN
     if (!load_mpp()){ LOG_DEBUG("[MppVideoCodec] MPP not available on this host, fallback to FFmpeg"); return false; }
     auto priv = static_cast<MppPriv*>(mpp_ctx_);
-    // codec_name_ 可能尚未设置，延迟到 init() 再真正 mpp_init；此处仅检查库
-    // 若已有 codec_name_ 则立即初始化
-    if (codec_name_.empty()) return true; // 延迟初始化
+    if (codec_name_.empty()) return true;
     MPP_RET ret;
     MppCodingType type = MPP_VIDEO_CodingAVC;
     if (codec_name_=="h265"||codec_name_=="hevc") type = MPP_VIDEO_CodingHEVC;
@@ -129,7 +118,11 @@ bool MppVideoCodec::initMpp() {
     MppDecCfg cfg=nullptr;
     { auto fn=(mpp_dec_cfg_init_fn)dlsym(g_mpp_handle,"mpp_dec_cfg_init"); if(fn) fn(&cfg); }
     ret = priv->api->control(priv->ctx, MPP_DEC_GET_CFG, cfg);
-    if(ret==MPP_OK){ { auto fn=(mpp_dec_cfg_set_u32_fn)dlsym(g_mpp_handle,"mpp_dec_cfg_set_u32"); if(fn) fn(cfg,"base:split_parse",1); } priv->api->control(priv->ctx, MPP_DEC_SET_CFG, cfg); }
+    if(ret==MPP_OK){
+        auto fnSet=(mpp_dec_cfg_set_u32_fn)dlsym(g_mpp_handle,"mpp_dec_cfg_set_u32");
+        if(fnSet) fnSet(cfg,"base:split_parse",1);
+        priv->api->control(priv->ctx, MPP_DEC_SET_CFG, cfg);
+    }
     { auto fn=(mpp_dec_cfg_deinit_fn)dlsym(g_mpp_handle,"mpp_dec_cfg_deinit"); if(fn) fn(cfg); }
     mpp_api_ = priv->api;
     LOG_INFO_FMT("[MppVideoCodec] MPP decoder created codec={}", codec_name_);
@@ -152,29 +145,39 @@ void MppVideoCodec::cleanup(){
     initialized_=false; mpp_api_=nullptr;
 }
 
+static void handle_info_change(MppPriv* priv, MppFrame mpp_frame){
+#ifdef WITH_RKNN
+    auto fnW=(mpp_frame_get_width_fn)dlsym(g_mpp_handle,"mpp_frame_get_width");
+    auto fnH=(mpp_frame_get_height_fn)dlsym(g_mpp_handle,"mpp_frame_get_height");
+    auto fnHS=(mpp_frame_get_hor_stride_fn)dlsym(g_mpp_handle,"mpp_frame_get_hor_stride");
+    auto fnVS=(mpp_frame_get_ver_stride_fn)dlsym(g_mpp_handle,"mpp_frame_get_ver_stride");
+    auto fnBS=(mpp_frame_get_buf_size_fn)dlsym(g_mpp_handle,"mpp_frame_get_buf_size");
+    RK_U32 w=fnW?fnW(mpp_frame):0, h=fnH?fnH(mpp_frame):0;
+    RK_U32 hs=fnHS?fnHS(mpp_frame):0, vs=fnVS?fnVS(mpp_frame):0;
+    size_t buf_size=fnBS?fnBS(mpp_frame):0;
+    LOG_INFO_FMT("[MppVideoCodec] info change {}x{} stride {}x{} buf {}", w, h, hs, vs, buf_size);
+    if(!priv->frm_grp){
+        auto fnGet=(mpp_buffer_group_get_fn)dlsym(g_mpp_handle,"mpp_buffer_group_get");
+        if(fnGet) fnGet(&priv->frm_grp, MPP_BUFFER_TYPE_DRM, MPP_BUF_MODE_INTERNAL, "mpp", "decode");
+        if(!priv->frm_grp && fnGet) fnGet(&priv->frm_grp, MPP_BUFFER_TYPE_DMA_HEAP, MPP_BUF_MODE_INTERNAL, "mpp", "decode");
+        if(priv->frm_grp) priv->api->control(priv->ctx, MPP_DEC_SET_EXT_BUF_GROUP, priv->frm_grp);
+    }
+    if(priv->frm_grp){
+        auto fnLimit=(MPP_RET(*)(MppBufferGroup,size_t,RK_U32))dlsym(g_mpp_handle,"mpp_buffer_group_limit_config");
+        if(fnLimit) fnLimit(priv->frm_grp, buf_size, 24);
+    }
+    priv->api->control(priv->ctx, MPP_DEC_SET_INFO_CHANGE_READY, nullptr);
+#endif
+}
+
 bool MppVideoCodec::init(const std::string& codec_name, const uint8_t* extradata, int extradata_size){
     codec_name_=codec_name; extradata_=extradata; extradata_size_=extradata_size;
     LOG_INFO_FMT("[MppVideoCodec] init codec={} extradata={}", codec_name, extradata_size);
 #ifdef WITH_RKNN
-    // 若之前未初始化（codec_name 为空时延迟），现在真正创建
     auto priv = static_cast<MppPriv*>(mpp_ctx_);
     if(!priv->ctx){
         if(!initMpp()) return false;
         initialized_=true;
-    }
-    // 注入 extradata (SPS/PPS) 作为首包
-    if(extradata && extradata_size>0 && priv->api && priv->ctx){
-        MppPacket pkt=nullptr;
-        if(p_mpp_packet_init) p_mpp_packet_init(&pkt, const_cast<uint8_t*>(extradata), extradata_size);
-        if(pkt){
-            { auto fn=(mpp_packet_set_data_fn2)dlsym(g_mpp_handle,"mpp_packet_set_data"); if(fn) fn(pkt, const_cast<uint8_t*>(extradata)); }
-            { auto fn=(mpp_packet_set_size_fn2)dlsym(g_mpp_handle,"mpp_packet_set_size"); if(fn) fn(pkt, extradata_size); }
-            { auto fn=(mpp_packet_set_pos_fn2)dlsym(g_mpp_handle,"mpp_packet_set_pos"); if(fn) fn(pkt, const_cast<uint8_t*>(extradata)); }
-            { auto fn=(mpp_packet_set_length_fn2)dlsym(g_mpp_handle,"mpp_packet_set_length"); if(fn) fn(pkt, extradata_size); }
-            priv->api->decode_put_packet(priv->ctx, pkt);
-            // 不等待帧，extradata 仅配置解码器
-            if(p_mpp_packet_deinit) p_mpp_packet_deinit(&pkt);
-        }
     }
     return initialized_;
 #else
@@ -188,74 +191,85 @@ bool MppVideoCodec::decode(const uint8_t* packet_data, int packet_size, DecodedF
     auto priv = static_cast<MppPriv*>(mpp_ctx_);
     if(!priv || !priv->ctx || !priv->api) return false;
     std::lock_guard<std::mutex> lk(priv->mtx);
+
     MppPacket pkt=nullptr;
-    MPP_RET ret;
-    if(p_mpp_packet_init) p_mpp_packet_init(&pkt, nullptr, 0);
+    if(p_mpp_packet_init) p_mpp_packet_init(&pkt, const_cast<uint8_t*>(packet_data), packet_size);
     if(!pkt) return false;
-    // 绑定外部内存（零拷贝）
-    { auto fn=(mpp_packet_set_data_fn2)dlsym(g_mpp_handle,"mpp_packet_set_data"); if(fn) fn(pkt, const_cast<uint8_t*>(packet_data)); }
-    { auto fn=(mpp_packet_set_size_fn2)dlsym(g_mpp_handle,"mpp_packet_set_size"); if(fn) fn(pkt, packet_size); }
-    { auto fn=(mpp_packet_set_pos_fn2)dlsym(g_mpp_handle,"mpp_packet_set_pos"); if(fn) fn(pkt, const_cast<uint8_t*>(packet_data)); }
-    { auto fn=(mpp_packet_set_length_fn2)dlsym(g_mpp_handle,"mpp_packet_set_length"); if(fn) fn(pkt, packet_size); }
-    ret = priv->api->decode_put_packet(priv->ctx, pkt);
-    if(ret!=MPP_OK){ LOG_DEBUG_FMT("[MppVideoCodec] decode_put_packet ret {}", static_cast<int>(ret)); if(p_mpp_packet_deinit) p_mpp_packet_deinit(&pkt); return false; }
-    // 尝试取帧（最多 5 次超时重试）
+
+    MPP_RET ret = priv->api->decode_put_packet(priv->ctx, pkt);
+    if(ret!=MPP_OK){
+        if(ret == -1012){ // MPP_ERR_BUFFER_FULL: drain to free buffer, then retry
+            for(int drain=0;drain<3;++drain){
+                MppFrame drain_frame=nullptr;
+                priv->api->decode_get_frame(priv->ctx, &drain_frame);
+                if(drain_frame){
+                    auto fnIC=(mpp_frame_get_info_change_fn)dlsym(g_mpp_handle,"mpp_frame_get_info_change");
+                    if(fnIC && fnIC(drain_frame)) handle_info_change(priv, drain_frame);
+                    auto fnDI=(MPP_RET(*)(MppFrame*))dlsym(g_mpp_handle,"mpp_frame_deinit");
+                    if(fnDI) fnDI(&drain_frame);
+                }
+                usleep(2000);
+            }
+            ret = priv->api->decode_put_packet(priv->ctx, pkt);
+        }
+        if(ret!=MPP_OK){ if(p_mpp_packet_deinit) p_mpp_packet_deinit(&pkt); return false; }
+    }
+
+    // Get decoded frame
     MppFrame mpp_frame=nullptr;
-    for(int i=0;i<5;++i){
+    for(int i=0;i<20;++i){
         ret = priv->api->decode_get_frame(priv->ctx, &mpp_frame);
-        if(ret==MPP_ERR_TIMEOUT){ usleep(2000); continue; }
+        if(ret==MPP_ERR_TIMEOUT){ usleep(5000); continue; }
         if(ret!=MPP_OK) break;
         if(mpp_frame) break;
     }
     if(p_mpp_packet_deinit) p_mpp_packet_deinit(&pkt);
     if(!mpp_frame) return false;
-    // info change 处理
-    if(({ auto fn=(mpp_frame_get_info_change_fn)dlsym(g_mpp_handle,"mpp_frame_get_info_change"); fn?fn(mpp_frame):0; })){
-        RK_U32 w = ({ auto fn=(mpp_frame_get_width_fn)dlsym(g_mpp_handle,"mpp_frame_get_width"); fn?fn(mpp_frame):0; }), h = ({ auto fn=(mpp_frame_get_height_fn)dlsym(g_mpp_handle,"mpp_frame_get_height"); fn?fn(mpp_frame):0; });
-        RK_U32 hs = ({ auto fn=(mpp_frame_get_hor_stride_fn)dlsym(g_mpp_handle,"mpp_frame_get_hor_stride"); fn?fn(mpp_frame):0; }), vs = ({ auto fn=(mpp_frame_get_ver_stride_fn)dlsym(g_mpp_handle,"mpp_frame_get_ver_stride"); fn?fn(mpp_frame):0; });
-        size_t buf_size = ({ auto fn=(mpp_frame_get_buf_size_fn)dlsym(g_mpp_handle,"mpp_frame_get_buf_size"); fn?fn(mpp_frame):0; });
-        LOG_INFO_FMT("[MppVideoCodec] info change w={} h={} stride {}x{} buf_size {}", w,h,hs,vs,buf_size);
-        if(!priv->frm_grp){
-            auto fnGet = (MPP_RET(*)(MppBufferGroup*,MppBufferType))dlsym(g_mpp_handle,"mpp_buffer_group_get_internal");
-            if(fnGet) fnGet(&priv->frm_grp, MPP_BUFFER_TYPE_DRM);
-            if(priv->frm_grp) priv->api->control(priv->ctx, MPP_DEC_SET_EXT_BUF_GROUP, priv->frm_grp);
-        } else {
-            auto fnClear = (MPP_RET(*)(MppBufferGroup))dlsym(g_mpp_handle,"mpp_buffer_group_clear");
-            if(fnClear) fnClear(priv->frm_grp);
-        }
-        if(priv->frm_grp){
-            auto fnLimit=(MPP_RET(*)(MppBufferGroup,size_t,RK_U32))dlsym(g_mpp_handle,"mpp_buffer_group_limit_config");
-            if(fnLimit) fnLimit(priv->frm_grp, buf_size, 24);
-        }
-        priv->api->control(priv->ctx, MPP_DEC_SET_INFO_CHANGE_READY, nullptr);
-        auto fnDeinit=(MPP_RET(*)(MppFrame*))dlsym(g_mpp_handle,"mpp_frame_deinit");
-        if(fnDeinit) fnDeinit(&mpp_frame);
-        return false; // 需下一包重试
+
+    // Handle info change
+    auto fnIC=(mpp_frame_get_info_change_fn)dlsym(g_mpp_handle,"mpp_frame_get_info_change");
+    if(fnIC && fnIC(mpp_frame)){
+        handle_info_change(priv, mpp_frame);
+        auto fnDI=(MPP_RET(*)(MppFrame*))dlsym(g_mpp_handle,"mpp_frame_deinit");
+        if(fnDI) fnDI(&mpp_frame);
+        return false;
     }
-    // 正常帧
-    RK_U32 w = ({ auto fn=(mpp_frame_get_width_fn)dlsym(g_mpp_handle,"mpp_frame_get_width"); fn?fn(mpp_frame):0; });
-    RK_U32 h = ({ auto fn=(mpp_frame_get_height_fn)dlsym(g_mpp_handle,"mpp_frame_get_height"); fn?fn(mpp_frame):0; });
-    RK_U32 hs = ({ auto fn=(mpp_frame_get_hor_stride_fn)dlsym(g_mpp_handle,"mpp_frame_get_hor_stride"); fn?fn(mpp_frame):0; });
-    RK_U32 vs = ({ auto fn=(mpp_frame_get_ver_stride_fn)dlsym(g_mpp_handle,"mpp_frame_get_ver_stride"); fn?fn(mpp_frame):0; });
-    // RK_U32 fmt = mpp_frame_get_fmt(mpp_frame);
-    MppBuffer buf = ({ auto fn=(mpp_frame_get_buffer_fn)dlsym(g_mpp_handle,"mpp_frame_get_buffer"); fn?fn(mpp_frame):nullptr; });
-    void* vir = nullptr;
+
+    // Normal frame — extract data
+    auto fnW=(mpp_frame_get_width_fn)dlsym(g_mpp_handle,"mpp_frame_get_width");
+    auto fnH=(mpp_frame_get_height_fn)dlsym(g_mpp_handle,"mpp_frame_get_height");
+    auto fnHS=(mpp_frame_get_hor_stride_fn)dlsym(g_mpp_handle,"mpp_frame_get_hor_stride");
+    auto fnVS=(mpp_frame_get_ver_stride_fn)dlsym(g_mpp_handle,"mpp_frame_get_ver_stride");
+    RK_U32 w=fnW?fnW(mpp_frame):0, h=fnH?fnH(mpp_frame):0;
+    RK_U32 hs=fnHS?fnHS(mpp_frame):0, vs=fnVS?fnVS(mpp_frame):0;
+
+    auto fnBuf=(mpp_frame_get_buffer_fn)dlsym(g_mpp_handle,"mpp_frame_get_buffer");
+    MppBuffer buf=fnBuf?fnBuf(mpp_frame):nullptr;
+    void* vir=nullptr;
     if(buf){
-        auto fnPtr=(void*(*)(MppBuffer))dlsym(g_mpp_handle,"mpp_buffer_get_ptr");
-        if(fnPtr) vir = fnPtr(buf);
+        auto fnPtr=(mpp_buffer_get_ptr_with_caller_fn)dlsym(g_mpp_handle,"mpp_buffer_get_ptr_with_caller");
+        if(fnPtr) vir=fnPtr(buf, "decode");
     }
-    if(!vir){ auto fnDeinit=(MPP_RET(*)(MppFrame*))dlsym(g_mpp_handle,"mpp_frame_deinit"); if(fnDeinit) fnDeinit(&mpp_frame); return false; }
-    // 拷贝到 DecodedFrame（NV12： Y + UV）
+    if(!vir){
+        auto fnDI=(MPP_RET(*)(MppFrame*))dlsym(g_mpp_handle,"mpp_frame_deinit");
+        if(fnDI) fnDI(&mpp_frame);
+        return false;
+    }
+
+    // Copy NV12: Y + UV
     size_t y_size = hs * vs;
     size_t uv_size = hs * vs / 2;
     size_t total = y_size + uv_size;
     uint8_t* out = new uint8_t[total];
     memcpy(out, vir, total);
+
     frame.data = out; frame.data_uv = out + y_size;
     frame.width = w; frame.height = h; frame.pitch = hs; frame.pitch_uv = hs;
-    frame.format = 0; frame.owns_data = true;
-    auto fnDeinit=(MPP_RET(*)(MppFrame*))dlsym(g_mpp_handle,"mpp_frame_deinit");
-    if(fnDeinit) fnDeinit(&mpp_frame);
+    frame.format = 23; // AV_PIX_FMT_NV12
+    frame.owns_data = true;
+
+    auto fnDI=(MPP_RET(*)(MppFrame*))dlsym(g_mpp_handle,"mpp_frame_deinit");
+    if(fnDI) fnDI(&mpp_frame);
     return true;
 #else
     (void)frame;
