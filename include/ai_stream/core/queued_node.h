@@ -92,13 +92,15 @@ public:
     void pushData(std::shared_ptr<BasePacket> packet) final {
         if (!packet || !this->running_.load()) return;
         // STREAM_END 是控制包：绝不允许被背压丢弃，否则下游无法级联自停。
-        // 无视丢帧策略，必要时挤掉最旧的数据包强制入队
+        // 无视丢帧策略，必要时挤掉最旧的数据包强制入队。
+        // 推入后立即置 running_=false，让 workerLoop 在处理完该包后自然退出。
         if (packet->type == PacketType::STREAM_END) {
             while (!queue_.tryPush(packet)) {
                 std::shared_ptr<BasePacket> discarded;
                 if (!queue_.tryPop(discarded)) return;   // 队列已停止
                 this->recordDropped();
             }
+            this->running_ = false;
             return;
         }
         bool ok = false;
