@@ -69,13 +69,8 @@ bool isFrameValid(const cv::Mat& mat) {
 
     auto stats = analyzeFrame(mat);
 
-    // 条件1：绿色像素比例过高（绿色马赛克）
     if (stats.green_ratio > 0.4f) return false;
-
-    // 条件2：G 通道均值明显高于 R 和 B（整体偏绿）
     if (stats.mean_g > stats.mean_r + 20 && stats.mean_g > stats.mean_b + 20) return false;
-
-    // 条件3：R 或 B 通道标准差过低（色彩丢失）
     if (stats.std_r < 5 && stats.std_b < 5) return false;
 
     return true;
@@ -83,18 +78,12 @@ bool isFrameValid(const cv::Mat& mat) {
 
 } // anonymous namespace
 
-EvidenceNode::EvidenceNode() : IEvidenceNode("EvidenceNode") {
-    LOG_INFO("[EvidenceNode] Constructor");
-}
+EvidenceNode::EvidenceNode() : QueuedNode("EvidenceNode") {}
 
-EvidenceNode::~EvidenceNode() {
-    stop();
-    LOG_DEBUG("[EvidenceNode] Destructor");
-}
+EvidenceNode::~EvidenceNode() = default;
 
-bool EvidenceNode::start() {
+bool EvidenceNode::onStartup() {
     std::lock_guard<std::mutex> lock(mutex_);
-    running_ = true;
 
     if (video_config_.enabled) {
         if (!video_recorder_.initialize(video_config_.output_dir, video_config_.fps, video_config_.bitrate, video_config_.encoder)) {
@@ -150,11 +139,7 @@ bool EvidenceNode::start() {
     return true;
 }
 
-void EvidenceNode::stop() {
-    if (!running_.exchange(false)) {
-        return;
-    }
-
+void EvidenceNode::onShutdown() {
     {
         std::lock_guard<std::mutex> lock(pending_snapshot_mutex_);
         pending_snapshot_event_.reset();
@@ -179,23 +164,19 @@ void EvidenceNode::stop() {
     LOG_INFO("[EvidenceNode] Stopped");
 }
 
-void EvidenceNode::pushData(std::shared_ptr<core::BasePacket> packet) {
+void EvidenceNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
+    if (!packet) return;
+
     if (packet->type == core::PacketType::STREAM_END) {
-        LOG_INFO("[EvidenceNode] Received stream end");
-        // 不在此处调用 stop()，避免从 worker 线程调用导致自连接死锁
-        running_ = false;
+        LOG_INFO("[EvidenceNode] Stream end");
         broadcast(packet);
         return;
     }
 
-    if (!running_) return;
-
     if (packet->type == core::PacketType::DECODED_FRAME) {
-        // 来自 draw node 的绘制后帧
         auto frame = std::static_pointer_cast<core::VideoFramePacket>(packet);
         handleFrame(std::move(frame));
     } else if (packet->type == core::PacketType::META_DATA) {
-        // 来自 alert node 的告警触发
         auto infer = std::static_pointer_cast<core::InferenceResultPacket>(packet);
         if (infer) {
             handleAlertTrigger(std::move(infer));
@@ -206,7 +187,6 @@ void EvidenceNode::pushData(std::shared_ptr<core::BasePacket> packet) {
 void EvidenceNode::handleFrame(std::shared_ptr<core::VideoFramePacket> frame) {
     if (!frame || !frame->mat || frame->mat->empty()) return;
 
-    // 过滤损坏帧（绿色马赛克）
     auto stats = analyzeFrame(*frame->mat);
     if (!isFrameValid(*frame->mat)) {
         LOG_WARN_FMT("[EvidenceNode] Skipping corrupted frame: green_ratio={:.2%}, "

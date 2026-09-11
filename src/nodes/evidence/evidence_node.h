@@ -1,6 +1,7 @@
 // src/nodes/evidence/evidence_node.h
 #pragma once
 
+#include "ai_stream/core/queued_node.h"
 #include "ai_stream/nodes/i_evidence_node.h"
 #include "frame_buffer.h"
 #include "video_recorder.h"
@@ -16,20 +17,20 @@
 namespace ai_stream {
 namespace nodes {
 
-class EvidenceNode : public IEvidenceNode {
+class EvidenceNode : public core::QueuedNode<IEvidenceNode> {
 public:
     EvidenceNode();
     ~EvidenceNode() override;
-
-    bool start() override;
-    void stop() override;
-    bool isRunning() const override { return running_.load(); }
-    void pushData(std::shared_ptr<core::BasePacket> packet) override;
 
     void setVideoConfig(const EvidenceVideoConfig& config) override;
     void setSnapshotConfig(const EvidenceSnapshotConfig& config) override;
     void setRolloverConfig(const EvidenceRolloverConfig& config) override;
     void setFtpConfig(const EvidenceFtpConfig& config) override;
+
+protected:
+    bool onStartup() override;
+    void onShutdown() override;
+    void processPacket(std::shared_ptr<core::BasePacket> packet) override;
 
 private:
     void handleFrame(std::shared_ptr<core::VideoFramePacket> frame);
@@ -59,7 +60,6 @@ private:
     std::unique_ptr<FtpUploader> ftp_uploader_;
 #endif
 
-    std::atomic<bool> running_{false};
     std::atomic<bool> recording_{false};
     std::atomic<size_t> post_frame_count_{0};
     size_t post_frames_target_ = 40;

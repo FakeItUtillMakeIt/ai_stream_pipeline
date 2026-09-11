@@ -1,10 +1,8 @@
 // src/nodes/sink/rtmp_sink.h
 #pragma once
 
+#include "ai_stream/core/queued_node.h"
 #include "ai_stream/nodes/i_sink_node.h"
-#include "ai_stream/core/bounded_queue.h"
-#include <thread>
-#include <atomic>
 #include <memory>
 
 namespace ai_stream {
@@ -12,7 +10,7 @@ namespace nodes {
 
 class EncoderBase;
 
-class RTMPSinkNode : public ISinkNode {
+class RTMPSinkNode : public core::QueuedNode<ISinkNode> {
 public:
     RTMPSinkNode();
     ~RTMPSinkNode() override;
@@ -22,13 +20,12 @@ public:
     void setOutputSize(int width, int height) override;
     bool isConnected() const override;
 
-    bool start() override;
-    void stop() override;
-    bool isRunning() const override{return running_.load();}
-    void pushData(std::shared_ptr<core::BasePacket> packet) override;
+protected:
+    bool onStartup() override;
+    void onShutdown() override;
+    void processPacket(std::shared_ptr<core::BasePacket> packet) override;
 
 private:
-    void encoderLoop();
     bool initEncoder();
     void closeEncoder();
 
@@ -37,12 +34,6 @@ private:
     int output_height_ = 0;
     int bitrate_ = 4000;
     std::string encoder_name_ = "libx264";
-
-    std::atomic<bool> running_{false};
-    std::thread worker_;
-
-    // 有界队列（满时丢最旧帧，直播语义）
-    core::BoundedQueue<std::shared_ptr<core::VideoFramePacket>> frame_queue_{30};
 
     std::unique_ptr<EncoderBase> encoder_;
     int64_t next_pts_ = 0;

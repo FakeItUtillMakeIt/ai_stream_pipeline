@@ -9,17 +9,12 @@
 namespace ai_stream {
 namespace nodes {
 
-RTMPSinkNode::RTMPSinkNode() : ISinkNode("RTMPSink") {
-    LOG_DEBUG("[RTMPSink] Constructor");
-}
+RTMPSinkNode::RTMPSinkNode() : QueuedNode("RTMPSink") {}
 
-RTMPSinkNode::~RTMPSinkNode() { 
-    stop(); 
-    LOG_DEBUG("[RTMPSink] Destructor");
-}
+RTMPSinkNode::~RTMPSinkNode() = default;
 
-void RTMPSinkNode::setTarget(const std::string& target) { 
-    output_url_ = target; 
+void RTMPSinkNode::setTarget(const std::string& target) {
+    output_url_ = target;
     LOG_INFO_FMT("[RTMPSink] Target: {}", output_url_);
 }
 
@@ -33,11 +28,11 @@ void RTMPSinkNode::setOutputSize(int width, int height) {
     output_height_ = height;
 }
 
-bool RTMPSinkNode::isConnected() const { 
-    return connected_; 
+bool RTMPSinkNode::isConnected() const {
+    return connected_;
 }
 
-bool RTMPSinkNode::start() {
+bool RTMPSinkNode::onStartup() {
     if (output_url_.empty()) {
         output_url_ = "rtmp://localhost/live/out1";
         LOG_WARN_FMT("[RTMPSink] Output URL not set, using default: {}", output_url_);
@@ -48,85 +43,43 @@ bool RTMPSinkNode::start() {
         return false;
     }
 
-    // 如果之前的 worker 线程还未 join，先 join 它（自停后线程可能还在运行）
-    if (worker_.joinable()) {
-        worker_.join();
-    }
-
-    running_ = true;
-    frame_queue_.reset();
-    worker_ = std::thread(&RTMPSinkNode::encoderLoop, this);
     LOG_INFO_FMT("[RTMPSink] Started pushing to {}", output_url_);
     return true;
 }
 
-void RTMPSinkNode::stop() {
-    if (!running_) return;
-    
-    running_ = false;
-    frame_queue_.stop();
-    
-    if (worker_.joinable()) {
-        worker_.join();
-    }
-    
+void RTMPSinkNode::onShutdown() {
     closeEncoder();
     LOG_INFO("[RTMPSink] Stopped");
 }
 
-void RTMPSinkNode::pushData(std::shared_ptr<core::BasePacket> packet) {
-    if (packet->type == core::PacketType::STREAM_END)
-    {
-        LOG_INFO_FMT("[RTMPSink] Received stream end");
-        running_ = false;
-        frame_queue_.stop();
+void RTMPSinkNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
+    if (!packet) return;
+
+    // STREAM_END：QueuedNode 已置 running_=false，此处只需广播给下游
+    if (packet->type == core::PacketType::STREAM_END) {
+        LOG_INFO("[RTMPSink] Stream end");
         broadcast(packet);
         return;
     }
-    if (!running_) return;
+
     if (packet->type != core::PacketType::DECODED_FRAME) return;
 
     auto frame = std::static_pointer_cast<core::VideoFramePacket>(packet);
     if (!frame || !frame->mat || frame->mat->empty()) return;
 
-    // 队列满时丢弃最旧帧，保证直播实时性
-    while (!frame_queue_.tryPush(frame)) {
-        std::shared_ptr<core::VideoFramePacket> discarded;
-        if (!frame_queue_.tryPop(discarded)) break;
-        LOG_WARN_FMT("[RTMPSink] Queue full, dropping oldest frame");
+    int width = output_width_ > 0 ? output_width_ : frame->width;
+    int height = output_height_ > 0 ? output_height_ : frame->height;
+
+    if (!encoder_->encodeFrame(frame->mat->data, width, height,
+                                frame->mat->step, next_pts_++)) {
+        LOG_ERROR("[RTMPSink] Failed to encode frame");
+        connected_ = false;
+        return;
     }
-}
-
-void RTMPSinkNode::encoderLoop() {
-    while (running_) {
-        std::shared_ptr<core::VideoFramePacket> frame;
-        if (!frame_queue_.pop(frame, std::chrono::milliseconds(100))) continue;
-
-        // 检查是否为流结束信号
-        if (frame->type == core::PacketType::STREAM_END) {
-            LOG_INFO_FMT("[RTMPSink] Stream end received in worker thread");
-            break;
-        }
-
-        if (!frame || !frame->mat || frame->mat->empty()) continue;
-
-        int width = output_width_ > 0 ? output_width_ : frame->width;
-        int height = output_height_ > 0 ? output_height_ : frame->height;
-
-        if (!encoder_->encodeFrame(frame->mat->data, width, height,
-                                    frame->mat->step, next_pts_++)) {
-            LOG_ERROR_FMT("[RTMPSink] Failed to encode frame");
-            connected_ = false;
-            break;
-        }
-        connected_ = true;
-    }
-
+    connected_ = true;
 }
 
 bool RTMPSinkNode::initEncoder() {
-    // 编码后端由 EncoderBase::openVideoCodec 按 encoder_name_ 从 HAL 工厂
-    // 选择（mpp_h264 / auto / ffmpeg_h264...），HAL 不可用自动回退软编
     encoder_ = std::make_unique<RTMPEncoder>();
     return encoder_->init(output_url_, "flv",
                           output_width_ > 0 ? output_width_ : 1920,
