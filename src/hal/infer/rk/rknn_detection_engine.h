@@ -123,6 +123,7 @@ private:
 
     // 反归一化暂存（UINT8 输入路径）
     std::vector<uint8_t> input_nhwc_;
+    std::vector<uint8_t> input_nhwc_fp16_;
 
     std::mutex mutex_;
 };

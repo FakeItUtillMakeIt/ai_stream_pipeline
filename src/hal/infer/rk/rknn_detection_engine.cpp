@@ -15,6 +15,24 @@ namespace hal {
 
 namespace {
 
+inline uint16_t float_to_fp16(float f) {
+    uint32_t bits;
+    std::memcpy(&bits, &f, sizeof(bits));
+    uint32_t sign = (bits >> 16) & 0x8000;
+    int32_t exponent = ((bits >> 23) & 0xFF) - 127 + 15;
+    uint32_t mantissa = (bits >> 13) & 0x3FF;
+    if (exponent <= 0) {
+        if (exponent < -10) return static_cast<uint16_t>(sign);
+        mantissa = (mantissa | 0x400) >> (1 - exponent);
+        return static_cast<uint16_t>(sign | (mantissa >> 13));
+    } else if (exponent == 0xFF - 127 + 15) {
+        return static_cast<uint16_t>(sign | 0x7C00 | (mantissa ? (mantissa >> 13) : 1));
+    } else if (exponent > 30) {
+        return static_cast<uint16_t>(sign | 0x7C00);
+    }
+    return static_cast<uint16_t>(sign | (static_cast<uint32_t>(exponent) << 10) | mantissa);
+}
+
 // ---- dlopen 桩（与 rknn_inference_engine 相同模式，静态符号不冲突）----
 using rknn_init_fn = int (*)(rknn_context*, void*, uint32_t, uint32_t, void*);
 using rknn_destroy_fn = int (*)(rknn_context);
@@ -359,6 +377,19 @@ bool RknnDetectionEngine::inferOne(const float* input_nchw, int batch_slot) {
         }
         in_buf = input_nhwc_.data();
         in_size = static_cast<uint32_t>(input_nhwc_.size());
+    } else if (input_type_ == RKNN_TENSOR_FLOAT16) {
+        const int hw = input_width_ * input_height_;
+        const size_t fp16_bytes = static_cast<size_t>(hw) * 3 * sizeof(uint16_t);
+        input_nhwc_fp16_.resize(fp16_bytes);
+        const float* planes[3] = {input_nchw, input_nchw + hw, input_nchw + 2 * hw};
+        for (int idx = 0; idx < hw; ++idx) {
+            uint16_t* dst = reinterpret_cast<uint16_t*>(input_nhwc_fp16_.data() + static_cast<size_t>(idx) * 3 * sizeof(uint16_t));
+            for (int c = 0; c < 3; ++c) {
+                dst[c] = float_to_fp16(planes[c][idx]);
+            }
+        }
+        in_buf = input_nhwc_fp16_.data();
+        in_size = static_cast<uint32_t>(fp16_bytes);
     } else {
         in_buf = const_cast<float*>(input_nchw);
         in_size = static_cast<uint32_t>(input_width_) * input_height_ * 3 * sizeof(float);
