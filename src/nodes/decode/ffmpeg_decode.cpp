@@ -396,6 +396,12 @@ std::shared_ptr<core::VideoFramePacket> FFmpegDecodeNode::decodePacket(
     }
     } // else: BGR24 fast path
 
+    // 释放 MPP 硬件解码路径分配的 NV12 帧缓冲（owns_data=true 时）
+    if (decoded.owns_data && decoded.data) {
+        delete[] decoded.data;
+        decoded.data = nullptr;
+    }
+
     ctx->in_use = false;
 
     auto new_frame = std::make_shared<core::VideoFramePacket>();
