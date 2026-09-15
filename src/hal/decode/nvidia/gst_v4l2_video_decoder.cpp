@@ -1,7 +1,7 @@
-// src/hal/decode/nvidia/gst_v4l2_video_codec.cpp
+// src/hal/decode/nvidia/gst_v4l2_video_decoder.cpp
 // Jetson GStreamer nvv4l2 硬件解码后端实现。
-#include "gst_v4l2_video_codec.h"
-#include "ai_stream/hal/video_codec_factory.h"
+#include "gst_v4l2_video_decoder.h"
+#include "ai_stream/hal/video_decoder_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 
 #include <gst/gst.h>
@@ -21,22 +21,22 @@ void ensureGstInit() {
 }
 } // namespace
 
-GstV4l2VideoCodec::GstV4l2VideoCodec() {
-    LOG_DEBUG("[GstV4l2VideoCodec] Constructor");
+GstV4l2VideoDecoder::GstV4l2VideoDecoder() {
+    LOG_DEBUG("[GstV4l2VideoDecoder] Constructor");
 }
 
-GstV4l2VideoCodec::~GstV4l2VideoCodec() {
+GstV4l2VideoDecoder::~GstV4l2VideoDecoder() {
     release();
-    LOG_DEBUG("[GstV4l2VideoCodec] Destroyed");
+    LOG_DEBUG("[GstV4l2VideoDecoder] Destroyed");
 }
 
-bool GstV4l2VideoCodec::isAvailable() const {
+bool GstV4l2VideoDecoder::isAvailable() const {
     ensureGstInit();
     return gst_element_factory_find("nvv4l2decoder") != nullptr &&
            gst_element_factory_find("nvvidconv") != nullptr;
 }
 
-bool GstV4l2VideoCodec::buildPipeline(const std::string& codec_name) {
+bool GstV4l2VideoDecoder::buildPipeline(const std::string& codec_name) {
     const char* parser_name = (codec_name == "h264" || codec_name == "H264")
                                   ? "h264parse"
                                   : "h265parse";
@@ -48,7 +48,7 @@ bool GstV4l2VideoCodec::buildPipeline(const std::string& codec_name) {
     appsrc_ = gst_element_factory_make("appsrc", "src");
     appsink_ = gst_element_factory_make("appsink", "sink");
     if (!parser || !dec || !conv || !vconv || !appsrc_ || !appsink_) {
-        LOG_ERROR("[GstV4l2VideoCodec] Failed to create pipeline elements");
+        LOG_ERROR("[GstV4l2VideoDecoder] Failed to create pipeline elements");
         return false;
     }
     app_src_ = GST_APP_SRC(appsrc_);
@@ -78,18 +78,18 @@ bool GstV4l2VideoCodec::buildPipeline(const std::string& codec_name) {
 
     gst_bin_add_many(GST_BIN(pipeline_), appsrc_, parser, dec, conv, vconv, appsink_, nullptr);
     if (!gst_element_link_many(appsrc_, parser, dec, conv, vconv, appsink_, nullptr)) {
-        LOG_ERROR("[GstV4l2VideoCodec] Failed to link pipeline");
+        LOG_ERROR("[GstV4l2VideoDecoder] Failed to link pipeline");
         return false;
     }
 
     if (gst_element_set_state(pipeline_, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
-        LOG_ERROR("[GstV4l2VideoCodec] Failed to start pipeline");
+        LOG_ERROR("[GstV4l2VideoDecoder] Failed to start pipeline");
         return false;
     }
     return true;
 }
 
-bool GstV4l2VideoCodec::init(const std::string& codec_name,
+bool GstV4l2VideoDecoder::init(const std::string& codec_name,
                              const uint8_t* extradata,
                              int extradata_size) {
     ensureGstInit();
@@ -100,11 +100,11 @@ bool GstV4l2VideoCodec::init(const std::string& codec_name,
         return false;
     }
     initialized_ = true;
-    LOG_INFO_FMT("[GstV4l2VideoCodec] Decoder initialized: {}", codec_name);
+    LOG_INFO_FMT("[GstV4l2VideoDecoder] Decoder initialized: {}", codec_name);
     return true;
 }
 
-bool GstV4l2VideoCodec::pushPacket(const uint8_t* data, int size) {
+bool GstV4l2VideoDecoder::pushPacket(const uint8_t* data, int size) {
     std::vector<uint8_t> tmp;
     if (!fed_extradata_ && !extradata_.empty()) {
         tmp.reserve(static_cast<size_t>(size) + extradata_.size());
@@ -129,13 +129,13 @@ bool GstV4l2VideoCodec::pushPacket(const uint8_t* data, int size) {
 
     GstFlowReturn ret = gst_app_src_push_buffer(app_src_, buf);
     if (ret != GST_FLOW_OK) {
-        LOG_WARN_FMT("[GstV4l2VideoCodec] appsrc push failed: {}", static_cast<int>(ret));
+        LOG_WARN_FMT("[GstV4l2VideoDecoder] appsrc push failed: {}", static_cast<int>(ret));
         return false;
     }
     return true;
 }
 
-bool GstV4l2VideoCodec::pullFrame(DecodedFrame& frame) {
+bool GstV4l2VideoDecoder::pullFrame(DecodedFrame& frame) {
     GstSample* sample = gst_app_sink_try_pull_sample(app_sink_, 20 * GST_MSECOND);
     if (!sample) {
         return false;
@@ -148,7 +148,7 @@ bool GstV4l2VideoCodec::pullFrame(DecodedFrame& frame) {
     int w = 0, h = 0;
     if (!s || !gst_structure_get_int(s, "width", &w) ||
         !gst_structure_get_int(s, "height", &h) || w <= 0 || h <= 0) {
-        LOG_WARN("[GstV4l2VideoCodec] Cannot parse video caps");
+        LOG_WARN("[GstV4l2VideoDecoder] Cannot parse video caps");
         gst_sample_unref(sample);
         return false;
     }
@@ -156,7 +156,7 @@ bool GstV4l2VideoCodec::pullFrame(DecodedFrame& frame) {
     height_ = h;
     const gsize size = gst_buffer_get_size(buf);
     if (size < static_cast<gsize>(w * h * 3)) {
-        LOG_WARN_FMT("[GstV4l2VideoCodec] Unexpected buffer size {} for {}x{} BGR", size, w, h);
+        LOG_WARN_FMT("[GstV4l2VideoDecoder] Unexpected buffer size {} for {}x{} BGR", size, w, h);
         gst_sample_unref(sample);
         return false;
     }
@@ -185,7 +185,7 @@ bool GstV4l2VideoCodec::pullFrame(DecodedFrame& frame) {
     return true;
 }
 
-bool GstV4l2VideoCodec::decode(const uint8_t* packet_data, int packet_size,
+bool GstV4l2VideoDecoder::decode(const uint8_t* packet_data, int packet_size,
                                DecodedFrame& frame) {
     if (!initialized_) {
         return false;
@@ -201,10 +201,10 @@ bool GstV4l2VideoCodec::decode(const uint8_t* packet_data, int packet_size,
             gchar* dbg = nullptr;
             if (GST_MESSAGE_TYPE(msg) == GST_MESSAGE_ERROR) {
                 gst_message_parse_error(msg, &err, &dbg);
-                LOG_ERROR_FMT("[GstV4l2VideoCodec] GStreamer error: {} ({})", err->message, dbg);
+                LOG_ERROR_FMT("[GstV4l2VideoDecoder] GStreamer error: {} ({})", err->message, dbg);
             } else {
                 gst_message_parse_warning(msg, &err, &dbg);
-                LOG_WARN_FMT("[GstV4l2VideoCodec] GStreamer warning: {}", err->message);
+                LOG_WARN_FMT("[GstV4l2VideoDecoder] GStreamer warning: {}", err->message);
             }
             g_clear_error(&err);
             g_free(dbg);
@@ -219,7 +219,7 @@ bool GstV4l2VideoCodec::decode(const uint8_t* packet_data, int packet_size,
     return pullFrame(frame);
 }
 
-void GstV4l2VideoCodec::release() {
+void GstV4l2VideoDecoder::release() {
     if (pipeline_) {
         gst_element_set_state(pipeline_, GST_STATE_NULL);
         gst_object_unref(pipeline_);
@@ -240,7 +240,7 @@ void GstV4l2VideoCodec::release() {
 }
 
 // 注册到工厂（Jetson 平台）
-REGISTER_VIDEO_CODEC(VideoCodecBackend::NVV4L2, GstV4l2VideoCodec)
+REGISTER_VIDEO_DECODER(VideoDecoderBackend::NVV4L2, GstV4l2VideoDecoder)
 
 } // namespace hal
 } // namespace ai_stream

@@ -1,8 +1,8 @@
-// src/hal/decode/nvidia/v4l2_video_codec.cpp
+// src/hal/decode/nvidia/v4l2_video_decoder.cpp
 // Jetson V4L2 NVDEC 硬件解码后端实现。
 // 设备节点：/dev/v4l2-nvdec（备选 /dev/nvhost-nvdec）。
-#include "v4l2_video_codec.h"
-#include "ai_stream/hal/video_codec_factory.h"
+#include "v4l2_video_decoder.h"
+#include "ai_stream/hal/video_decoder_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 
 #include <linux/videodev2.h>
@@ -31,16 +31,16 @@ bool ioctlOk(int fd, unsigned long req, void* arg) {
 }
 } // namespace
 
-V4l2VideoCodec::V4l2VideoCodec() {
-    LOG_DEBUG("[V4l2VideoCodec] Constructor");
+V4l2VideoDecoder::V4l2VideoDecoder() {
+    LOG_DEBUG("[V4l2VideoDecoder] Constructor");
 }
 
-V4l2VideoCodec::~V4l2VideoCodec() {
+V4l2VideoDecoder::~V4l2VideoDecoder() {
     release();
-    LOG_DEBUG("[V4l2VideoCodec] Destroyed");
+    LOG_DEBUG("[V4l2VideoDecoder] Destroyed");
 }
 
-bool V4l2VideoCodec::isAvailable() const {
+bool V4l2VideoDecoder::isAvailable() const {
     // Jetson 平台存在真正的 V4L2 M2M 解码设备才可用。
     // 注意：仅 open() 成功不代表可用（某些虚拟化环境下节点可能是空设备，
     // ioctl 会返回 ENOTTY），必须用 VIDIOC_QUERYCAP 校验。
@@ -57,27 +57,27 @@ bool V4l2VideoCodec::isAvailable() const {
     return ok;
 }
 
-bool V4l2VideoCodec::openDecoder() {
+bool V4l2VideoDecoder::openDecoder() {
     fd_ = ::open(kDecodeDev, O_RDWR | O_NONBLOCK);
     if (fd_ < 0) {
         fd_ = ::open(kDecodeDevAlt, O_RDWR | O_NONBLOCK);
     }
     if (fd_ < 0) {
-        LOG_ERROR_FMT("[V4l2VideoCodec] Failed to open decoder device");
+        LOG_ERROR_FMT("[V4l2VideoDecoder] Failed to open decoder device");
         return false;
     }
 
     struct v4l2_capability cap;
     memset(&cap, 0, sizeof(cap));
     if (!ioctlOk(fd_, VIDIOC_QUERYCAP, &cap)) {
-        LOG_ERROR("[V4l2VideoCodec] VIDIOC_QUERYCAP failed");
+        LOG_ERROR("[V4l2VideoDecoder] VIDIOC_QUERYCAP failed");
         return false;
     }
     if (!(cap.capabilities & V4L2_CAP_VIDEO_M2M_MPLANE)) {
-        LOG_ERROR_FMT("[V4l2VideoCodec] Device lacks M2M_MPLANE capability: driver={}", cap.driver);
+        LOG_ERROR_FMT("[V4l2VideoDecoder] Device lacks M2M_MPLANE capability: driver={}", cap.driver);
         return false;
     }
-    LOG_INFO_FMT("[V4l2VideoCodec] Opened decoder: driver={} card={}", cap.driver, cap.card);
+    LOG_INFO_FMT("[V4l2VideoDecoder] Opened decoder: driver={} card={}", cap.driver, cap.card);
 
     // 订阅分辨率变更事件（编码流解析后才确定宽高）
     struct v4l2_event_subscription sub;
@@ -87,7 +87,7 @@ bool V4l2VideoCodec::openDecoder() {
     return true;
 }
 
-bool V4l2VideoCodec::setupOutputPlane(uint32_t coded_fmt, uint32_t sizeimage) {
+bool V4l2VideoDecoder::setupOutputPlane(uint32_t coded_fmt, uint32_t sizeimage) {
     struct v4l2_format fmt;
     memset(&fmt, 0, sizeof(fmt));
     fmt.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
@@ -95,7 +95,7 @@ bool V4l2VideoCodec::setupOutputPlane(uint32_t coded_fmt, uint32_t sizeimage) {
     fmt.fmt.pix_mp.num_planes = 1;
     fmt.fmt.pix_mp.plane_fmt[0].sizeimage = sizeimage;
     if (!ioctlOk(fd_, VIDIOC_S_FMT, &fmt)) {
-        LOG_ERROR("[V4l2VideoCodec] Output plane S_FMT failed");
+        LOG_ERROR("[V4l2VideoDecoder] Output plane S_FMT failed");
         return false;
     }
 
@@ -110,7 +110,7 @@ bool V4l2VideoCodec::setupOutputPlane(uint32_t coded_fmt, uint32_t sizeimage) {
     ext_ctrls.count = 1;
     ext_ctrls.controls = &ext_ctrl;
     if (ioctl(fd_, VIDIOC_S_EXT_CTRLS, &ext_ctrls) < 0) {
-        LOG_WARN("[V4l2VideoCodec] Failed to set DISABLE_COMPLETE_FRAME_INPUT");
+        LOG_WARN("[V4l2VideoDecoder] Failed to set DISABLE_COMPLETE_FRAME_INPUT");
     }
 
     struct v4l2_requestbuffers req;
@@ -119,7 +119,7 @@ bool V4l2VideoCodec::setupOutputPlane(uint32_t coded_fmt, uint32_t sizeimage) {
     req.memory = V4L2_MEMORY_MMAP;
     req.count = kOutputBuffers;
     if (!ioctlOk(fd_, VIDIOC_REQBUFS, &req)) {
-        LOG_ERROR("[V4l2VideoCodec] Output REQBUFS failed");
+        LOG_ERROR("[V4l2VideoDecoder] Output REQBUFS failed");
         return false;
     }
     out_count_ = req.count;
@@ -137,13 +137,13 @@ bool V4l2VideoCodec::setupOutputPlane(uint32_t coded_fmt, uint32_t sizeimage) {
         buf.length = 1;
         buf.m.planes = &plane;
         if (!ioctlOk(fd_, VIDIOC_QUERYBUF, &buf)) {
-            LOG_ERROR("[V4l2VideoCodec] Output QUERYBUF failed");
+            LOG_ERROR("[V4l2VideoDecoder] Output QUERYBUF failed");
             return false;
         }
         void* mm = ::mmap(nullptr, plane.length, PROT_READ | PROT_WRITE,
                           MAP_SHARED, fd_, plane.m.mem_offset);
         if (mm == MAP_FAILED) {
-            LOG_ERROR("[V4l2VideoCodec] Output mmap failed");
+            LOG_ERROR("[V4l2VideoDecoder] Output mmap failed");
             return false;
         }
         out_mmap_[i] = mm;
@@ -153,13 +153,13 @@ bool V4l2VideoCodec::setupOutputPlane(uint32_t coded_fmt, uint32_t sizeimage) {
 
     uint32_t type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
     if (!ioctlOk(fd_, VIDIOC_STREAMON, &type)) {
-        LOG_ERROR("[V4l2VideoCodec] Output STREAMON failed");
+        LOG_ERROR("[V4l2VideoDecoder] Output STREAMON failed");
         return false;
     }
     return true;
 }
 
-bool V4l2VideoCodec::init(const std::string& codec_name,
+bool V4l2VideoDecoder::init(const std::string& codec_name,
                           const uint8_t* extradata,
                           int extradata_size) {
     codec_name_ = codec_name;
@@ -182,7 +182,7 @@ bool V4l2VideoCodec::init(const std::string& codec_name,
         coded_fmt = V4L2_PIX_FMT_AV1;
     }
     if (coded_fmt == 0) {
-        LOG_ERROR_FMT("[V4l2VideoCodec] Unsupported codec: {}", codec_name);
+        LOG_ERROR_FMT("[V4l2VideoDecoder] Unsupported codec: {}", codec_name);
         return false;
     }
 
@@ -191,11 +191,11 @@ bool V4l2VideoCodec::init(const std::string& codec_name,
     }
 
     initialized_ = true;
-    LOG_INFO_FMT("[V4l2VideoCodec] Decoder initialized: {}", codec_name);
+    LOG_INFO_FMT("[V4l2VideoDecoder] Decoder initialized: {}", codec_name);
     return true;
 }
 
-bool V4l2VideoCodec::recycleOutputBuffers() {
+bool V4l2VideoDecoder::recycleOutputBuffers() {
     for (;;) {
         struct v4l2_plane plane;
         struct v4l2_buffer buf;
@@ -213,7 +213,7 @@ bool V4l2VideoCodec::recycleOutputBuffers() {
     return true;
 }
 
-bool V4l2VideoCodec::feedPacket(const uint8_t* data, int size) {
+bool V4l2VideoDecoder::feedPacket(const uint8_t* data, int size) {
     recycleOutputBuffers();
     if (out_free_.empty()) {
         return false;
@@ -255,7 +255,7 @@ bool V4l2VideoCodec::feedPacket(const uint8_t* data, int size) {
     return true;
 }
 
-bool V4l2VideoCodec::waitResolutionChange(int timeout_ms) {
+bool V4l2VideoDecoder::waitResolutionChange(int timeout_ms) {
     struct pollfd pfd;
     pfd.fd = fd_;
     pfd.events = POLLIN | POLLPRI;
@@ -277,25 +277,25 @@ bool V4l2VideoCodec::waitResolutionChange(int timeout_ms) {
     return false;
 }
 
-bool V4l2VideoCodec::setupCapturePlane() {
+bool V4l2VideoDecoder::setupCapturePlane() {
     struct v4l2_format fmt;
     memset(&fmt, 0, sizeof(fmt));
     fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
     if (!ioctlOk(fd_, VIDIOC_G_FMT, &fmt)) {
-        LOG_ERROR("[V4l2VideoCodec] Capture G_FMT failed");
+        LOG_ERROR("[V4l2VideoDecoder] Capture G_FMT failed");
         return false;
     }
     width_ = fmt.fmt.pix_mp.width;
     height_ = fmt.fmt.pix_mp.height;
     const uint32_t num_planes = fmt.fmt.pix_mp.num_planes;
     if (width_ <= 0 || height_ <= 0 || num_planes < 2) {
-        LOG_ERROR_FMT("[V4l2VideoCodec] Unexpected capture format {}x{} planes={}",
+        LOG_ERROR_FMT("[V4l2VideoDecoder] Unexpected capture format {}x{} planes={}",
                       width_, height_, num_planes);
         return false;
     }
 
     if (!ioctlOk(fd_, VIDIOC_S_FMT, &fmt)) {
-        LOG_ERROR("[V4l2VideoCodec] Capture S_FMT failed");
+        LOG_ERROR("[V4l2VideoDecoder] Capture S_FMT failed");
         return false;
     }
 
@@ -313,7 +313,7 @@ bool V4l2VideoCodec::setupCapturePlane() {
     req.memory = V4L2_MEMORY_MMAP;
     req.count = count;
     if (!ioctlOk(fd_, VIDIOC_REQBUFS, &req)) {
-        LOG_ERROR("[V4l2VideoCodec] Capture REQBUFS failed");
+        LOG_ERROR("[V4l2VideoDecoder] Capture REQBUFS failed");
         return false;
     }
     cap_count_ = req.count;
@@ -334,14 +334,14 @@ bool V4l2VideoCodec::setupCapturePlane() {
         buf.length = num_planes;
         buf.m.planes = planes;
         if (!ioctlOk(fd_, VIDIOC_QUERYBUF, &buf)) {
-            LOG_ERROR("[V4l2VideoCodec] Capture QUERYBUF failed");
+            LOG_ERROR("[V4l2VideoDecoder] Capture QUERYBUF failed");
             return false;
         }
         for (uint32_t p = 0; p < num_planes; ++p) {
             void* mm = ::mmap(nullptr, planes[p].length, PROT_READ | PROT_WRITE,
                               MAP_SHARED, fd_, planes[p].m.mem_offset);
             if (mm == MAP_FAILED) {
-                LOG_ERROR("[V4l2VideoCodec] Capture mmap failed");
+                LOG_ERROR("[V4l2VideoDecoder] Capture mmap failed");
                 return false;
             }
             cap_mmap_[i].push_back(mm);
@@ -351,7 +351,7 @@ bool V4l2VideoCodec::setupCapturePlane() {
 
     uint32_t type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
     if (!ioctlOk(fd_, VIDIOC_STREAMON, &type)) {
-        LOG_ERROR("[V4l2VideoCodec] Capture STREAMON failed");
+        LOG_ERROR("[V4l2VideoDecoder] Capture STREAMON failed");
         return false;
     }
     capture_on_ = true;
@@ -370,12 +370,12 @@ bool V4l2VideoCodec::setupCapturePlane() {
         ioctlOk(fd_, VIDIOC_QBUF, &buf);
     }
 
-    LOG_INFO_FMT("[V4l2VideoCodec] Capture plane ready: {}x{} planes={}",
+    LOG_INFO_FMT("[V4l2VideoDecoder] Capture plane ready: {}x{} planes={}",
                  width_, height_, num_planes);
     return true;
 }
 
-bool V4l2VideoCodec::dequeueCaptureFrame(DecodedFrame& frame) {
+bool V4l2VideoDecoder::dequeueCaptureFrame(DecodedFrame& frame) {
     // 处理可能的分辨率变更事件
     for (;;) {
         struct v4l2_event ev;
@@ -446,7 +446,7 @@ bool V4l2VideoCodec::dequeueCaptureFrame(DecodedFrame& frame) {
     return np >= 2;
 }
 
-bool V4l2VideoCodec::decode(const uint8_t* packet_data, int packet_size,
+bool V4l2VideoDecoder::decode(const uint8_t* packet_data, int packet_size,
                             DecodedFrame& frame) {
     if (!initialized_) {
         return false;
@@ -473,7 +473,7 @@ bool V4l2VideoCodec::decode(const uint8_t* packet_data, int packet_size,
     return dequeueCaptureFrame(frame);
 }
 
-void V4l2VideoCodec::release() {
+void V4l2VideoDecoder::release() {
     if (fd_ >= 0) {
         if (capture_on_) {
             uint32_t type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
@@ -504,7 +504,7 @@ void V4l2VideoCodec::release() {
 
 // 注册 V4L2 后端到工厂
 #ifdef WITH_CUDA
-REGISTER_VIDEO_CODEC(VideoCodecBackend::V4L2, V4l2VideoCodec)
+REGISTER_VIDEO_DECODER(VideoDecoderBackend::V4L2, V4l2VideoDecoder)
 #endif
 
 } // namespace hal

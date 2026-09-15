@@ -1,8 +1,8 @@
-// src/hal/ffmpeg/ffmpeg_video_codec.h
+// src/hal/ffmpeg/ffmpeg_video_decoder.h
 // FFmpeg 软件视频编解码——通用 fallback 后端
 #pragma once
 
-#include "ai_stream/hal/i_video_codec.h"
+#include "ai_stream/hal/i_video_decoder.h"
 #include <string>
 
 // 前向声明 FFmpeg 类型
@@ -20,10 +20,10 @@ namespace hal {
  * 使用 FFmpeg libavcodec 进行软件视频编解码。
  * 作为所有平台的 fallback 后端，支持广泛的编解码格式。
  */
-class FFmpegVideoCodec : public IVideoCodec {
+class FFmpegVideoDecoder : public IVideoDecoder {
 public:
-    FFmpegVideoCodec();
-    ~FFmpegVideoCodec() override;
+    FFmpegVideoDecoder();
+    ~FFmpegVideoDecoder() override;
 
     bool init(const std::string& codec_name,
               const uint8_t* extradata = nullptr,

@@ -7,7 +7,7 @@
 #include "ai_stream/hal/pose_estimation_factory.h"
 #include "ai_stream/hal/action_recognition_factory.h"
 #include "ai_stream/hal/image_accelerator_factory.h"
-#include "ai_stream/hal/video_codec_factory.h"
+#include "ai_stream/hal/video_decoder_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 
 #include <nlohmann/json.hpp>
@@ -79,16 +79,16 @@ const char* imageAccelBackendName(ImageAcceleratorBackend b) {
     return "unknown";
 }
 
-const char* videoCodecBackendName(VideoCodecBackend b) {
+const char* videoCodecBackendName(VideoDecoderBackend b) {
     switch (b) {
-        case VideoCodecBackend::AUTO:   return "auto";
-        case VideoCodecBackend::NVDEC:  return "nvdec";
-        case VideoCodecBackend::NVV4L2: return "nvv4l2";
-        case VideoCodecBackend::V4L2:   return "v4l2";
-        case VideoCodecBackend::MPP:    return "mpp";
-        case VideoCodecBackend::HORIZON: return "horizon";
-        case VideoCodecBackend::DVPP:   return "dvpp";
-        case VideoCodecBackend::FFMPEG: return "ffmpeg";
+        case VideoDecoderBackend::AUTO:   return "auto";
+        case VideoDecoderBackend::NVDEC:  return "nvdec";
+        case VideoDecoderBackend::NVV4L2: return "nvv4l2";
+        case VideoDecoderBackend::V4L2:   return "v4l2";
+        case VideoDecoderBackend::MPP:    return "mpp";
+        case VideoDecoderBackend::HORIZON: return "horizon";
+        case VideoDecoderBackend::DVPP:   return "dvpp";
+        case VideoDecoderBackend::FFMPEG: return "ffmpeg";
     }
     return "unknown";
 }
@@ -129,7 +129,7 @@ void logAvailableBackends() {
     LOG_INFO_FMT("[Backends] image_accelerator: {}",
                  toLogString(ImageAcceleratorFactory::instance().getAvailableBackends(), &imageAccelBackendName));
     LOG_INFO_FMT("[Backends] video_codec: {}",
-                 toLogString(VideoCodecFactory::instance().getAvailableBackends(), &videoCodecBackendName));
+                 toLogString(VideoDecoderFactory::instance().getAvailableBackends(), &videoCodecBackendName));
 }
 
 std::string availableBackendsJson() {
@@ -139,7 +139,7 @@ std::string availableBackendsJson() {
     j["pose_estimation"] = toJson(PoseEstimationFactory::instance().getAvailableBackends(), &poseBackendName);
     j["action_recognition"] = toJson(ActionRecognitionFactory::instance().getAvailableBackends(), &actionBackendName);
     j["image_accelerator"] = toJson(ImageAcceleratorFactory::instance().getAvailableBackends(), &imageAccelBackendName);
-    j["video_codec"] = toJson(VideoCodecFactory::instance().getAvailableBackends(), &videoCodecBackendName);
+    j["video_codec"] = toJson(VideoDecoderFactory::instance().getAvailableBackends(), &videoCodecBackendName);
     return j.dump();
 }
 

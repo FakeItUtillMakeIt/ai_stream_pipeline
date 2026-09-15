@@ -1,9 +1,9 @@
 // src/nodes/decode/ffmpeg_decode.cpp
 #include "utils/time_util.h"
-// 解码节点——使用 VideoCodecFactory，支持多后端（NVDEC/MPP/DVPP/FFmpeg）
+// 解码节点——使用 VideoDecoderFactory，支持多后端（NVDEC/MPP/DVPP/FFmpeg）
 #include "ffmpeg_decode.h"
 #include "ai_stream/core/packet.h"
-#include "ai_stream/hal/video_codec_factory.h"
+#include "ai_stream/hal/video_decoder_factory.h"
 #include "registry/node_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 #include <opencv2/opencv.hpp>
@@ -81,7 +81,7 @@ bool FFmpegDecodeNode::isHwDecodeEnabled() {
     return use_hw_.load();
 }
 
-void FFmpegDecodeNode::setVideoCodecBackend(hal::VideoCodecBackend backend) {
+void FFmpegDecodeNode::setVideoDecoderBackend(hal::VideoDecoderBackend backend) {
     codec_backend_ = backend;
     LOG_INFO_FMT("[FFmpegDecode] Video codec backend set to: {}", static_cast<int>(backend));
 }
@@ -174,7 +174,7 @@ std::shared_ptr<DecoderContext> FFmpegDecodeNode::getOrCreateDecoder(
     auto ctx = std::make_shared<DecoderContext>();
 
     // 通过 HAL 工厂创建视频编解码器
-    ctx->codec = hal::VideoCodecFactory::instance().create(codec_backend_);
+    ctx->codec = hal::VideoDecoderFactory::instance().create(codec_backend_);
     if (!ctx->codec) {
         LOG_ERROR("[FFmpegDecode] Failed to create video codec from factory");
         return nullptr;

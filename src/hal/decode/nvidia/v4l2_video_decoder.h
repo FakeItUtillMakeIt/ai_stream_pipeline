@@ -1,11 +1,11 @@
-// src/hal/decode/nvidia/v4l2_video_codec.h
+// src/hal/decode/nvidia/v4l2_video_decoder.h
 // Jetson V4L2 NVDEC 硬件解码后端——直接使用 V4L2 M2M API
 // （即 NVIDIA Multimedia API 的底层机制，设备节点 /dev/v4l2-nvdec）。
 //
 // 输入：H.264/H.265/VP9 编码流（AnnexB）；输出：NV12（Y + 交织 UV）。
 #pragma once
 
-#include "ai_stream/hal/i_video_codec.h"
+#include "ai_stream/hal/i_video_decoder.h"
 
 #include <cstdint>
 #include <deque>
@@ -15,10 +15,10 @@
 namespace ai_stream {
 namespace hal {
 
-class V4l2VideoCodec : public IVideoCodec {
+class V4l2VideoDecoder : public IVideoDecoder {
 public:
-    V4l2VideoCodec();
-    ~V4l2VideoCodec() override;
+    V4l2VideoDecoder();
+    ~V4l2VideoDecoder() override;
 
     bool init(const std::string& codec_name,
               const uint8_t* extradata = nullptr,

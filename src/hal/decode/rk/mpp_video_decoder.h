@@ -1,8 +1,8 @@
-// src/hal/mpp/mpp_video_codec.h
+// src/hal/mpp/mpp_video_decoder.h
 // MPP 视频编解码——Rockchip RK3588 多媒体处理平台
 #pragma once
 
-#include "ai_stream/hal/i_video_codec.h"
+#include "ai_stream/hal/i_video_decoder.h"
 #include <string>
 
 namespace ai_stream {
@@ -17,10 +17,10 @@ namespace hal {
  *
  * RK3588 支持 8K@60fps 解码和 8K@30fps 编码。
  */
-class MppVideoCodec : public IVideoCodec {
+class MppVideoDecoder : public IVideoDecoder {
 public:
-    MppVideoCodec();
-    ~MppVideoCodec() override;
+    MppVideoDecoder();
+    ~MppVideoDecoder() override;
 
     bool init(const std::string& codec_name,
               const uint8_t* extradata = nullptr,

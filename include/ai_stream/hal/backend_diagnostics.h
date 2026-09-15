@@ -11,7 +11,7 @@ namespace hal {
  * @brief 输出一次各 HAL 工厂的可用后端诊断日志
  *
  * 覆盖：inference / detection / pose_estimation / action_recognition /
- *       image_accelerator / video_codec 六类工厂。
+ *       image_accelerator / video_decoder 六类工厂。
  * 典型调用点：服务进程启动时（ApiServer 构造）。
  */
 void logAvailableBackends();
@@ -26,7 +26,7 @@ void logAvailableBackends();
  *   "pose_estimation":   [...],
  *   "action_recognition":[...],
  *   "image_accelerator": [...],
- *   "video_codec":       [...]
+ *   "video_decoder":       [...]
  * }
  */
 std::string availableBackendsJson();

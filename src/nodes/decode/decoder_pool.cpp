@@ -1,5 +1,5 @@
 // src/nodes/decode/decoder_pool.cpp
-// 解码器上下文实现——封装 HAL VideoCodec 接口
+// 解码器上下文实现——封装 HAL VideoDecoder 接口
 #include "decoder_pool.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 

@@ -1,8 +1,8 @@
-// src/hal/nvdec/nvdec_video_codec.h
+// src/hal/nvdec/nvdec_video_decoder.h
 // NVIDIA NVDEC 硬件视频解码——封装 FFmpeg + CUDA hwaccel 到 HAL 接口
 #pragma once
 
-#include "ai_stream/hal/i_video_codec.h"
+#include "ai_stream/hal/i_video_decoder.h"
 #include <string>
 #include <mutex>
 
@@ -15,10 +15,10 @@ extern "C" {
 namespace ai_stream {
 namespace hal {
 
-class NvdecVideoCodec : public IVideoCodec {
+class NvdecVideoDecoder : public IVideoDecoder {
 public:
-    NvdecVideoCodec();
-    ~NvdecVideoCodec() override;
+    NvdecVideoDecoder();
+    ~NvdecVideoDecoder() override;
 
     bool init(const std::string& codec_name,
               const uint8_t* extradata = nullptr,

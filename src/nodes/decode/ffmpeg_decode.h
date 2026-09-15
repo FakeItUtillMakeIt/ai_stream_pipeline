@@ -1,10 +1,10 @@
 // src/nodes/decode/ffmpeg_decode.h
-// 解码节点——使用 VideoCodecFactory，支持多后端（NVDEC/MPP/DVPP/FFmpeg）
+// 解码节点——使用 VideoDecoderFactory，支持多后端（NVDEC/MPP/DVPP/FFmpeg）
 #pragma once
 
 #include "ai_stream/nodes/i_decode_node.h"
 #include "ai_stream/core/queued_node.h"
-#include "ai_stream/hal/video_codec_factory.h"
+#include "ai_stream/hal/video_decoder_factory.h"
 #include "decoder_pool.h"
 #include <atomic>
 #include <string>
@@ -43,7 +43,7 @@ public:
     void setOutputNV12(bool enable) override;
 
     // 设置视频编解码后端
-    void setVideoCodecBackend(hal::VideoCodecBackend backend);
+    void setVideoDecoderBackend(hal::VideoDecoderBackend backend);
 
 private:
     std::shared_ptr<DecoderContext> getOrCreateDecoder(
@@ -63,7 +63,7 @@ private:
     std::atomic<size_t> active_decoders_{0};
 
     // 配置
-    hal::VideoCodecBackend codec_backend_ = hal::VideoCodecBackend::AUTO;
+    hal::VideoDecoderBackend codec_backend_ = hal::VideoDecoderBackend::AUTO;
     std::string decoder_type_ = "h264";
     bool output_bgr_ = true;
     bool output_nv12_ = false;

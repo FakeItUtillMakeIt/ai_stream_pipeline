@@ -1,7 +1,7 @@
 // src/hal/mpp/mpp_video_encoder.h
 // Rockchip MPP 硬件 H.264 编码器——HAL IVideoEncoder 后端
 //
-// 与 mpp_video_codec（解码侧）保持一致：通过 dlopen 加载
+// 与 mpp_video_decoder（解码侧）保持一致：通过 dlopen 加载
 // librockchip_mpp.so，x86 编译主机可构建（运行时不可用则 isAvailable=false，
 // 节点回退软件编码）。
 // 输入：YUV420P 平面数据；输出：AnnexB H.264。

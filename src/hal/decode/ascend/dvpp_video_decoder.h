@@ -1,8 +1,8 @@
-// src/hal/ascend/dvpp_video_codec.h
+// src/hal/ascend/dvpp_video_decoder.h
 // DVPP 视频编解码——华为 Ascend 数字视觉预处理引擎
 #pragma once
 
-#include "ai_stream/hal/i_video_codec.h"
+#include "ai_stream/hal/i_video_decoder.h"
 #include <string>
 
 namespace ai_stream {
@@ -17,10 +17,10 @@ namespace hal {
  *
  * 通过 ACL (Ascend Computing Language) API 调用。
  */
-class DvppVideoCodec : public IVideoCodec {
+class DvppVideoDecoder : public IVideoDecoder {
 public:
-    DvppVideoCodec();
-    ~DvppVideoCodec() override;
+    DvppVideoDecoder();
+    ~DvppVideoDecoder() override;
 
     bool init(const std::string& codec_name,
               const uint8_t* extradata = nullptr,

@@ -1,9 +1,9 @@
-// src/hal/decode/horizon/horizon_video_codec.h
+// src/hal/decode/horizon/horizon_video_decoder.h
 // Horizon VPU 解码器——RDK S100P
 // 优先 libspcdev (sp_* 解码 API) → FFmpeg 软件解码
 #pragma once
 
-#include "ai_stream/hal/i_video_codec.h"
+#include "ai_stream/hal/i_video_decoder.h"
 #include <string>
 #include <vector>
 #include <deque>
@@ -14,10 +14,10 @@ struct AVFrame;
 namespace ai_stream {
 namespace hal {
 
-class HorizonVideoCodec : public IVideoCodec {
+class HorizonVideoDecoder : public IVideoDecoder {
 public:
-    HorizonVideoCodec();
-    ~HorizonVideoCodec() override;
+    HorizonVideoDecoder();
+    ~HorizonVideoDecoder() override;
 
     bool init(const std::string& codec_name,
               const uint8_t* extradata = nullptr,

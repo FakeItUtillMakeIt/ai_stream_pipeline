@@ -1,4 +1,4 @@
-// src/hal/decode/nvidia/gst_v4l2_video_codec.h
+// src/hal/decode/nvidia/gst_v4l2_video_decoder.h
 // Jetson GStreamer nvv4l2 硬件解码后端。
 //
 // 本机 NVDEC 通过 GStreamer nvv4l2decoder 暴露（底层为 NVIDIA NvMM/GPU 路径，
@@ -7,7 +7,7 @@
 // 输出 BGR24（CPU 内存），decode 节点直接拷贝为 cv::Mat。
 #pragma once
 
-#include "ai_stream/hal/i_video_codec.h"
+#include "ai_stream/hal/i_video_decoder.h"
 
 #include <cstdint>
 #include <string>
@@ -20,10 +20,10 @@ typedef struct _GstAppSink GstAppSink;
 namespace ai_stream {
 namespace hal {
 
-class GstV4l2VideoCodec : public IVideoCodec {
+class GstV4l2VideoDecoder : public IVideoDecoder {
 public:
-    GstV4l2VideoCodec();
-    ~GstV4l2VideoCodec() override;
+    GstV4l2VideoDecoder();
+    ~GstV4l2VideoDecoder() override;
 
     bool init(const std::string& codec_name,
               const uint8_t* extradata = nullptr,

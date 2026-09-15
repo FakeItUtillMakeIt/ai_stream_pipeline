@@ -1,7 +1,7 @@
-// src/hal/nvdec/nvdec_video_codec.cpp
+// src/hal/nvdec/nvdec_video_decoder.cpp
 // NVIDIA NVDEC 硬件视频解码——封装 FFmpeg + CUDA hwaccel 到 HAL 接口
-#include "nvdec_video_codec.h"
-#include "ai_stream/hal/video_codec_factory.h"
+#include "nvdec_video_decoder.h"
+#include "ai_stream/hal/video_decoder_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 
 #include <cuda_runtime.h>
@@ -16,16 +16,16 @@ extern "C" {
 namespace ai_stream {
 namespace hal {
 
-NvdecVideoCodec::NvdecVideoCodec() {
-    LOG_DEBUG("[NvdecVideoCodec] Constructor");
+NvdecVideoDecoder::NvdecVideoDecoder() {
+    LOG_DEBUG("[NvdecVideoDecoder] Constructor");
 }
 
-NvdecVideoCodec::~NvdecVideoCodec() {
+NvdecVideoDecoder::~NvdecVideoDecoder() {
     cleanup();
-    LOG_DEBUG("[NvdecVideoCodec] Destroyed");
+    LOG_DEBUG("[NvdecVideoDecoder] Destroyed");
 }
 
-bool NvdecVideoCodec::isAvailable() const {
+bool NvdecVideoDecoder::isAvailable() const {
     int device_count = 0;
     cudaError_t err = cudaGetDeviceCount(&device_count);
     if (err != cudaSuccess || device_count == 0) {
@@ -66,19 +66,19 @@ bool NvdecVideoCodec::isAvailable() const {
     return false;
 }
 
-bool NvdecVideoCodec::init(const std::string& codec_name,
+bool NvdecVideoDecoder::init(const std::string& codec_name,
                             const uint8_t* extradata,
                             int extradata_size) {
     codec_name_ = codec_name;
     extradata_ = extradata;
     extradata_size_ = extradata_size;
 
-    LOG_INFO_FMT("[NvdecVideoCodec] Initializing codec: {}", codec_name);
+    LOG_INFO_FMT("[NvdecVideoDecoder] Initializing codec: {}", codec_name);
     initialized_ = initDecoder();
     return initialized_;
 }
 
-bool NvdecVideoCodec::initDecoder() {
+bool NvdecVideoDecoder::initDecoder() {
     // 查找解码器 - 优先使用 cuvid，否则使用标准解码器 + hwaccel
     AVCodecID codec_id = AV_CODEC_ID_NONE;
     const char* cuvid_name = nullptr;
@@ -107,9 +107,9 @@ bool NvdecVideoCodec::initDecoder() {
             if (nvcuvid) {
                 dlclose(nvcuvid);
                 use_cuvid = true;
-                LOG_INFO_FMT("[NvdecVideoCodec] Found cuvid decoder: {}", cuvid_name);
+                LOG_INFO_FMT("[NvdecVideoDecoder] Found cuvid decoder: {}", cuvid_name);
             } else {
-                LOG_WARN_FMT("[NvdecVideoCodec] cuvid library unavailable, using software decoder");
+                LOG_WARN_FMT("[NvdecVideoDecoder] cuvid library unavailable, using software decoder");
                 codec = nullptr;
             }
         }
@@ -126,13 +126,13 @@ bool NvdecVideoCodec::initDecoder() {
     }
 
     if (!codec) {
-        LOG_ERROR_FMT("[NvdecVideoCodec] Codec not found: {}", codec_name_);
+        LOG_ERROR_FMT("[NvdecVideoDecoder] Codec not found: {}", codec_name_);
         return false;
     }
 
     codec_ctx_ = avcodec_alloc_context3(codec);
     if (!codec_ctx_) {
-        LOG_ERROR("[NvdecVideoCodec] Failed to allocate codec context");
+        LOG_ERROR("[NvdecVideoDecoder] Failed to allocate codec context");
         return false;
     }
 
@@ -157,9 +157,9 @@ bool NvdecVideoCodec::initDecoder() {
                     return pix_fmts[0];
                 };
 
-                LOG_INFO("[NvdecVideoCodec] CUDA hwaccel enabled");
+                LOG_INFO("[NvdecVideoDecoder] CUDA hwaccel enabled");
             } else {
-                LOG_WARN("[NvdecVideoCodec] Failed to create CUDA hw device, using software");
+                LOG_WARN("[NvdecVideoDecoder] Failed to create CUDA hw device, using software");
                 if (hw_device_ctx_) {
                     av_buffer_unref(&hw_device_ctx_);
                     hw_device_ctx_ = nullptr;
@@ -182,7 +182,7 @@ bool NvdecVideoCodec::initDecoder() {
     if (ret < 0) {
         char errbuf[256];
         av_strerror(ret, errbuf, sizeof(errbuf));
-        LOG_ERROR_FMT("[NvdecVideoCodec] Failed to open codec: {} ({})", errbuf, ret);
+        LOG_ERROR_FMT("[NvdecVideoDecoder] Failed to open codec: {} ({})", errbuf, ret);
         return false;
     }
 
@@ -191,18 +191,18 @@ bool NvdecVideoCodec::initDecoder() {
     packet_ = av_packet_alloc();
 
     if (!frame_ || !hw_frame_ || !packet_) {
-        LOG_ERROR("[NvdecVideoCodec] Failed to allocate frames/packet");
+        LOG_ERROR("[NvdecVideoDecoder] Failed to allocate frames/packet");
         return false;
     }
 
-    LOG_INFO_FMT("[NvdecVideoCodec] Decoder initialized: {}", codec->name);
+    LOG_INFO_FMT("[NvdecVideoDecoder] Decoder initialized: {}", codec->name);
     return true;
 }
 
-bool NvdecVideoCodec::decode(const uint8_t* packet_data, int packet_size,
+bool NvdecVideoDecoder::decode(const uint8_t* packet_data, int packet_size,
                               DecodedFrame& frame) {
     if (!initialized_ || !codec_ctx_) {
-        LOG_ERROR("[NvdecVideoCodec] Not initialized");
+        LOG_ERROR("[NvdecVideoDecoder] Not initialized");
         return false;
     }
 
@@ -212,13 +212,13 @@ bool NvdecVideoCodec::decode(const uint8_t* packet_data, int packet_size,
     int ret = avcodec_send_packet(codec_ctx_, packet_);
     if (ret < 0) {
         if (ret == AVERROR_INVALIDDATA) {
-            LOG_WARN("[NvdecVideoCodec] Invalid data, skipping packet");
+            LOG_WARN("[NvdecVideoDecoder] Invalid data, skipping packet");
             return false;
         }
         if (ret == AVERROR(EAGAIN)) {
             return false;
         }
-        LOG_ERROR_FMT("[NvdecVideoCodec] avcodec_send_packet failed: {}", ret);
+        LOG_ERROR_FMT("[NvdecVideoDecoder] avcodec_send_packet failed: {}", ret);
         return false;
     }
 
@@ -226,7 +226,7 @@ bool NvdecVideoCodec::decode(const uint8_t* packet_data, int packet_size,
     if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
         return false;
     } else if (ret < 0) {
-        LOG_ERROR_FMT("[NvdecVideoCodec] avcodec_receive_frame failed: {}", ret);
+        LOG_ERROR_FMT("[NvdecVideoDecoder] avcodec_receive_frame failed: {}", ret);
         return false;
     }
 
@@ -247,7 +247,7 @@ bool NvdecVideoCodec::decode(const uint8_t* packet_data, int packet_size,
     if (frame_->format == AV_PIX_FMT_CUDA && hw_device_ctx_) {
         ret = av_hwframe_transfer_data(hw_frame_, frame_, 0);
         if (ret < 0) {
-            LOG_ERROR_FMT("[NvdecVideoCodec] av_hwframe_transfer_data failed: {}", ret);
+            LOG_ERROR_FMT("[NvdecVideoDecoder] av_hwframe_transfer_data failed: {}", ret);
             return false;
         }
         av_frame_unref(frame_);
@@ -267,18 +267,18 @@ bool NvdecVideoCodec::decode(const uint8_t* packet_data, int packet_size,
         frame.pitch_uv = frame_->linesize[1];
     }
 
-    LOG_DEBUG_FMT("[NvdecVideoCodec] Frame decoded: {}x{}, format={}, pitch={}",
+    LOG_DEBUG_FMT("[NvdecVideoDecoder] Frame decoded: {}x{}, format={}, pitch={}",
                   frame.width, frame.height, frame.format, frame.pitch);
 
     return true;
 }
 
-void NvdecVideoCodec::release() {
+void NvdecVideoDecoder::release() {
     cleanup();
-    LOG_DEBUG("[NvdecVideoCodec] Released");
+    LOG_DEBUG("[NvdecVideoDecoder] Released");
 }
 
-void NvdecVideoCodec::cleanup() {
+void NvdecVideoDecoder::cleanup() {
     if (packet_) {
         av_packet_free(&packet_);
     }
@@ -299,7 +299,7 @@ void NvdecVideoCodec::cleanup() {
 
 // 注册 NVDEC 后端到工厂
 #ifdef WITH_CUDA
-REGISTER_VIDEO_CODEC(VideoCodecBackend::NVDEC, NvdecVideoCodec)
+REGISTER_VIDEO_DECODER(VideoDecoderBackend::NVDEC, NvdecVideoDecoder)
 #endif
 
 } // namespace hal

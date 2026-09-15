@@ -1,8 +1,8 @@
 // src/nodes/decode/decoder_pool.h
-// 解码器上下文——封装 HAL VideoCodec 接口
+// 解码器上下文——封装 HAL VideoDecoder 接口
 #pragma once
 
-#include "ai_stream/hal/i_video_codec.h"
+#include "ai_stream/hal/i_video_decoder.h"
 #include <unordered_map>
 #include <memory>
 #include <mutex>
@@ -27,7 +27,7 @@ namespace nodes {
  */
 struct DecoderContext {
     // HAL 视频编解码器
-    hal::VideoCodecPtr codec;
+    hal::VideoDecoderPtr codec;
 
     // 格式转换相关（用于 CPU 路径的像素格式转换）
     AVFrame* bgr_frame = nullptr;

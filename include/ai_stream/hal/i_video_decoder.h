@@ -1,4 +1,4 @@
-// include/ai_stream/hal/i_video_codec.h
+// include/ai_stream/hal/i_video_decoder.h
 // 硬件编解码抽象接口——隔离 NVDEC / MPP / DVPP 等后端
 #pragma once
 
@@ -41,9 +41,9 @@ struct DecodedFrame {
  * 各平台提供自己的实现。如果不需要硬件解码，
  * 可直接使用 FFmpeg 软件解码（ffmpeg_decode 节点）。
  */
-class IVideoCodec {
+class IVideoDecoder {
 public:
-    virtual ~IVideoCodec() = default;
+    virtual ~IVideoDecoder() = default;
 
     /**
      * @brief 初始化解码器
@@ -88,7 +88,7 @@ public:
     virtual void setSourceResolution(int /*width*/, int /*height*/) {}
 };
 
-using VideoCodecPtr = std::unique_ptr<IVideoCodec>;
+using VideoDecoderPtr = std::unique_ptr<IVideoDecoder>;
 
 } // namespace hal
 } // namespace ai_stream

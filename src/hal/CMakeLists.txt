@@ -7,7 +7,7 @@ set(HAL_SOURCES
     inference_engine_factory.cpp
     detection_inference_engine_factory.cpp
     image_accelerator_factory.cpp
-    video_codec_factory.cpp
+    video_decoder_factory.cpp
     action_recognition_factory.cpp
     backend_diagnostics.cpp
 )
@@ -16,7 +16,7 @@ set(HAL_SOURCES
 list(APPEND HAL_SOURCES
     image_accel/cpu/cpu_image_accelerator.cpp
     infer/cpu/cpu_inference_engine.cpp
-    decode/cpu/ffmpeg_video_codec.cpp
+    decode/cpu/ffmpeg_video_decoder.cpp
     pose_estimation_factory.cpp
 )
 
@@ -41,13 +41,13 @@ if(WITH_CUDA)
     list(APPEND HAL_SOURCES
         image_accel/nvidia/npp_image_accelerator.cpp
         image_accel/nvidia/cuda_kernels_wrapper.cu
-        decode/nvidia/nvdec_video_codec.cpp
+        decode/nvidia/nvdec_video_decoder.cpp
     )
     # Jetson V4L2 NVDEC/NVENC 后端（aarch64 平台，设备节点 + 头文件仅存在于 Jetson）
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
         list(APPEND HAL_SOURCES
-            decode/nvidia/v4l2_video_codec.cpp
-            decode/nvidia/gst_v4l2_video_codec.cpp
+            decode/nvidia/v4l2_video_decoder.cpp
+            decode/nvidia/gst_v4l2_video_decoder.cpp
             encode/nvidia/gst_v4l2_video_encoder.cpp
         )
     endif()
@@ -61,7 +61,7 @@ if(WITH_RKNN)
         infer/rk/rknn_detection_engine.cpp
         infer/rk/rknn_pose_estimation.cpp
         image_accel/rk/rga_image_accelerator.cpp
-        decode/rk/mpp_video_codec.cpp
+        decode/rk/mpp_video_decoder.cpp
         infer/rk/rknn_action_recognition.cpp
     )
 endif()
@@ -71,7 +71,7 @@ if(WITH_ASCEND)
     find_package(Ascend REQUIRED)
     list(APPEND HAL_SOURCES
         image_accel/ascend/dvpp_image_accelerator.cpp
-        decode/ascend/dvpp_video_codec.cpp
+        decode/ascend/dvpp_video_decoder.cpp
         infer/ascend/ascend_action_recognition.cpp
     )
 endif()
@@ -85,7 +85,7 @@ if(WITH_HORIZON)
         infer/horizon/horizon_pose_estimation.cpp
         infer/horizon/horizon_action_recognition.cpp
         image_accel/horizon/horizon_image_accelerator.cpp
-        decode/horizon/horizon_video_codec.cpp
+        decode/horizon/horizon_video_decoder.cpp
         encode/horizon/horizon_video_encoder.cpp
     )
 endif()

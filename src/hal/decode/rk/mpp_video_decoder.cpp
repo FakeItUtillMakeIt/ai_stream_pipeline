@@ -1,6 +1,6 @@
-// src/hal/mpp/mpp_video_codec.cpp — Rockchip MPP 硬解（dlopen，x86 仅头文件编译，板端真解码）
-#include "mpp_video_codec.h"
-#include "ai_stream/hal/video_codec_factory.h"
+// src/hal/mpp/mpp_video_decoder.cpp — Rockchip MPP 硬解（dlopen，x86 仅头文件编译，板端真解码）
+#include "mpp_video_decoder.h"
+#include "ai_stream/hal/video_decoder_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 #include <dlfcn.h>
 #include <unistd.h>
@@ -56,15 +56,15 @@ static bool load_mpp() {
     g_mpp_tried = true;
     const char* cand[] = {"3rd_party/rk_platform/mpp/lib/aarch64/librockchip_mpp.so","librockchip_mpp.so", nullptr};
     for (int i=0;cand[i];++i){ g_mpp_handle = dlopen(cand[i], RTLD_NOW); if(g_mpp_handle) break; }
-    if(!g_mpp_handle){ LOG_DEBUG_FMT("[MppVideoCodec] dlopen librockchip_mpp.so fail: {}", dlerror()?dlerror():"unknown"); return false; }
+    if(!g_mpp_handle){ LOG_DEBUG_FMT("[MppVideoDecoder] dlopen librockchip_mpp.so fail: {}", dlerror()?dlerror():"unknown"); return false; }
     p_mpp_create = (mpp_create_fn)dlsym(g_mpp_handle,"mpp_create");
     p_mpp_init = (mpp_init_fn)dlsym(g_mpp_handle,"mpp_init");
     p_mpp_destroy = (mpp_destroy_fn)dlsym(g_mpp_handle,"mpp_destroy");
     p_mpp_packet_init = (mpp_packet_init_fn)dlsym(g_mpp_handle,"mpp_packet_init");
     p_mpp_packet_deinit = (mpp_packet_deinit_fn)dlsym(g_mpp_handle,"mpp_packet_deinit");
-    if(!p_mpp_create || !p_mpp_init){ LOG_WARN("[MppVideoCodec] mpp symbols missing"); dlclose(g_mpp_handle); g_mpp_handle=nullptr; return false; }
+    if(!p_mpp_create || !p_mpp_init){ LOG_WARN("[MppVideoDecoder] mpp symbols missing"); dlclose(g_mpp_handle); g_mpp_handle=nullptr; return false; }
     g_mpp_loaded = true;
-    LOG_INFO("[MppVideoCodec] librockchip_mpp.so loaded");
+    LOG_INFO("[MppVideoDecoder] librockchip_mpp.so loaded");
     return true;
 }
 #endif
@@ -80,16 +80,16 @@ struct MppPriv {
     std::mutex mtx;
 };
 
-MppVideoCodec::MppVideoCodec(): mpp_ctx_(nullptr), mpp_api_(nullptr) {
+MppVideoDecoder::MppVideoDecoder(): mpp_ctx_(nullptr), mpp_api_(nullptr) {
     mpp_ctx_ = new MppPriv();
     initialized_ = initMpp();
-    if (initialized_) LOG_DEBUG("[MppVideoCodec] Initialized");
+    if (initialized_) LOG_DEBUG("[MppVideoDecoder] Initialized");
 }
-MppVideoCodec::~MppVideoCodec(){ cleanup(); if(mpp_ctx_){ delete static_cast<MppPriv*>(mpp_ctx_); mpp_ctx_=nullptr; } }
+MppVideoDecoder::~MppVideoDecoder(){ cleanup(); if(mpp_ctx_){ delete static_cast<MppPriv*>(mpp_ctx_); mpp_ctx_=nullptr; } }
 
-void MppVideoCodec::release(){ cleanup(); LOG_DEBUG("[MppVideoCodec] Released"); }
+void MppVideoDecoder::release(){ cleanup(); LOG_DEBUG("[MppVideoDecoder] Released"); }
 
-bool MppVideoCodec::isAvailable() const {
+bool MppVideoDecoder::isAvailable() const {
 #ifdef WITH_RKNN
     if (initialized_) return true;
     if (access("/dev/mpp_service", F_OK)==0 || access("/dev/rkvdec", F_OK)==0) return true;
@@ -99,21 +99,21 @@ bool MppVideoCodec::isAvailable() const {
 #endif
 }
 
-bool MppVideoCodec::initMpp() {
+bool MppVideoDecoder::initMpp() {
 #ifdef WITH_RKNN
-    if (!load_mpp()){ LOG_DEBUG("[MppVideoCodec] MPP not available on this host, fallback to FFmpeg"); return false; }
+    if (!load_mpp()){ LOG_DEBUG("[MppVideoDecoder] MPP not available on this host, fallback to FFmpeg"); return false; }
     auto priv = static_cast<MppPriv*>(mpp_ctx_);
     if (codec_name_.empty()) return true;
     MPP_RET ret;
     MppCodingType type = MPP_VIDEO_CodingAVC;
     if (codec_name_=="h265"||codec_name_=="hevc") type = MPP_VIDEO_CodingHEVC;
     else if (codec_name_=="h264"||codec_name_=="avc") type = MPP_VIDEO_CodingAVC;
-    else { LOG_WARN_FMT("[MppVideoCodec] unsupported codec {}, default h264", codec_name_); type = MPP_VIDEO_CodingAVC; }
+    else { LOG_WARN_FMT("[MppVideoDecoder] unsupported codec {}, default h264", codec_name_); type = MPP_VIDEO_CodingAVC; }
     priv->coding = type;
     ret = p_mpp_create(&priv->ctx, &priv->api);
-    if(ret!=MPP_OK){ LOG_ERROR_FMT("[MppVideoCodec] mpp_create fail {}", static_cast<int>(ret)); return false; }
+    if(ret!=MPP_OK){ LOG_ERROR_FMT("[MppVideoDecoder] mpp_create fail {}", static_cast<int>(ret)); return false; }
     ret = p_mpp_init(priv->ctx, MPP_CTX_DEC, type);
-    if(ret!=MPP_OK){ LOG_ERROR_FMT("[MppVideoCodec] mpp_init fail {}", static_cast<int>(ret)); p_mpp_destroy(priv->ctx); priv->ctx=nullptr; return false; }
+    if(ret!=MPP_OK){ LOG_ERROR_FMT("[MppVideoDecoder] mpp_init fail {}", static_cast<int>(ret)); p_mpp_destroy(priv->ctx); priv->ctx=nullptr; return false; }
     // 配置 split_parse
     MppDecCfg cfg=nullptr;
     { auto fn=(mpp_dec_cfg_init_fn)dlsym(g_mpp_handle,"mpp_dec_cfg_init"); if(fn) fn(&cfg); }
@@ -125,15 +125,15 @@ bool MppVideoCodec::initMpp() {
     }
     { auto fn=(mpp_dec_cfg_deinit_fn)dlsym(g_mpp_handle,"mpp_dec_cfg_deinit"); if(fn) fn(cfg); }
     mpp_api_ = priv->api;
-    LOG_INFO_FMT("[MppVideoCodec] MPP decoder created codec={}", codec_name_);
+    LOG_INFO_FMT("[MppVideoDecoder] MPP decoder created codec={}", codec_name_);
     return true;
 #else
-    LOG_DEBUG("[MppVideoCodec] WITH_RKNN not enabled");
+    LOG_DEBUG("[MppVideoDecoder] WITH_RKNN not enabled");
     return false;
 #endif
 }
 
-void MppVideoCodec::cleanup(){
+void MppVideoDecoder::cleanup(){
 #ifdef WITH_RKNN
     auto priv = mpp_ctx_ ? static_cast<MppPriv*>(mpp_ctx_) : nullptr;
     if(priv){
@@ -155,7 +155,7 @@ static void handle_info_change(MppPriv* priv, MppFrame mpp_frame){
     RK_U32 w=fnW?fnW(mpp_frame):0, h=fnH?fnH(mpp_frame):0;
     RK_U32 hs=fnHS?fnHS(mpp_frame):0, vs=fnVS?fnVS(mpp_frame):0;
     size_t buf_size=fnBS?fnBS(mpp_frame):0;
-    LOG_INFO_FMT("[MppVideoCodec] info change {}x{} stride {}x{} buf {}", w, h, hs, vs, buf_size);
+    LOG_INFO_FMT("[MppVideoDecoder] info change {}x{} stride {}x{} buf {}", w, h, hs, vs, buf_size);
     if(!priv->frm_grp){
         auto fnGet=(mpp_buffer_group_get_fn)dlsym(g_mpp_handle,"mpp_buffer_group_get");
         if(fnGet) fnGet(&priv->frm_grp, MPP_BUFFER_TYPE_DRM, MPP_BUF_MODE_INTERNAL, "mpp", "decode");
@@ -170,9 +170,9 @@ static void handle_info_change(MppPriv* priv, MppFrame mpp_frame){
 #endif
 }
 
-bool MppVideoCodec::init(const std::string& codec_name, const uint8_t* extradata, int extradata_size){
+bool MppVideoDecoder::init(const std::string& codec_name, const uint8_t* extradata, int extradata_size){
     codec_name_=codec_name; extradata_=extradata; extradata_size_=extradata_size;
-    LOG_INFO_FMT("[MppVideoCodec] init codec={} extradata={}", codec_name, extradata_size);
+    LOG_INFO_FMT("[MppVideoDecoder] init codec={} extradata={}", codec_name, extradata_size);
 #ifdef WITH_RKNN
     auto priv = static_cast<MppPriv*>(mpp_ctx_);
     if(!priv->ctx){
@@ -185,7 +185,7 @@ bool MppVideoCodec::init(const std::string& codec_name, const uint8_t* extradata
 #endif
 }
 
-bool MppVideoCodec::decode(const uint8_t* packet_data, int packet_size, DecodedFrame& frame){
+bool MppVideoDecoder::decode(const uint8_t* packet_data, int packet_size, DecodedFrame& frame){
     if(!initialized_ || !packet_data || packet_size<=0) return false;
 #ifdef WITH_RKNN
     auto priv = static_cast<MppPriv*>(mpp_ctx_);
@@ -278,7 +278,7 @@ bool MppVideoCodec::decode(const uint8_t* packet_data, int packet_size, DecodedF
 }
 
 #ifdef WITH_RKNN
-REGISTER_VIDEO_CODEC(VideoCodecBackend::MPP, MppVideoCodec)
+REGISTER_VIDEO_DECODER(VideoDecoderBackend::MPP, MppVideoDecoder)
 #endif
 } // namespace hal
 } // namespace ai_stream

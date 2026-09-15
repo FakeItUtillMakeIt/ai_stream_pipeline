@@ -1,7 +1,7 @@
-// src/hal/ffmpeg/ffmpeg_video_codec.cpp
+// src/hal/ffmpeg/ffmpeg_video_decoder.cpp
 // FFmpeg 软件视频编解码——通用 fallback 后端
-#include "ffmpeg_video_codec.h"
-#include "ai_stream/hal/video_codec_factory.h"
+#include "ffmpeg_video_decoder.h"
+#include "ai_stream/hal/video_decoder_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 
 extern "C" {
@@ -13,31 +13,31 @@ extern "C" {
 namespace ai_stream {
 namespace hal {
 
-FFmpegVideoCodec::FFmpegVideoCodec() {
-    LOG_DEBUG("[FFmpegVideoCodec] Constructor");
+FFmpegVideoDecoder::FFmpegVideoDecoder() {
+    LOG_DEBUG("[FFmpegVideoDecoder] Constructor");
 }
 
-FFmpegVideoCodec::~FFmpegVideoCodec() {
+FFmpegVideoDecoder::~FFmpegVideoDecoder() {
     cleanup();
-    LOG_DEBUG("[FFmpegVideoCodec] Destroyed");
+    LOG_DEBUG("[FFmpegVideoDecoder] Destroyed");
 }
 
-bool FFmpegVideoCodec::init(const std::string& codec_name,
+bool FFmpegVideoDecoder::init(const std::string& codec_name,
                              const uint8_t* extradata,
                              int extradata_size) {
     codec_name_ = codec_name;
     extradata_ = extradata;
     extradata_size_ = extradata_size;
 
-    LOG_INFO_FMT("[FFmpegVideoCodec] Initializing codec: {}", codec_name);
+    LOG_INFO_FMT("[FFmpegVideoDecoder] Initializing codec: {}", codec_name);
     initialized_ = initDecoder();
     return initialized_;
 }
 
-bool FFmpegVideoCodec::decode(const uint8_t* packet_data, int packet_size,
+bool FFmpegVideoDecoder::decode(const uint8_t* packet_data, int packet_size,
                                DecodedFrame& frame) {
     if (!initialized_ || !codec_ctx_) {
-        LOG_ERROR("[FFmpegVideoCodec] Not initialized");
+        LOG_ERROR("[FFmpegVideoDecoder] Not initialized");
         return false;
     }
 
@@ -45,7 +45,7 @@ bool FFmpegVideoCodec::decode(const uint8_t* packet_data, int packet_size,
     av_packet_unref(packet_);
     packet_->data = static_cast<uint8_t*>(av_malloc(packet_size + AV_INPUT_BUFFER_PADDING_SIZE));
     if (!packet_->data) {
-        LOG_ERROR("[FFmpegVideoCodec] Failed to allocate packet buffer");
+        LOG_ERROR("[FFmpegVideoDecoder] Failed to allocate packet buffer");
         return false;
     }
     std::memcpy(packet_->data, packet_data, packet_size);
@@ -55,14 +55,14 @@ bool FFmpegVideoCodec::decode(const uint8_t* packet_data, int packet_size,
     int ret = avcodec_send_packet(codec_ctx_, packet_);
     av_freep(&packet_->data);  // 释放临时缓冲区
     if (ret < 0) {
-        LOG_ERROR_FMT("[FFmpegVideoCodec] avcodec_send_packet failed: {}", ret);
+        LOG_ERROR_FMT("[FFmpegVideoDecoder] avcodec_send_packet failed: {}", ret);
         return false;
     }
 
     // 接收解码后的帧
     ret = avcodec_receive_frame(codec_ctx_, frame_);
     if (ret < 0) {
-        LOG_ERROR_FMT("[FFmpegVideoCodec] avcodec_receive_frame failed: {}", ret);
+        LOG_ERROR_FMT("[FFmpegVideoDecoder] avcodec_receive_frame failed: {}", ret);
         return false;
     }
 
@@ -94,12 +94,12 @@ bool FFmpegVideoCodec::decode(const uint8_t* packet_data, int packet_size,
     return true;
 }
 
-void FFmpegVideoCodec::release() {
+void FFmpegVideoDecoder::release() {
     cleanup();
-    LOG_DEBUG("[FFmpegVideoCodec] Released");
+    LOG_DEBUG("[FFmpegVideoDecoder] Released");
 }
 
-bool FFmpegVideoCodec::ensureBgrConverter(int width, int height, int src_format) {
+bool FFmpegVideoDecoder::ensureBgrConverter(int width, int height, int src_format) {
     if (src_format == AV_PIX_FMT_BGR24) {
         return true;
     }
@@ -120,14 +120,14 @@ bool FFmpegVideoCodec::ensureBgrConverter(int width, int height, int src_format)
 
     bgr_frame_ = av_frame_alloc();
     if (!bgr_frame_) {
-        LOG_ERROR("[FFmpegVideoCodec] Failed to allocate BGR frame");
+        LOG_ERROR("[FFmpegVideoDecoder] Failed to allocate BGR frame");
         return false;
     }
     bgr_frame_->format = AV_PIX_FMT_BGR24;
     bgr_frame_->width = width;
     bgr_frame_->height = height;
     if (av_frame_get_buffer(bgr_frame_, 32) < 0) {
-        LOG_ERROR("[FFmpegVideoCodec] Failed to allocate BGR frame buffer");
+        LOG_ERROR("[FFmpegVideoDecoder] Failed to allocate BGR frame buffer");
         return false;
     }
 
@@ -135,18 +135,18 @@ bool FFmpegVideoCodec::ensureBgrConverter(int width, int height, int src_format)
                               width, height, AV_PIX_FMT_BGR24,
                               SWS_FAST_BILINEAR, nullptr, nullptr, nullptr);
     if (!sws_ctx_) {
-        LOG_ERROR("[FFmpegVideoCodec] Failed to create sws context");
+        LOG_ERROR("[FFmpegVideoDecoder] Failed to create sws context");
         return false;
     }
     return true;
 }
 
-bool FFmpegVideoCodec::isAvailable() const {
+bool FFmpegVideoDecoder::isAvailable() const {
     // FFmpeg 始终可用
     return true;
 }
 
-bool FFmpegVideoCodec::initDecoder() {
+bool FFmpegVideoDecoder::initDecoder() {
     AVCodecID codec_id = AV_CODEC_ID_NONE;
 
     if (codec_name_ == "h264" || codec_name_ == "H264") {
@@ -171,13 +171,13 @@ bool FFmpegVideoCodec::initDecoder() {
         codec = avcodec_find_decoder(AV_CODEC_ID_H264);
     }
     if (!codec) {
-        LOG_ERROR_FMT("[FFmpegVideoCodec] Codec not found: {}", codec_name_);
+        LOG_ERROR_FMT("[FFmpegVideoDecoder] Codec not found: {}", codec_name_);
         return false;
     }
 
     codec_ctx_ = avcodec_alloc_context3(codec);
     if (!codec_ctx_) {
-        LOG_ERROR("[FFmpegVideoCodec] Failed to allocate codec context");
+        LOG_ERROR("[FFmpegVideoDecoder] Failed to allocate codec context");
         return false;
     }
 
@@ -189,7 +189,7 @@ bool FFmpegVideoCodec::initDecoder() {
 
     int ret = avcodec_open2(codec_ctx_, codec, nullptr);
     if (ret < 0) {
-        LOG_ERROR_FMT("[FFmpegVideoCodec] Failed to open codec: {}", ret);
+        LOG_ERROR_FMT("[FFmpegVideoDecoder] Failed to open codec: {}", ret);
         return false;
     }
 
@@ -199,7 +199,7 @@ bool FFmpegVideoCodec::initDecoder() {
     return true;
 }
 
-void FFmpegVideoCodec::cleanup() {
+void FFmpegVideoDecoder::cleanup() {
     if (sws_ctx_) {
         sws_freeContext(sws_ctx_);
         sws_ctx_ = nullptr;
@@ -220,7 +220,7 @@ void FFmpegVideoCodec::cleanup() {
 }
 
 // 注册 FFmpeg 后端到工厂（始终可用）
-REGISTER_VIDEO_CODEC(VideoCodecBackend::FFMPEG, FFmpegVideoCodec)
+REGISTER_VIDEO_DECODER(VideoDecoderBackend::FFMPEG, FFmpegVideoDecoder)
 
 } // namespace hal
 } // namespace ai_stream

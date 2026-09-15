@@ -1,4 +1,4 @@
-// src/hal/decode/horizon/horizon_video_codec.cpp
+// src/hal/decode/horizon/horizon_video_decoder.cpp
 // Horizon VPU 解码器实现——RDK S100P
 // 优先 libspcdev 的 sp_* 解码 API → FFmpeg 软件解码
 //
@@ -7,8 +7,8 @@
 //   sp_init_decoder_module / sp_start_decode / sp_decoder_set_image /
 //   sp_decoder_get_image / sp_stop_decode / sp_release_decoder_module
 // 注意：H264/H265 需先喂 3~5 帧让解码器填满内部帧缓冲，之后才能取出解码帧。
-#include "horizon_video_codec.h"
-#include "ai_stream/hal/video_codec_factory.h"
+#include "horizon_video_decoder.h"
+#include "ai_stream/hal/video_decoder_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 
 #include <dlfcn.h>
@@ -89,7 +89,7 @@ bool spAcquire() {
 
     void* dl = dlopen("libspcdev.so", RTLD_NOW | RTLD_GLOBAL);
     if (!dl) {
-        LOG_INFO_FMT("[HorizonVideoCodec] dlopen libspcdev.so failed: {}", dlerror());
+        LOG_INFO_FMT("[HorizonVideoDecoder] dlopen libspcdev.so failed: {}", dlerror());
         return false;
     }
     g_sp.dl = dl;
@@ -207,20 +207,20 @@ bool packetHasIrap(const uint8_t* data, int size) {
 namespace ai_stream {
 namespace hal {
 
-HorizonVideoCodec::HorizonVideoCodec() = default;
+HorizonVideoDecoder::HorizonVideoDecoder() = default;
 
-HorizonVideoCodec::~HorizonVideoCodec() { release(); }
+HorizonVideoDecoder::~HorizonVideoDecoder() { release(); }
 
-bool HorizonVideoCodec::isAvailable() const {
+bool HorizonVideoDecoder::isAvailable() const {
     return spAcquire() || ffAcquire();
 }
 
-void HorizonVideoCodec::setSourceResolution(int width, int height) {
+void HorizonVideoDecoder::setSourceResolution(int width, int height) {
     src_width_ = width;
     src_height_ = height;
 }
 
-bool HorizonVideoCodec::init(const std::string& codec_name,
+bool HorizonVideoDecoder::init(const std::string& codec_name,
                              const uint8_t* extradata, int extradata_size) {
     release();
     if (tryVpDecode(codec_name, extradata, extradata_size)) {
@@ -234,14 +234,14 @@ bool HorizonVideoCodec::init(const std::string& codec_name,
     return false;
 }
 
-bool HorizonVideoCodec::tryVpDecode(const std::string& codec_name,
+bool HorizonVideoDecoder::tryVpDecode(const std::string& codec_name,
                                     const uint8_t* extradata, int extradata_size) {
     if (getenv("FORCE_SW_DECODE")) {
-        LOG_INFO("[HorizonVideoCodec] FORCE_SW_DECODE set, skipping VPU");
+        LOG_INFO("[HorizonVideoDecoder] FORCE_SW_DECODE set, skipping VPU");
         return false;
     }
     if (!spAcquire()) {
-        LOG_INFO("[HorizonVideoCodec] libspcdev.so not available");
+        LOG_INFO("[HorizonVideoDecoder] libspcdev.so not available");
         return false;
     }
 
@@ -259,7 +259,7 @@ bool HorizonVideoCodec::tryVpDecode(const std::string& codec_name,
 
     use_vp_ = true;
     name_ = "Horizon VPU HW (sp_" + codec_name + ")";
-    LOG_INFO_FMT("[HorizonVideoCodec] sp decoder selected, type={} {}", vp_codec_type_, codec_name);
+    LOG_INFO_FMT("[HorizonVideoDecoder] sp decoder selected, type={} {}", vp_codec_type_, codec_name);
 
     // 若分辨率已知则立即启动；否则推迟到首帧 decode_vp
     if (src_width_ > 0 && src_height_ > 0 && !startSpDecoder()) {
@@ -270,22 +270,22 @@ bool HorizonVideoCodec::tryVpDecode(const std::string& codec_name,
     return true;
 }
 
-bool HorizonVideoCodec::startSpDecoder() {
+bool HorizonVideoDecoder::startSpDecoder() {
     if (sp_obj_) return true;
     if (src_width_ <= 0 || src_height_ <= 0) {
-        LOG_INFO("[HorizonVideoCodec] startSpDecoder: resolution unknown");
+        LOG_INFO("[HorizonVideoDecoder] startSpDecoder: resolution unknown");
         return false;
     }
 
     sp_obj_ = g_sp.init_module();
     if (!sp_obj_) {
-        LOG_INFO("[HorizonVideoCodec] sp_init_decoder_module failed");
+        LOG_INFO("[HorizonVideoDecoder] sp_init_decoder_module failed");
         return false;
     }
 
     int ret = g_sp.start_decode(sp_obj_, "", 0, vp_codec_type_, src_width_, src_height_);
     if (ret != 0) {
-        LOG_INFO_FMT("[HorizonVideoCodec] sp_start_decode failed: {}", ret);
+        LOG_INFO_FMT("[HorizonVideoDecoder] sp_start_decode failed: {}", ret);
         g_sp.release_module(sp_obj_);
         sp_obj_ = nullptr;
         return false;
@@ -293,11 +293,11 @@ bool HorizonVideoCodec::startSpDecoder() {
 
     sp_out_.assign(static_cast<size_t>(src_width_) * src_height_ * 3 / 2, 0);
     vp_fed_ = 0;
-    LOG_INFO_FMT("[HorizonVideoCodec] sp decoder started {}x{}", src_width_, src_height_);
+    LOG_INFO_FMT("[HorizonVideoDecoder] sp decoder started {}x{}", src_width_, src_height_);
     return true;
 }
 
-bool HorizonVideoCodec::decode(const uint8_t* packet_data, int packet_size,
+bool HorizonVideoDecoder::decode(const uint8_t* packet_data, int packet_size,
                                DecodedFrame& frame) {
     if (!initialized_ || !packet_data || packet_size <= 0) return false;
 
@@ -311,7 +311,7 @@ bool HorizonVideoCodec::decode(const uint8_t* packet_data, int packet_size,
                 return false;
             }
             saw_irap_ = true;
-            LOG_INFO("[HorizonVideoCodec] reached random access point, starting feed");
+            LOG_INFO("[HorizonVideoDecoder] reached random access point, starting feed");
         }
 
         // 首个 AU：前置 extradata (VPS/SPS/PPS)，形成随机访问点
@@ -357,11 +357,11 @@ bool HorizonVideoCodec::decode(const uint8_t* packet_data, int packet_size,
     return popFfmpegFrame(frame);
 }
 
-bool HorizonVideoCodec::decode_vp(const uint8_t* data, int size, DecodedFrame& frame) {
+bool HorizonVideoDecoder::decode_vp(const uint8_t* data, int size, DecodedFrame& frame) {
     int ret = g_sp.set_image(sp_obj_, const_cast<char*>(reinterpret_cast<const char*>(data)),
                              0, size, 0);
     if (ret != 0) {
-        LOG_INFO_FMT("[HorizonVideoCodec] sp_decoder_set_image failed: {}", ret);
+        LOG_INFO_FMT("[HorizonVideoDecoder] sp_decoder_set_image failed: {}", ret);
         return false;
     }
     vp_fed_++;
@@ -392,7 +392,7 @@ bool HorizonVideoCodec::decode_vp(const uint8_t* data, int size, DecodedFrame& f
     return true;
 }
 
-bool HorizonVideoCodec::drainFfmpeg() {
+bool HorizonVideoDecoder::drainFfmpeg() {
     bool got = false;
     while (true) {
         AVFrame* f = g_ff.frame_alloc();
@@ -409,7 +409,7 @@ bool HorizonVideoCodec::drainFfmpeg() {
     return got;
 }
 
-bool HorizonVideoCodec::popFfmpegFrame(DecodedFrame& frame) {
+bool HorizonVideoDecoder::popFfmpegFrame(DecodedFrame& frame) {
     if (ff_pending_.empty()) return false;
     AVFrame* f = ff_pending_.front();
     ff_pending_.pop_front();
@@ -419,7 +419,7 @@ bool HorizonVideoCodec::popFfmpegFrame(DecodedFrame& frame) {
     return ok;
 }
 
-bool HorizonVideoCodec::tryFfmpegDecode(const std::string& codec_name,
+bool HorizonVideoDecoder::tryFfmpegDecode(const std::string& codec_name,
                                         const uint8_t* extradata,
                                         int extradata_size) {
     if (!ffAcquire()) return false;
@@ -455,11 +455,11 @@ bool HorizonVideoCodec::tryFfmpegDecode(const std::string& codec_name,
 
     use_vp_ = false;
     name_ = "Horizon FFmpeg (CPU)";
-    LOG_INFO("[HorizonVideoCodec] Using FFmpeg SW decode");
+    LOG_INFO("[HorizonVideoDecoder] Using FFmpeg SW decode");
     return true;
 }
 
-void HorizonVideoCodec::release() {
+void HorizonVideoDecoder::release() {
     for (AVFrame* f : ff_pending_) g_ff.frame_free(&f);
     ff_pending_.clear();
 
@@ -484,7 +484,7 @@ void HorizonVideoCodec::release() {
     initialized_ = false;
 }
 
-REGISTER_VIDEO_CODEC(VideoCodecBackend::HORIZON, HorizonVideoCodec)
+REGISTER_VIDEO_DECODER(VideoDecoderBackend::HORIZON, HorizonVideoDecoder)
 
 } // namespace hal
 } // namespace ai_stream

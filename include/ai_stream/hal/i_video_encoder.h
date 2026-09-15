@@ -1,7 +1,7 @@
 // include/ai_stream/hal/i_video_encoder.h
 // 视频硬件编码抽象接口——隔离 MPP / NVENC / DVPP 等后端
 //
-// 与解码侧（IVideoCodec / VideoCodecFactory）对称：
+// 与解码侧（IVideoDecoder / VideoDecoderFactory）对称：
 // - 实现位于 src/hal/<platform>/，硬件代码不进入节点层
 // - 节点（sink）只通过工厂按后端创建，输入统一 YUV420P 平面数据，
 //   输出 AnnexB H.264（keyframe 标记 + pts/dts），由节点负责容器封装
