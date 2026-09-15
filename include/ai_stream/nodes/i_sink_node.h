@@ -51,10 +51,16 @@ public:
         }
         setTarget(output_url);
         setOutputSize(params.value("output_width", 0), params.value("output_height", 0));
-        // 编码参数可选：encoder 支持 libx264（默认）/ h264_nvenc / hevc_nvenc 等
-        // FFmpeg 注册名；bitrate 单位 kbps。
+        // 编码参数：
+        //   encoder    : 指定编码器（libx264 / h264_nvenc / h264_vpu ...）或 "auto"
+        //   hw_encoder : true  => "auto"（按平台自动选硬件编码，无硬件则软编）
+        //                false => 软件编码
+        // 两者都给时 hw_encoder 优先。
         int bitrate = params.value("bitrate", 0);
         std::string encoder = params.value("encoder", "");
+        if (params.contains("hw_encoder")) {
+            encoder = params.value("hw_encoder", false) ? "auto" : "libx264";
+        }
         if (bitrate > 0 || !encoder.empty()) {
             setEncodingParams(bitrate, encoder);
         }

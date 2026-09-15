@@ -101,10 +101,18 @@ bool EncoderBase::addVideoStream(int width, int height, int bitrate,
                                   const std::string& encoder_name) {
     // 编码上下文在此仅作封装载体（codecpar/time_base）；实际编码在 HAL。
     // legacy 路径复用该上下文执行 avcodec_open2。
-    // mpp/nvv4l2 是 HAL 后端名而非 FFmpeg 编码器名，直接按 H264 处理，
-    // 避免 avcodec_find_encoder_by_name 报"not found"误导日志。
-    if (encoder_name.find("mpp") == std::string::npos &&
-        encoder_name.find("nvv4l2") == std::string::npos) {
+    // 以下都是 HAL 后端名（而非 FFmpeg 编码器名），直接按 H264 处理，
+    // 避免 avcodec_find_encoder_by_name 报 "not found" 误导日志：
+    //   auto / horizon_h264 / mpp_h264 / nvv4l2_h264 / h264_vpu ...
+    const bool is_backend_name =
+        encoder_name == "auto" ||
+        encoder_name.find("mpp") != std::string::npos ||
+        encoder_name.find("nvv4l2") != std::string::npos ||
+        encoder_name.find("vpu") != std::string::npos ||
+        encoder_name.find("hobot") != std::string::npos ||
+        encoder_name.find("horizon") != std::string::npos ||
+        encoder_name.find("sp264") != std::string::npos;
+    if (!is_backend_name) {
         const AVCodec* codec = avcodec_find_encoder_by_name(encoder_name.c_str());
         if (!codec) {
             LOG_WARN_FMT("[EncoderBase] Encoder '{}' not found, trying default H264",
@@ -120,9 +128,11 @@ bool EncoderBase::addVideoStream(int width, int height, int bitrate,
         codec_ctx_->codec_id = codec->id;
         LOG_INFO_FMT("[EncoderBase] Using encoder: {}", codec->name);
     } else {
+        // HAL 后端（auto 或具体硬件名）：context 仅作封装载体，选默认 H264
         const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_H264);
         codec_ctx_ = avcodec_alloc_context3(codec);
         codec_ctx_->codec_id = AV_CODEC_ID_H264;
+        LOG_INFO_FMT("[EncoderBase] HAL backend '{}' (muxer codec ctx = H264)", encoder_name);
     }
     if (!codec_ctx_) {
         LOG_ERROR("[EncoderBase] Failed to allocate codec context");

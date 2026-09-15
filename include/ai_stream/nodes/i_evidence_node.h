@@ -52,13 +52,18 @@ public:
     bool configure(const std::string& node_id, const nlohmann::json& params) override {
         (void)node_id;
         const nlohmann::json video_cfg = params.value("video", nlohmann::json::object());
+        // hw_encoder: true => "auto"（按平台自动选硬件编码，无硬件则软编）
+        std::string enc = video_cfg.value("encoder", "libx264");
+        if (video_cfg.contains("hw_encoder")) {
+            enc = video_cfg.value("hw_encoder", false) ? "auto" : "libx264";
+        }
         setVideoConfig(EvidenceVideoConfig{
             .enabled = video_cfg.value("enabled", true),
             .pre_frames = video_cfg.value("pre_frames", 10),
             .post_frames = video_cfg.value("post_frames", 10),
             .fps = video_cfg.value("fps", 30),
             .bitrate = video_cfg.value("bitrate", 1000),
-            .encoder = video_cfg.value("encoder", "libx264"),
+            .encoder = enc,
             .output_dir = video_cfg.value("output_dir", "./")
         });
 
