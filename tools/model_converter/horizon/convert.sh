@@ -35,6 +35,7 @@ CALIBRATION_DIR=""
 CORE_NUM=1
 INT16=false              # int16 量化（精度更高，避免分类头塌缩）
 FLOAT16=false            # 不做 int8 量化，全 float16（用于先验证输出正确性）
+NV12=false               # 运行时输入为 NV12（板端 NV12 直通路径）
 
 # ============================================================================
 # 辅助函数
@@ -125,6 +126,9 @@ generate_config() {
     local model_name
     model_name=$(basename "$onnx_model" .onnx)
 
+    local rt_type="rgb"
+    [ "$NV12" = true ] && rt_type="nv12"
+
     cat > "$config_file" << EOF
 model_parameters:
   onnx_model: '${onnx_abs}'
@@ -136,7 +140,7 @@ compiler_parameters:
   core_num: ${CORE_NUM}
 
 input_parameters:
-  input_type_rt: 'rgb'
+  input_type_rt: '${rt_type}'
   input_type_train: 'rgb'
   input_layout_train: 'NCHW'
   input_batch: 1
@@ -146,6 +150,7 @@ input_parameters:
   norm_type: 'data_scale'
   scale_value: 0.00392156862745098
 EOF
+    [ "$NV12" = true ] && print_info "运行时输入类型: nv12（板端可走 NV12 直通路径）"
 
     # 添加校准参数（如果指定）
     # 注意：HBDK4/hb_compile 的键名是 cal_data_dir，不是 calibration_dir，
@@ -289,6 +294,10 @@ main() {
                 ;;
             --float16)
                 FLOAT16=true
+                shift
+                ;;
+            --nv12)
+                NV12=true
                 shift
                 ;;
             --config)

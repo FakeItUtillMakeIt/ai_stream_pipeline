@@ -226,7 +226,26 @@ bool HorizonDetectionEngine::loadModel(const DetectionInferenceConfig& config) {
                      i, dims, props.alignedByteSize, props.tensorType, (int)props.quantiType,
                      props.quantizeAxis, props.scale.scaleLen,
                      (props.scale.scaleData && props.scale.scaleLen > 0) ? props.scale.scaleData[0] : 0.0f,
-                     props.stride[0], props.stride[1], props.stride[2], props.stride[3]);
+                 props.stride[0], props.stride[1], props.stride[2], props.stride[3]);
+
+    // NV12 输入检测：模型为两输入张量（Y 平面 + UV 平面）
+    use_nv12_ = false;
+    if (num_inputs_ >= 2) {
+        struct hbDNNTensorProperties yp{}, uvp{};
+        if (api.GetInputTensorProperties(&yp, dnn_handle_, 0) == 0 &&
+            api.GetInputTensorProperties(&uvp, dnn_handle_, 1) == 0) {
+            use_nv12_ = true;
+            if (yp.validShape.numDimensions >= 4) {
+                input_height_ = yp.validShape.dimensionSize[1];
+                input_width_  = yp.validShape.dimensionSize[2];
+            }
+            std::string yd, ud;
+            for (int32_t d = 0; d < yp.validShape.numDimensions; ++d) yd += std::to_string(yp.validShape.dimensionSize[d]) + " ";
+            for (int32_t d = 0; d < uvp.validShape.numDimensions; ++d) ud += std::to_string(uvp.validShape.dimensionSize[d]) + " ";
+            LOG_INFO_FMT("[HorizonDetectionEngine] NV12 model detected: Y[{}] type={} stride1={} | UV[{}] type={} stride1={}",
+                         yd, yp.tensorType, yp.stride[1], ud, uvp.tensorType, uvp.stride[1]);
+        }
+    }
 
         // YOLOv8 单输出 [1, 4+nc, N]：直接从 shape 取类别数与 anchor 数，
         // 避免按整除猜测类别数导致输出错位（bugs: 14 类被误判为 80/20 类）。
@@ -248,6 +267,14 @@ bool HorizonDetectionEngine::loadModel(const DetectionInferenceConfig& config) {
 
 bool HorizonDetectionEngine::setInputTensor(const std::string& name, void* ptr) {
     tensor_ptrs_[name] = ptr;
+    return true;
+}
+
+bool HorizonDetectionEngine::setNv12Input(const uint8_t* nv12, int width, int height) {
+    if (!use_nv12_ || !nv12 || width <= 0 || height <= 0) return false;
+    nv12_ptr_ = nv12;
+    nv12_w_ = width;
+    nv12_h_ = height;
     return true;
 }
 
@@ -301,102 +328,162 @@ bool HorizonDetectionEngine::infer() {
     auto& api = get_api();
     if (!api.loaded) return false;
 
-    // Find input tensor
-    void* input_ptr = nullptr;
-    for (auto& [name, ptr] : tensor_ptrs_) {
-        if (name == input_name_ || name == "images" || name == "input") {
-            input_ptr = ptr;
-            break;
+    std::vector<struct hbUCPSysMem> input_mems;
+    std::vector<struct hbDNNTensor> input_tensors;
+    int32_t ret = 0;
+
+    if (use_nv12_ && nv12_ptr_) {
+        // ---- NV12 双输入（Y / UV）----
+        struct hbDNNTensorProperties yp{}, uvp{};
+        if (api.GetInputTensorProperties(&yp, dnn_handle_, 0) != 0 ||
+            api.GetInputTensorProperties(&uvp, dnn_handle_, 1) != 0) {
+            LOG_ERROR("[HorizonDetectionEngine] GetInputTensorProperties(nv12) failed");
+            return false;
         }
-    }
-    if (!input_ptr) {
-        LOG_ERROR("[HorizonDetectionEngine] Input tensor not set");
-        return false;
-    }
-
-    // Prepare input tensor
-    struct hbDNNTensorProperties input_props;
-    api.GetInputTensorProperties(&input_props, dnn_handle_, 0);
-
-    // 获取输入形状: [1, 640, 640, 3] NHWC
-    int32_t batch = input_props.validShape.dimensionSize[0];
-    int32_t h = input_props.validShape.dimensionSize[1];
-    int32_t w = input_props.validShape.dimensionSize[2];
-    int32_t c = input_props.validShape.dimensionSize[3];
-    // tensorType: 2=S8, 3=U8, 7=F32
-    bool is_int8 = (input_props.tensorType == 2 || input_props.tensorType == 3);
-
-    struct hbUCPSysMem input_mem;
-    size_t input_size = static_cast<size_t>(input_props.alignedByteSize);
-    // 使用 MallocCached（与官方 hrt_model_exec / 样例一致，配合 MemFlush）
-    int32_t ret = api.MallocCached(&input_mem, input_size, 0);
-    if (ret != 0) {
-        LOG_ERROR_FMT("[HorizonDetectionEngine] Input MallocCached failed: {}", ret);
-        return false;
-    }
-    // 实际数据大小（不含对齐填充）
-    size_t data_size = batch * h * w * c * (is_int8 ? 1 : 4);
-
-    if (is_int8) {
-        // 预处理节点输出为归一化 float32 NCHW [0,1]；模型期望 [0,255] 量化为
-        // int8 NHWC [-128,127]。先还原到 [0,255] 再平移。
-        const float* src = static_cast<const float*>(input_ptr);
-        int8_t* dst = static_cast<int8_t*>(input_mem.virAddr);
-
-        // stride 信息: [batch_stride, h_stride, w_stride, c_stride]
-        int64_t batch_stride = input_props.stride[0];
-        int64_t h_stride = input_props.stride[1];
-        int64_t w_stride = input_props.stride[2];
-
-        for (int64_t i = 0; i < batch; ++i) {
-            for (int hi = 0; hi < h; ++hi) {
-                for (int wi = 0; wi < w; ++wi) {
-                    for (int ci = 0; ci < c; ++ci) {
-                        int64_t nchw_idx = ((i * c + ci) * h + hi) * w + wi;
-                        float val = src[nchw_idx];
-                        // [0,1] -> [0,255] -> [-128,127]
-                        int32_t q = static_cast<int32_t>(std::round(val * 255.0f - 128.0f));
-                        int8_t qval = static_cast<int8_t>(std::max(-128, std::min(127, q)));
-                        // 按 stride 定位目标位置
-                        int64_t dst_offset = i * batch_stride + hi * h_stride + wi * w_stride + ci;
-                        dst[dst_offset] = qval;
-                    }
+        // 解析动态 stride（-1）：stride[i] = ALIGN_64(stride[i+1]*shape[i+1])
+        auto resolveStride = [](hbDNNTensorProperties& p) {
+            for (int i = p.validShape.numDimensions - 1; i >= 0; --i) {
+                if (p.stride[i] == -1) {
+                    int64_t cur = p.stride[i + 1] * p.validShape.dimensionSize[i + 1];
+                    p.stride[i] = (cur + 63) & ~63LL;
                 }
             }
+        };
+        resolveStride(yp);
+        resolveStride(uvp);
+
+        const size_t nv12_sizes[2] = {
+            static_cast<size_t>(yp.stride[0]) * yp.validShape.dimensionSize[0],
+            static_cast<size_t>(uvp.stride[0]) * uvp.validShape.dimensionSize[0]
+        };
+        input_mems.resize(2);
+        input_tensors.resize(2);
+        for (int i = 0; i < 2; ++i) {
+            const auto& ip = (i == 0) ? yp : uvp;
+            int32_t mr = api.MallocCached(&input_mems[i], nv12_sizes[i], 0);
+            if (mr != 0) {
+                LOG_ERROR_FMT("[HorizonDetectionEngine] NV12 input Malloc({}) failed: {}", i, mr);
+                for (int j = 0; j < i; ++j) api.Free(&input_mems[j]);
+                return false;
+            }
+            // Y 平面灰底 114，UV 平面中性 128（与训练/校准的 letterbox 一致）
+            memset(input_mems[i].virAddr, (i == 0) ? 114 : 128, nv12_sizes[i]);
+            input_tensors[i].sysMem = input_mems[i];
+            input_tensors[i].properties = ip;
         }
+
+        // letterbox 紧凑 NV12 -> 模型 NV12（最近邻）
+        const int sw = nv12_w_, sh = nv12_h_;
+        const int mw = input_width_, mh = input_height_;
+        float scale = std::min(static_cast<float>(mw) / sw, static_cast<float>(mh) / sh);
+        int lw = std::max(2, static_cast<int>(std::round(sw * scale))) & ~1;
+        int lh = std::max(2, static_cast<int>(std::round(sh * scale))) & ~1;
+        int pad_x = ((mw - lw) / 2) & ~1;
+        int pad_y = ((mh - lh) / 2) & ~1;
+
+        const uint8_t* src_y = nv12_ptr_;
+        const uint8_t* src_uv = nv12_ptr_ + static_cast<size_t>(sw) * sh;
+        uint8_t* dst_y = static_cast<uint8_t*>(input_mems[0].virAddr);
+        uint8_t* dst_uv = static_cast<uint8_t*>(input_mems[1].virAddr);
+        const int64_t y_stride = yp.stride[1];
+        const int64_t uv_stride = uvp.stride[1];
+
+        // 预计算源索引，避免内层逐像素除法
+        std::vector<int32_t> xmap(lw), ymap(lh);
+        for (int i = 0; i < lw; ++i) xmap[i] = std::min(sw - 1, (i * sw) / lw);
+        for (int i = 0; i < lh; ++i) ymap[i] = std::min(sh - 1, (i * sh) / lh);
+        for (int py = 0; py < lh; ++py) {
+            const uint8_t* sy0 = src_y + static_cast<size_t>(ymap[py]) * sw;
+            uint8_t* dy0 = dst_y + static_cast<size_t>(pad_y + py) * y_stride + pad_x;
+            for (int px = 0; px < lw; ++px) dy0[px] = sy0[xmap[px]];
+        }
+        const int lw2 = lw / 2, lh2 = lh / 2, sw2 = sw / 2, sh2 = sh / 2;
+        std::vector<int32_t> xmap2(lw2), ymap2(lh2);
+        for (int i = 0; i < lw2; ++i) xmap2[i] = std::min(sw2 - 1, (i * sw2) / lw2);
+        for (int i = 0; i < lh2; ++i) ymap2[i] = std::min(sh2 - 1, (i * sh2) / lh2);
+        for (int py = 0; py < lh2; ++py) {
+            const uint8_t* suv0 = src_uv + static_cast<size_t>(ymap2[py]) * sw;
+            uint8_t* duv0 = dst_uv + static_cast<size_t>(pad_y / 2 + py) * uv_stride + pad_x;
+            for (int px = 0; px < lw2; ++px) {
+                const int sx = xmap2[px] * 2;
+                duv0[px * 2] = suv0[sx];
+                duv0[px * 2 + 1] = suv0[sx + 1];
+            }
+        }
+
+        for (auto& m : input_mems) api.MemFlush(&m, 2);
+        LOG_DEBUG_FMT("[HorizonDetectionEngine] NV12 {}x{} -> model {}x{} (lw={} lh={} pad={},{}) ystride={} uvstride={}",
+                      sw, sh, mw, mh, lw, lh, pad_x, pad_y, y_stride, uv_stride);
     } else {
-        // float32 NCHW -> float32 NHWC，按 stride 拷贝
-        const float* src = static_cast<const float*>(input_ptr);
-        float* dst = static_cast<float*>(input_mem.virAddr);
-
-        int64_t batch_stride = input_props.stride[0];
-        int64_t h_stride = input_props.stride[1];
-        int64_t w_stride = input_props.stride[2];
-
-        for (int64_t i = 0; i < batch; ++i) {
-            for (int hi = 0; hi < h; ++hi) {
-                for (int wi = 0; wi < w; ++wi) {
-                    for (int ci = 0; ci < c; ++ci) {
-                        int64_t nchw_idx = ((i * c + ci) * h + hi) * w + wi;
-                        int64_t dst_offset = (i * batch_stride + hi * h_stride + wi * w_stride + ci * sizeof(float)) / sizeof(float);
-                        dst[dst_offset] = src[nchw_idx];
-                    }
-                }
+        // ---- RGB 单输入 ----
+        void* input_ptr = nullptr;
+        for (auto& [name, ptr] : tensor_ptrs_) {
+            if (name == input_name_ || name == "images" || name == "input") {
+                input_ptr = ptr;
+                break;
             }
         }
+        if (!input_ptr) {
+            LOG_ERROR("[HorizonDetectionEngine] Input tensor not set");
+            return false;
+        }
+
+        struct hbDNNTensorProperties input_props;
+        api.GetInputTensorProperties(&input_props, dnn_handle_, 0);
+
+        int32_t batch = input_props.validShape.dimensionSize[0];
+        int32_t h = input_props.validShape.dimensionSize[1];
+        int32_t w = input_props.validShape.dimensionSize[2];
+        int32_t c = input_props.validShape.dimensionSize[3];
+        bool is_int8 = (input_props.tensorType == 2 || input_props.tensorType == 3);
+
+        struct hbUCPSysMem input_mem;
+        size_t input_size = static_cast<size_t>(input_props.alignedByteSize);
+        ret = api.MallocCached(&input_mem, input_size, 0);
+        if (ret != 0) {
+            LOG_ERROR_FMT("[HorizonDetectionEngine] Input MallocCached failed: {}", ret);
+            return false;
+        }
+
+        if (is_int8) {
+            // 预处理节点输出归一化 float32 NCHW [0,1]；模型期望 [0,255] 量化为 int8 NHWC [-128,127]
+            const float* src = static_cast<const float*>(input_ptr);
+            int8_t* dst = static_cast<int8_t*>(input_mem.virAddr);
+            int64_t batch_stride = input_props.stride[0];
+            int64_t h_stride = input_props.stride[1];
+            int64_t w_stride = input_props.stride[2];
+            for (int64_t i = 0; i < batch; ++i)
+                for (int64_t hi = 0; hi < h; ++hi)
+                    for (int64_t wi = 0; wi < w; ++wi)
+                        for (int64_t ci = 0; ci < c; ++ci) {
+                            int64_t nchw_idx = ((i * c + ci) * h + hi) * w + wi;
+                            int32_t q = static_cast<int32_t>(std::round(src[nchw_idx] * 255.0f - 128.0f));
+                            int8_t qval = static_cast<int8_t>(std::max(-128, std::min(127, q)));
+                            dst[i * batch_stride + hi * h_stride + wi * w_stride + ci] = qval;
+                        }
+        } else {
+            const float* src = static_cast<const float*>(input_ptr);
+            float* dst = static_cast<float*>(input_mem.virAddr);
+            int64_t batch_stride = input_props.stride[0];
+            int64_t h_stride = input_props.stride[1];
+            int64_t w_stride = input_props.stride[2];
+            for (int64_t i = 0; i < batch; ++i)
+                for (int64_t hi = 0; hi < h; ++hi)
+                    for (int64_t wi = 0; wi < w; ++wi)
+                        for (int64_t ci = 0; ci < c; ++ci) {
+                            int64_t nchw_idx = ((i * c + ci) * h + hi) * w + wi;
+                            int64_t dst_offset = (i * batch_stride + hi * h_stride + wi * w_stride + ci * sizeof(float)) / sizeof(float);
+                            dst[dst_offset] = src[nchw_idx];
+                        }
+        }
+
+        api.MemFlush(&input_mem, 2);
+        input_mems.push_back(input_mem);
+        struct hbDNNTensor t;
+        t.sysMem = input_mem;
+        t.properties = input_props;
+        input_tensors.push_back(t);
     }
-
-    struct hbDNNTensor input_tensor;
-    input_tensor.sysMem = input_mem;
-    input_tensor.properties = input_props;
-
-    // 刷新输入缓存: HB_SYS_MEM_CACHE_CLEAN=2 (CPU→设备)，把 CPU 写入刷到设备可见内存
-    api.MemFlush(&input_mem, 2);
-
-    LOG_DEBUG_FMT("[HorizonDetectionEngine] Input: tensorType={}, quantiType={}, alignedByteSize={}, shape=[{},{},{},{}]",
-        input_props.tensorType, input_props.quantiType, (long)input_props.alignedByteSize,
-        input_props.validShape.dimensionSize[0], input_props.validShape.dimensionSize[1],
-        input_props.validShape.dimensionSize[2], input_props.validShape.dimensionSize[3]);
 
     // Prepare output tensors
     std::vector<struct hbDNNTensor> output_tensors(num_outputs_);
@@ -406,7 +493,7 @@ bool HorizonDetectionEngine::infer() {
         ret = api.MallocCached(&output_mems[i], output_sizes_[i], 0);
         if (ret != 0) {
             LOG_ERROR_FMT("[HorizonDetectionEngine] Output Malloc({}) failed: {}", i, ret);
-            api.Free(&input_mem);
+            for (auto& m : input_mems) api.Free(&m);
             for (int32_t j = 0; j < i; ++j) api.Free(&output_mems[j]);
             return false;
         }
@@ -421,11 +508,11 @@ bool HorizonDetectionEngine::infer() {
 
     // Run inference
     hbUCPTaskHandle_t task_handle = nullptr;
-    ret = api.InferV2(&task_handle, output_tensors.data(), &input_tensor, dnn_handle_);
+    ret = api.InferV2(&task_handle, output_tensors.data(), input_tensors.data(), dnn_handle_);
     LOG_DEBUG_FMT("[HorizonDetectionEngine] InferV2 ret={}, task_handle={}", ret, (void*)task_handle);
     if (ret != 0) {
         LOG_ERROR_FMT("[HorizonDetectionEngine] InferV2 failed: {}", ret);
-        api.Free(&input_mem);
+        for (auto& m : input_mems) api.Free(&m);
         for (auto& m : output_mems) api.Free(&m);
         return false;
     }
@@ -440,7 +527,7 @@ bool HorizonDetectionEngine::infer() {
     if (ret != 0) {
         LOG_ERROR_FMT("[HorizonDetectionEngine] SubmitTask failed: {}", ret);
         api.ReleaseTask(task_handle);
-        api.Free(&input_mem);
+        for (auto& m : input_mems) api.Free(&m);
         for (auto& m : output_mems) api.Free(&m);
         return false;
     }
@@ -450,7 +537,7 @@ bool HorizonDetectionEngine::infer() {
     if (ret != 0) {
         LOG_ERROR("[HorizonDetectionEngine] WaitTaskDone failed");
         api.ReleaseTask(task_handle);
-        api.Free(&input_mem);
+        for (auto& m : input_mems) api.Free(&m);
         for (auto& m : output_mems) api.Free(&m);
         return false;
     }
@@ -510,7 +597,7 @@ bool HorizonDetectionEngine::infer() {
     }
 
     api.ReleaseTask(task_handle);
-    api.Free(&input_mem);
+    for (auto& m : input_mems) api.Free(&m);
     for (auto& m : output_mems) api.Free(&m);
 
     return true;

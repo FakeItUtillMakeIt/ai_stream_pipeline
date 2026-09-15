@@ -55,6 +55,12 @@ public:
     virtual void setHwDecodeEnabled(bool enabled) = 0;
     virtual bool isHwDecodeEnabled() = 0;
 
+    /**
+     * @brief 设置是否随包附带 NV12（供 NV12 输入硬件模型直通消费）
+     * 默认空实现，仅支持的后端覆写。
+     */
+    virtual void setOutputNV12(bool /*enable*/) {}
+
     bool configure(const std::string& node_id, const nlohmann::json& params) override {
         (void)node_id;
         if (params.contains("codec")) {
@@ -62,6 +68,9 @@ public:
         }
         if (params.contains("output_bgr")) {
             setOutputBGR(params["output_bgr"].get<bool>());
+        }
+        if (params.contains("output_nv12")) {
+            setOutputNV12(params["output_nv12"].get<bool>());
         }
         if (params.contains("hw_decoder")) {
             setHwDecodeEnabled(params["hw_decoder"].get<bool>());

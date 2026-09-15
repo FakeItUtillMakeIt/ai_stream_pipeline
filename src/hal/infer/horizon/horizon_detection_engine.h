@@ -28,6 +28,8 @@ public:
     bool loadModel(const DetectionInferenceConfig& config) override;
 
     bool setInputTensor(const std::string& name, void* ptr) override;
+    // NV12 输入直通（NV12 输入模型）：设置紧凑 NV12，infer() 将走 NV12 分支
+    bool setNv12Input(const uint8_t* nv12, int width, int height) override;
     bool setOutputTensor(const std::string& name, void* ptr) override;
     void* getOutputTensor(const std::string& name) override;
     size_t getOutputTensorSize(const std::string& name) const override;
@@ -69,6 +71,12 @@ private:
     int num_inputs_ = 1;
     int num_outputs_ = 1;
     std::vector<int64_t> output_sizes_;
+
+    // NV12 输入路径
+    bool use_nv12_ = false;          // 模型是否为 NV12 双输入（Y/UV）
+    const uint8_t* nv12_ptr_ = nullptr;  // 当前帧紧凑 NV12
+    int nv12_w_ = 0;
+    int nv12_h_ = 0;
 
     // Output layout
     int num_anchors_ = 0;

@@ -267,7 +267,9 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
                 d_ptrs.push_back(frames[b]->d_ptr);
                 d_pitches.push_back(frames[b]->d_pitch);
             } else {
-                if (frames[b]->mat && !frames[b]->mat->empty() && frames[b]->mat->type() == CV_32FC3) {
+                const bool nv12_ok = input_nv12_ && frames[b]->is_nv12 && frames[b]->nv12;
+                if (nv12_ok ||
+                    (frames[b]->mat && !frames[b]->mat->empty() && frames[b]->mat->type() == CV_32FC3)) {
                     cpu_indices.push_back(b);
                 } else {
                     LOG_WARN_FMT("[DetectionInfer] Frame[{}] invalid for CPU path", b);
@@ -499,6 +501,49 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
 
         int slot = 0;
         for (int b = 0; b < actual_batch && slot < valid_batch; ++b) {
+            // ---- NV12 直通分支（NV12 输入模型）----
+            if (input_nv12_) {
+                auto& fr = frames[b];
+                if (fr && fr->is_nv12 && fr->nv12 &&
+                    fr->nv12_width > 0 && fr->nv12_height > 0) {
+                    if (engine_->setNv12Input(fr->nv12->data(), fr->nv12_width, fr->nv12_height) &&
+                        engine_->infer()) {
+                        const int sw = fr->nv12_width, sh = fr->nv12_height;
+                        const float sc = std::min(static_cast<float>(input_width_) / sw,
+                                                  static_cast<float>(input_height_) / sh);
+                        const int lw = std::max(2, static_cast<int>(std::round(sw * sc))) & ~1;
+                        const int lh = std::max(2, static_cast<int>(std::round(sh * sc))) & ~1;
+                        fr->width = sw;
+                        fr->height = sh;
+                        fr->letterbox_used = true;
+                        fr->letter_scale = sc;
+                        fr->letter_pad_x = ((input_width_ - lw) / 2) & ~1;
+                        fr->letter_pad_y = ((input_height_ - lh) / 2) & ~1;
+
+                        const int64_t n = *static_cast<const int64_t*>(engine_->getOutputTensor(num_dets_name_));
+                        const int det_n = static_cast<int>(std::min<int64_t>(n, MAX_DETS));
+                        const float* nbl = static_cast<const float*>(engine_->getOutputTensor(boxes_name_));
+                        const float* nbs = static_cast<const float*>(engine_->getOutputTensor(scores_name_));
+                        const int64_t* nbc = static_cast<const int64_t*>(engine_->getOutputTensor(classes_name_));
+                        for (int i = 0; i < det_n; ++i) {
+                            all_boxes.insert(all_boxes.end(), nbl + i * 4, nbl + i * 4 + 4);
+                            all_scores.push_back(nbs[i]);
+                            all_classes.push_back(nbc[i]);
+                            all_batch_ids.push_back(slot);
+                        }
+                        v_scale_x[slot] = 1.0f;
+                        v_scale_y[slot] = 1.0f;
+                        v_ls[slot] = fr->letter_scale;
+                        v_px[slot] = fr->letter_pad_x;
+                        v_py[slot] = fr->letter_pad_y;
+                        v_lu[slot] = 1;
+                        ++slot;
+                        continue;
+                    }
+                    LOG_WARN_FMT("[DetectionInfer] NV12 infer failed for frame {}", b);
+                    continue;
+                }
+            }
             if (!(frames[b]->mat && !frames[b]->mat->empty() &&
                   frames[b]->mat->type() == CV_32FC3)) {
                 continue;

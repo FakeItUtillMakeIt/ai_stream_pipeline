@@ -108,6 +108,9 @@ public:
         if (detector_config.contains("cuda_graph")) {
             setExtraParam("cuda_graph", detector_config["cuda_graph"]);
         }
+        if (detector_config.contains("input_nv12")) {
+            setExtraParam("input_nv12", detector_config["input_nv12"]);
+        }
         if (detector_config.contains("model_path")) {
             std::string model_path = detector_config["model_path"].get<std::string>();
             if (!loadModel(model_path)) {

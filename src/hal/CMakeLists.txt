@@ -86,6 +86,7 @@ if(WITH_HORIZON)
         infer/horizon/horizon_action_recognition.cpp
         image_accel/horizon/horizon_image_accelerator.cpp
         decode/horizon/horizon_video_codec.cpp
+        encode/horizon/horizon_video_encoder.cpp
     )
 endif()
 

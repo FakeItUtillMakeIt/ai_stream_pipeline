@@ -39,6 +39,9 @@ public:
     void setHwDecodeEnabled(bool enabled) override;
     bool isHwDecodeEnabled() override;
 
+    // NV12 直通：随包附带紧凑 NV12（供 NV12 输入模型消费）
+    void setOutputNV12(bool enable) override;
+
     // 设置视频编解码后端
     void setVideoCodecBackend(hal::VideoCodecBackend backend);
 
@@ -63,6 +66,7 @@ private:
     hal::VideoCodecBackend codec_backend_ = hal::VideoCodecBackend::AUTO;
     std::string decoder_type_ = "h264";
     bool output_bgr_ = true;
+    bool output_nv12_ = false;
 
     // 快照配置
     std::atomic<bool> snapshot_enabled_{false};

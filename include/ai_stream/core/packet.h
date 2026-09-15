@@ -331,6 +331,14 @@ struct VideoFramePacket : public BasePacket {
     std::shared_ptr<cv::Mat> source_mat;
     std::shared_ptr<cv::Mat> mat;       // 图像数据（通常为 BGR 格式）
 
+    // ---- NV12 直通路径（供 NV12 输入硬件模型直接消费）----
+    // 紧凑 NV12：Y(w*h) 紧接 UV(w*h/2)。走该路径时检测节点直接把 nv12 喂给模型，
+    // 跳过 resize_normalize 的 float 预处理与 BGR 往返。
+    bool is_nv12 = false;
+    std::shared_ptr<std::vector<uint8_t>> nv12;
+    int nv12_width = 0;
+    int nv12_height = 0;
+
     void* d_ptr = nullptr;
     int d_width = 0;
     int d_height = 0;

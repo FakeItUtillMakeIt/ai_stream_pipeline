@@ -48,6 +48,11 @@ void FFmpegDecodeNode::setOutputBGR(bool enable) {
     output_bgr_ = enable;
 }
 
+void FFmpegDecodeNode::setOutputNV12(bool enable) {
+    output_nv12_ = enable;
+    LOG_INFO_FMT("[FFmpegDecode] NV12 passthrough enabled: {}", enable);
+}
+
 size_t FFmpegDecodeNode::getActiveDecoderCount() const {
     return active_decoders_;
 }
@@ -267,6 +272,24 @@ std::shared_ptr<core::VideoFramePacket> FFmpegDecodeNode::decodePacket(
 
     cv::Mat mat;
 
+    // ---- NV12 直通：构造紧凑 NV12（Y + UV），供 NV12 输入模型消费 ----
+    std::shared_ptr<std::vector<uint8_t>> nv12_buf;
+    if (output_nv12_ && decoded.data && decoded.data_uv &&
+        decoded.pitch > 0 && decoded.pitch_uv > 0 && (height % 2 == 0)) {
+        nv12_buf = std::make_shared<std::vector<uint8_t>>(
+            static_cast<size_t>(width) * height * 3 / 2);
+        uint8_t* dst = nv12_buf->data();
+        const uint8_t* ysrc = decoded.data;
+        for (int r = 0; r < height; ++r)
+            memcpy(dst + static_cast<size_t>(r) * width,
+                   ysrc + static_cast<size_t>(r) * decoded.pitch, width);
+        uint8_t* udst = dst + static_cast<size_t>(width) * height;
+        const uint8_t* uvs = decoded.data_uv;
+        for (int r = 0; r < height / 2; ++r)
+            memcpy(udst + static_cast<size_t>(r) * width,
+                   uvs + static_cast<size_t>(r) * decoded.pitch_uv, width);
+    }
+
     // 软件解码后端已直接输出 BGR24：不再需要 sws 转换，仅按 pitch 拷贝到
     // cv::Mat（codec 内部帧缓冲每帧复用，必须 clone）。
     if (decoded.format == AV_PIX_FMT_BGR24 && output_bgr_ && decoded.data) {
@@ -419,6 +442,12 @@ std::shared_ptr<core::VideoFramePacket> FFmpegDecodeNode::decodePacket(
     new_frame->height = height;
     new_frame->channels = 3;
     new_frame->frame_id = raw_pkt->frame_id;
+    if (nv12_buf) {
+        new_frame->is_nv12 = true;
+        new_frame->nv12 = nv12_buf;
+        new_frame->nv12_width = width;
+        new_frame->nv12_height = height;
+    }
 #ifdef WITH_CUDA
     // GPU NV12 平面随包传递（池化所有权），is_gpu 供 GPU 预处理零拷贝消费
     if (d_y && d_uv) {

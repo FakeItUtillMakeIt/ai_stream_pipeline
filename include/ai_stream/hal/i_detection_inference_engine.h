@@ -54,6 +54,21 @@ public:
     virtual bool setInputTensor(const std::string& name, void* gpu_ptr) = 0;
 
     /**
+     * @brief 设置 NV12 输入（NV12 输入硬件模型直通路径）
+     *
+     * 紧凑 NV12 布局：Y(width*height) 紧接 UV(width*height/2)。
+     * 设置后调用 infer() 即走 NV12 分支；默认空实现（返回 false）。
+     *
+     * @param nv12  紧凑 NV12 数据指针
+     * @param width  帧宽
+     * @param height 帧高
+     * @return 是否接受该输入
+     */
+    virtual bool setNv12Input(const uint8_t* /*nv12*/, int /*width*/, int /*height*/) {
+        return false;
+    }
+
+    /**
      * @brief 设置输出 tensor 地址（GPU 内存）
      * @param name tensor 名称
      * @param gpu_ptr GPU 内存指针

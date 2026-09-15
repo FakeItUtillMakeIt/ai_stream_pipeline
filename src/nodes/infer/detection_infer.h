@@ -92,6 +92,8 @@ public:
     void setExtraParam(const std::string& key, const nlohmann::json& value) override {
         if (key == "cuda_graph" && value.is_boolean()) {
             cuda_graph_enabled_ = value.get<bool>();
+        } else if (key == "input_nv12" && value.is_boolean()) {
+            input_nv12_ = value.get<bool>();
         }
     }
 
@@ -186,6 +188,7 @@ private:
     int cuda_graph_batch_size_ = 0;
     std::atomic<bool> cuda_graph_enabled_{false};
     bool cuda_graph_ready_ = false;
+    bool input_nv12_ = false;   // NV12 直通：直接把帧 NV12 喂给 NV12 输入模型
 
     // 常量
     static constexpr int MAX_DETS = 200;

@@ -165,6 +165,11 @@ bool EncoderBase::openVideoCodec() {
         backend = "nvv4l2_h264";
     } else if (configEncoderName_.find("mpp") != std::string::npos) {
         backend = "mpp_h264";
+    } else if (configEncoderName_.find("vpu") != std::string::npos ||
+               configEncoderName_.find("hobot") != std::string::npos ||
+               configEncoderName_.find("horizon") != std::string::npos ||
+               configEncoderName_.find("sp264") != std::string::npos) {
+        backend = "horizon_h264";
     } else if (configEncoderName_ != "auto") {
         backend = "ffmpeg_h264";
     }
