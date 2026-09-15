@@ -23,6 +23,7 @@ DetectionInferenceEnginePtr DetectionInferenceEngineFactory::create(DetectionBac
         static const DetectionBackend priority[] = {
             DetectionBackend::TENSORRT,
             DetectionBackend::RKNN,
+            DetectionBackend::HORIZON,
             DetectionBackend::ASCEND,
             DetectionBackend::CPU
         };
@@ -54,6 +55,7 @@ std::vector<std::pair<DetectionBackend, std::string>> DetectionInferenceEngineFa
     static const std::unordered_map<DetectionBackend, std::string> names = {
         {DetectionBackend::TENSORRT, "TensorRT"},
         {DetectionBackend::RKNN, "RKNN"},
+        {DetectionBackend::HORIZON, "Horizon"},
         {DetectionBackend::ASCEND, "Ascend"},
         {DetectionBackend::CPU, "CPU"}
     };

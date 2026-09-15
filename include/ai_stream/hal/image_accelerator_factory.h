@@ -20,6 +20,7 @@ enum class ImageAcceleratorBackend {
     NPP,        // NVIDIA NPP
     RGA,        // Rockchip RGA (RK3588 2D 加速)
     DVPP,       // Huawei Ascend DVPP
+    HORIZON,    // Horizon BPU image processing
     CPU         // CPU fallback (OpenCV)
 };
 

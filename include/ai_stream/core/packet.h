@@ -316,6 +316,8 @@ struct RawVideoPacket : public BasePacket {
     bool is_key_frame = false;          // 是否为关键帧
     int codec_id = 0;                   // 编码格式 ID（如 AV_CODEC_ID_H264）
     std::vector<uint8_t> extradata;     // 编码器 extradata (SPS/PPS/VPS)
+    int width = 0;                      // 视频分辨率（用于硬件解码器初始化）
+    int height = 0;
 };
 
 /**

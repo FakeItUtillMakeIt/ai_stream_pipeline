@@ -19,6 +19,7 @@ enum class PoseEstimationBackend {
     TENSORRT,   // NVIDIA TensorRT
     RKNN,       // Rockchip RKNN
     ASCEND,     // Huawei Ascend OM
+    HORIZON,    // Horizon BPU (RDK S100P)
     CPU         // CPU fallback
 };
 

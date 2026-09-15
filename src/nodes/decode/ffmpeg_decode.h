@@ -45,7 +45,8 @@ public:
 private:
     std::shared_ptr<DecoderContext> getOrCreateDecoder(
         uint32_t stream_id, int codec_id,
-        const uint8_t* extradata, int extradata_size);
+        const uint8_t* extradata, int extradata_size,
+        int width, int height);
 
     std::shared_ptr<core::VideoFramePacket> decodePacket(
         std::shared_ptr<core::RawVideoPacket> raw_pkt,

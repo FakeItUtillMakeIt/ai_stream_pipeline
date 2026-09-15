@@ -17,6 +17,7 @@ enum class DetectionBackend {
     TENSORRT = 1,
     RKNN = 2,
     ASCEND = 3,
+    HORIZON = 5,
     CPU = 4
 };
 

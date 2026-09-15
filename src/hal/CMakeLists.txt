@@ -76,6 +76,19 @@ if(WITH_ASCEND)
     )
 endif()
 
+# Horizon BPU 后端（RDK S100P）
+if(WITH_HORIZON)
+    find_package(HorizonDNN REQUIRED)
+    list(APPEND HAL_SOURCES
+        infer/horizon/horizon_inference_engine.cpp
+        infer/horizon/horizon_detection_engine.cpp
+        infer/horizon/horizon_pose_estimation.cpp
+        infer/horizon/horizon_action_recognition.cpp
+        image_accel/horizon/horizon_image_accelerator.cpp
+        decode/horizon/horizon_video_codec.cpp
+    )
+endif()
+
 # 编码后端与工厂（dlopen 运行时加载，所有平台编译）
 list(APPEND HAL_SOURCES video_encoder_factory.cpp encode/rk/mpp_video_encoder.cpp encode/cpu/ffmpeg_video_encoder.cpp)
 
@@ -143,4 +156,15 @@ if(WITH_ASCEND)
     target_compile_definitions(ai_stream_hal PRIVATE WITH_ASCEND)
     target_include_directories(ai_stream_hal PRIVATE ${Ascend_INCLUDE_DIRS})
     target_link_libraries(ai_stream_hal PRIVATE ${Ascend_LIBRARIES})
+endif()
+
+if(WITH_HORIZON)
+    target_compile_definitions(ai_stream_hal PRIVATE WITH_HORIZON)
+    target_include_directories(ai_stream_hal PRIVATE ${HORIZON_DNN_INCLUDE_DIRS})
+    # Horizon uses dlopen for libdnn.so, only need dl on non-aarch64 or for linking
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+        target_link_libraries(ai_stream_hal PRIVATE ${HORIZON_DNN_LIBRARIES} dl)
+    else()
+        target_link_libraries(ai_stream_hal PRIVATE dl)
+    endif()
 endif()

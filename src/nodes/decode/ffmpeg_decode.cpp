@@ -129,7 +129,8 @@ void FFmpegDecodeNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
 
     auto decoder_ctx = getOrCreateDecoder(stream_id, raw_pkt->codec_id,
                                           raw_pkt->extradata.data(),
-                                          static_cast<int>(raw_pkt->extradata.size()));
+                                          static_cast<int>(raw_pkt->extradata.size()),
+                                          raw_pkt->width, raw_pkt->height);
     if (!decoder_ctx) {
         LOG_ERROR_FMT("[FFmpegDecode] Failed to get decoder for stream {}", stream_id);
         return;
@@ -154,7 +155,8 @@ void FFmpegDecodeNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
 
 std::shared_ptr<DecoderContext> FFmpegDecodeNode::getOrCreateDecoder(
     uint32_t stream_id, int codec_id,
-    const uint8_t* extradata, int extradata_size) {
+    const uint8_t* extradata, int extradata_size,
+    int width, int height) {
 
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -178,6 +180,9 @@ std::shared_ptr<DecoderContext> FFmpegDecodeNode::getOrCreateDecoder(
     if (codec_id == AV_CODEC_ID_HEVC) {
         codec_name = "hevc";
     }
+
+    ctx->codec->setSourceResolution(width, height);
+    LOG_INFO_FMT("[FFmpegDecode] Source resolution: {}x{}", width, height);
 
     if (!ctx->codec->init(codec_name, extradata, extradata_size)) {
         LOG_ERROR_FMT("[FFmpegDecode] Failed to initialize codec for stream {}", stream_id);

@@ -43,6 +43,8 @@ private:
     int video_stream_index_ = -1;
     int codec_id_ = 0;                    // 编码格式 ID
     std::vector<uint8_t> extradata_;     // 编码器 extradata (SPS/PPS/VPS)
+    int width_ = 0;                       // 视频分辨率
+    int height_ = 0;
     uint32_t my_stream_id_ = 0;
     
     // 统计信息

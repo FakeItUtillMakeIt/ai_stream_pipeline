@@ -39,6 +39,7 @@ option(WITH_NPP "Enable NPP library for GPU image processing" OFF)
 # 新平台推理后端
 option(WITH_RKNN  "Enable RKNN inference support (RK3588)" OFF)
 option(WITH_ASCEND "Enable Ascend CANN inference support" OFF)
+option(WITH_HORIZON "Enable Horizon BPU inference support (RDK S100P)" OFF)
 option(RKNN_ALLOW_X86_SIMULATOR "Allow RKNN backend on x86_64 for simulator-only builds" OFF)
 
 # CPU fallback：无 GPU 时用 CPU 实现预处理/后处理/绘制
@@ -318,6 +319,17 @@ if(WITH_ASCEND)
     endif()
 endif()
 
+# Horizon BPU 后端（RDK S100P）
+if(WITH_HORIZON)
+    find_package(HorizonDNN QUIET)
+    if(HORIZON_DNN_FOUND)
+        message(STATUS "Found Horizon DNN: ${HORIZON_DNN_INCLUDE_DIRS}")
+    else()
+        message(WARNING "Horizon DNN not found. Horizon BPU inference node will be disabled.")
+        set(WITH_HORIZON OFF)
+    endif()
+endif()
+
 if(WITH_TRACK)
     find_package(Eigen3 REQUIRED)
     if(EIGEN3_FOUND)
@@ -540,6 +552,7 @@ message(STATUS "  CUDA support:         ${WITH_CUDA}")
 message(STATUS "  TensorRT support:     ${WITH_TENSORRT}")
 message(STATUS "  RKNN support:         ${WITH_RKNN}")
 message(STATUS "  Ascend support:       ${WITH_ASCEND}")
+message(STATUS "  Horizon BPU support:  ${WITH_HORIZON}")
 message(STATUS "  CPU fallback:         ${WITH_CPU_FALLBACK}")
 message(STATUS "  WITH_FTP:             ${WITH_FTP}")
 message(STATUS "  Install prefix:       ${CMAKE_INSTALL_PREFIX}")

@@ -22,6 +22,7 @@ ActionRecognitionEnginePtr ActionRecognitionFactory::create(ActionRecognitionBac
         std::vector<ActionRecognitionBackend> priority = {
             ActionRecognitionBackend::TENSORRT,
             ActionRecognitionBackend::RKNN,
+            ActionRecognitionBackend::HORIZON,
             ActionRecognitionBackend::ASCEND,
             ActionRecognitionBackend::CPU
         };

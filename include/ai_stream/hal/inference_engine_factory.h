@@ -19,6 +19,7 @@ enum class InferenceBackend {
     TENSORRT,   // NVIDIA TensorRT
     RKNN,       // Rockchip RKNN (RK3588)
     ASCEND,     // Huawei Ascend CANN
+    HORIZON,    // Horizon BPU (RDK S100P)
     CPU         // CPU fallback（使用 OpenCV DNN 等）
 };
 

@@ -21,6 +21,7 @@ enum class VideoCodecBackend {
     V4L2,       // NVIDIA Jetson 裸 V4L2 M2M (/dev/v4l2-nvdec，真实硬件可用)
     MPP,        // Rockchip MPP (RK3588)
     DVPP,       // Huawei Ascend DVPP
+    HORIZON,    // Horizon BPU video codec
     FFMPEG      // FFmpeg 软件编解码
 };
 

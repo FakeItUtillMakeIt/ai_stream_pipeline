@@ -24,6 +24,7 @@ VideoCodecPtr VideoCodecFactory::create(VideoCodecBackend type) {
             VideoCodecBackend::NVV4L2,
             VideoCodecBackend::V4L2,
             VideoCodecBackend::MPP,
+            VideoCodecBackend::HORIZON,
             VideoCodecBackend::DVPP,
             VideoCodecBackend::FFMPEG
         };

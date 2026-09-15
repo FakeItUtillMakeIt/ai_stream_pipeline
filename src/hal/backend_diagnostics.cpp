@@ -24,6 +24,7 @@ const char* inferenceBackendName(InferenceBackend b) {
         case InferenceBackend::AUTO:     return "auto";
         case InferenceBackend::TENSORRT: return "tensorrt";
         case InferenceBackend::RKNN:     return "rknn";
+        case InferenceBackend::HORIZON:  return "horizon";
         case InferenceBackend::ASCEND:   return "ascend";
         case InferenceBackend::CPU:      return "cpu";
     }
@@ -35,6 +36,7 @@ const char* detectionBackendName(DetectionBackend b) {
         case DetectionBackend::AUTO:     return "auto";
         case DetectionBackend::TENSORRT: return "tensorrt";
         case DetectionBackend::RKNN:     return "rknn";
+        case DetectionBackend::HORIZON:  return "horizon";
         case DetectionBackend::ASCEND:   return "ascend";
         case DetectionBackend::CPU:      return "cpu";
     }
@@ -46,6 +48,7 @@ const char* poseBackendName(PoseEstimationBackend b) {
         case PoseEstimationBackend::AUTO:     return "auto";
         case PoseEstimationBackend::TENSORRT: return "tensorrt";
         case PoseEstimationBackend::RKNN:     return "rknn";
+        case PoseEstimationBackend::HORIZON:  return "horizon";
         case PoseEstimationBackend::ASCEND:   return "ascend";
         case PoseEstimationBackend::CPU:      return "cpu";
     }
@@ -57,6 +60,7 @@ const char* actionBackendName(ActionRecognitionBackend b) {
         case ActionRecognitionBackend::AUTO:     return "auto";
         case ActionRecognitionBackend::TENSORRT: return "tensorrt";
         case ActionRecognitionBackend::RKNN:     return "rknn";
+        case ActionRecognitionBackend::HORIZON:  return "horizon";
         case ActionRecognitionBackend::ASCEND:   return "ascend";
         case ActionRecognitionBackend::CPU:      return "cpu";
     }
@@ -68,6 +72,7 @@ const char* imageAccelBackendName(ImageAcceleratorBackend b) {
         case ImageAcceleratorBackend::AUTO: return "auto";
         case ImageAcceleratorBackend::NPP:  return "npp";
         case ImageAcceleratorBackend::RGA:  return "rga";
+        case ImageAcceleratorBackend::HORIZON: return "horizon";
         case ImageAcceleratorBackend::DVPP: return "dvpp";
         case ImageAcceleratorBackend::CPU:  return "cpu";
     }
@@ -81,6 +86,7 @@ const char* videoCodecBackendName(VideoCodecBackend b) {
         case VideoCodecBackend::NVV4L2: return "nvv4l2";
         case VideoCodecBackend::V4L2:   return "v4l2";
         case VideoCodecBackend::MPP:    return "mpp";
+        case VideoCodecBackend::HORIZON: return "horizon";
         case VideoCodecBackend::DVPP:   return "dvpp";
         case VideoCodecBackend::FFMPEG: return "ffmpeg";
     }

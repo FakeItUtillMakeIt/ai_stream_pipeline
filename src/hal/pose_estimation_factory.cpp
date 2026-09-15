@@ -22,6 +22,7 @@ PoseEstimationEnginePtr PoseEstimationFactory::create(PoseEstimationBackend type
         std::vector<PoseEstimationBackend> priority = {
             PoseEstimationBackend::TENSORRT,
             PoseEstimationBackend::RKNN,
+            PoseEstimationBackend::HORIZON,
             PoseEstimationBackend::ASCEND,
             PoseEstimationBackend::CPU
         };

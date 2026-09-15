@@ -22,6 +22,7 @@ InferenceEnginePtr InferenceEngineFactory::create(InferenceBackend type) {
         std::vector<InferenceBackend> priority = {
             InferenceBackend::TENSORRT,
             InferenceBackend::RKNN,
+            InferenceBackend::HORIZON,
             InferenceBackend::ASCEND,
             InferenceBackend::CPU
         };

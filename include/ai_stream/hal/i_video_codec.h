@@ -80,6 +80,12 @@ public:
      * @brief 检查是否可用
      */
     virtual bool isAvailable() const = 0;
+
+    /**
+     * @brief 设置源视频分辨率（部分硬件解码器需要在初始化前知道分辨率）
+     * 默认空实现，供后端按需覆写。
+     */
+    virtual void setSourceResolution(int /*width*/, int /*height*/) {}
 };
 
 using VideoCodecPtr = std::unique_ptr<IVideoCodec>;

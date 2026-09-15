@@ -1,0 +1,124 @@
+# Horizon BPU 模型转换配置模板
+# 用于 hb_compile 工具将 ONNX 模型转换为 HBM 格式
+#
+# 文档: https://doc.oe.horizon.auto/guide/model_compile/onnx/ptq_usage/model_prepare.html
+#
+# S100P 平台 march 参数: nash-m
+# S100  平台 march 参数: nash-e
+# S600  平台 march 参数: nash-p
+
+# ============================================================================
+# 模型参数
+# ============================================================================
+model_parameters:
+  # ONNX 模型路径（相对于配置文件或绝对路径）
+  onnx_model: 'yolov8s.onnx'
+
+  # 目标平台架构
+  # S100P: 'nash-m'
+  # S100:  'nash-e'
+  # S600:  'nash-p'
+  march: 'nash-m'
+
+  # 输出模型文件名前缀（不含扩展名）
+  output_model_file_prefix: 'yolov8s'
+
+# ============================================================================
+# 编译参数
+# ============================================================================
+compiler_parameters:
+  # 优化等级: O0(无优化), O1, O2(最高优化，默认)
+  optimize_level: 'O2'
+
+  # BPU 核心数（1-4，张量并行）
+  core_num: 1
+
+  # 是否开启混合精度（float16 + int8）
+  # J6B 支持部分 float16 算子，但可能引入 CPU quant/dequant
+  # 建议保持默认（关闭）
+  # hybrid_precision: false
+
+# ============================================================================
+# 输入参数
+# ============================================================================
+input_parameters:
+  # 运行时输入类型（板端实际输入格式）
+  # 可选: rgb, bgr, nv12, yuv444, gray, featuremap
+  input_type_rt: 'rgb'
+
+  # 训练时输入类型（ONNX 模型导出时的格式）
+  # 可选: rgb, bgr, nv12, yuv444, gray, featuremap
+  input_type_train: 'rgb'
+
+  # 输入数据排布
+  # NCHW: 标准 PyTorch 格式
+  # NHWC: TensorFlow 格式
+  input_layout_train: 'NCHW'
+
+  # 输入 batch 大小（仅当原始模型支持多 batch 时有效）
+  input_batch: 1
+
+  # 动态输入模型必须指定 input_shape
+  # 格式: batch x channels x height x width
+  input_shape: '1x3x640x640'
+
+  # 是否开启独立 batch 模式（多 batch 时使用）
+  # separate_batch: false
+
+  # 输入图像尺寸（留空则使用模型默认尺寸）
+  # input_width: 640
+  # input_height: 640
+
+  # 均值（用于预处理节点，不需要则不配置）
+  # mean_value: [0.0, 0.0, 0.0]
+
+  # 标准差（用于预处理节点，不需要则不配置）
+  # std_value: [1.0, 1.0, 1.0]
+
+  # 缩放因子（用于预处理节点，不需要则不配置）
+  # scale_value: [1.0, 1.0, 1.0]
+
+# ============================================================================
+# 校准参数（PTQ 量化必需）
+# ============================================================================
+calibration_parameters:
+  # 校准数据集目录（包含用于量化的图像）
+  # 工具会自动读取目录下的图像文件
+  # 建议: 100-500 张代表性图像
+  # 键名必须是 cal_data_dir（写成 calibration_dir 会被忽略 → 伪校准）
+  cal_data_dir: './calibration_data'
+
+  # 校准数据预处理方式（可选，需与训练/推理一致）
+  # 可选: no_mean_std / data_mean_and_scale / data_mean / data_scale
+  # norm_type 已在 input_parameters 中配置，这里一般无需重复
+
+# ============================================================================
+# 编译参数（可选）
+# ============================================================================
+# advanced_parameters:
+#   # 是否开启快速性能评测模式
+#   # 开启后工具会自动优化模型结构（删除首尾 CPU 算子等）
+#   # fast_perf: true
+#
+#   # 是否输出量化统计信息
+#   # quantization_stats: true
+#
+#   # 是否输出中间模型（用于调试）
+#   # output_intermediate_models: false
+
+# ============================================================================
+# 高级参数（可选）
+# ============================================================================
+# advanced_parameters:
+#   # 自定义算子插件路径
+#   # plugin_libs: ['./libcustom_op.so']
+#
+#   # 算子融合配置
+#   # fusion_config:
+#   #   enable_conv_bn_fusion: true
+#   #   enable_conv_relu_fusion: true
+#
+#   # 量化配置
+#   # quant_config:
+#   #   # 强制某些算子运行在 BPU 上（可能引入精度损失）
+#   #   force_bpu_ops: ['Relu', 'Sigmoid']

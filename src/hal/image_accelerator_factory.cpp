@@ -24,6 +24,7 @@ ImageAcceleratorPtr ImageAcceleratorFactory::create(ImageAcceleratorBackend type
         std::vector<ImageAcceleratorBackend> priority = {
             ImageAcceleratorBackend::NPP,
             ImageAcceleratorBackend::RGA,
+            ImageAcceleratorBackend::HORIZON,
             ImageAcceleratorBackend::DVPP,
             ImageAcceleratorBackend::CPU
         };
