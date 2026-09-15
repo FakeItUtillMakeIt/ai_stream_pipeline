@@ -11,6 +11,7 @@
 | CUDA Toolkit + cuDNN | GPU 加速（解码/预处理/推理/绘制） | WITH_CUDA=ON 时 |
 | TensorRT | 推理引擎（.engine 模型） | WITH_TENSORRT=ON 时 |
 | RKNN / Ascend CANN SDK | 嵌入式平台推理 | 对应平台时 |
+| 地平线 DNN / spcdev（RDK S100P） | BPU 推理 / VPU 编解码 | WITH_HORIZON=ON 时 |
 | Eigen3 | 跟踪器（OCSort/ByteTrack） | WITH_TRACK=ON 时 |
 | libcurl | 证据 FTP 上传 | 可选（缺失则禁用 FTP） |
 | GTest | 单元测试 | BUILD_TESTS=ON 时 |
@@ -54,8 +55,11 @@ cd <工作目录>   # 需包含 config/，且对 logs/ 有写权限
   不存在时使用内置默认值
 - **管道拓扑**：`config/pipelines/*.json`，通过 HTTP build 接口提交（请求体内联 JSON）
 - **流地址预设**：`config/sources/camera_list.json`（运维参考数据）
-- **模型**：TensorRT `.engine` 文件路径写在各管道 JSON 的 `detector_config.model_path`，
-  模型转换工具见 `tools/model_converter/`
+- **模型**：TensorRT `.engine` / 地平线 `.hbm` / RKNN `.rknn` 文件路径写在各管道 JSON 的
+  `detector_config.model_path`；模型转换工具见 `tools/model_converter/`
+  （地平线见 `tools/model_converter/horizon/`）
+- **硬件编码**：sink/evidence 配置写 `"hw_encoder": true` 自动选平台硬件编码器
+  （地平线 VPU / RK MPP / NVENC），无硬件时自动回退软编；也可用 `"encoder": "..."` 显式指定
 
 > 注意：
 > - 敏感凭据（如 FTP 密码）不要写入仓库内的管道配置
@@ -100,3 +104,26 @@ ctest --test-dir build --output-on-failure    # 或 ./build/tests/unit/test_core
 服务捕获 SIGINT/SIGTERM：停止 HTTP 监听 → 停止全部管道（拓扑序）→ 刷新日志。
 异步模式下 AsyncPipelineManager 会先排空任务队列再销毁。
 管道因 STREAM_END 自停后可直接重新 start，无需先 stop 再 start。
+
+## 8. 地平线 RDK S100P 部署
+
+1. **板端本机构建**（见 [compile.md](compile.md)）：
+   `cmake -B build_horizon -DWITH_HORIZON=ON`
+
+2. **转换模型**（x86 Docker，HBDK 工具链）：
+   ```bash
+   cd tools/model_converter/horizon
+   ./convert.sh ./model.onnx --imgsz 640 --march nash-m \
+       --calibration ./calibration_dataset/ --int16
+   ```
+   要点：ONNX 用**静态形状**导出（`export_onnx.py`）；校准集用与板端一致预处理的 `.npy`
+   （`make_calib_npy.py`）；int8 可能使分类头量化塌缩，建议 `--int16`。
+
+3. **运行**：
+   ```bash
+   LD_LIBRARY_PATH=/usr/hobot/lib:$LD_LIBRARY_PATH \
+     ./build_horizon/examples/simple_detection/simple_detection config/pipelines/fusion_pipeline_v2.json
+   ```
+   - `fusion_pipeline_v2.json`：RGB int8 路径
+   - `fusion_pipeline_nv12.json`：NV12 直通路径（模型为 NV12 双输入时用，`decode → infer` 直连）
+   - 编码由 `"hw_encoder": true` 自动使用 VPU 硬编

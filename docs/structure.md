@@ -6,6 +6,7 @@ ai_stream_pipeline/
 │   ├── FindTensorRT.cmake
 │   ├── FindRKNN.cmake             # RK3588 平台
 │   ├── FindAscend.cmake           # 昇腾平台
+│   ├── FindHorizonDNN.cmake       # 地平线 RDK S100P 平台
 │   ├── FindEigen3.cmake
 │   ├── Findnlohmann_json.cmake
 │   └── ai_stream_pipelineConfig.cmake.in  # 安装包配置模板
@@ -23,7 +24,7 @@ ai_stream_pipeline/
 │       │   ├── i_inference_engine.h / i_detection_inference_engine.h
 │       │   ├── i_action_recognition.h / i_pose_estimation.h
 │       │   ├── i_image_accelerator.h      # 图像处理加速（预处理/绘制/NMS）
-│       │   ├── i_video_codec.h / i_video_encoder.h   # 视频编解码/编码抽象
+│       │   ├── i_video_decoder.h / i_video_encoder.h   # 视频解码/编码抽象
 │       │   ├── gpu_buffer_pool.h          # GPU 设备内存池（显存复用）
 │       │   ├── h264_extradata.h           # H.264 AnnexB↔AVCC 工具
 │       │   └── *_factory.h                # 各后端工厂（按平台选择实现）
@@ -54,13 +55,15 @@ ai_stream_pipeline/
 │   │   ├── infer/nvidia/          # TensorRT（通用/检测/姿态/动作 + trt_core + kernels）
 │   │   ├── infer/rk/              # RKNN（通用/检测/姿态/动作，dlopen librknnrt）
 │   │   ├── infer/ascend/          # 昇腾 CANN（动作识别）
+│   │   ├── infer/horizon/         # 地平线 BPU（通用/检测/姿态/动作，dlopen libdnn）
 │   │   ├── infer/cpu/             # CPU fallback（OpenCV DNN 推理）
-│   │   ├── encode/rk/ encode/cpu/ # MPP 硬编 / FFmpeg 软编（含 nvenc 通道）
-│   │   ├── decode/nvidia/ decode/rk/ decode/ascend/ decode/cpu/
-│   │   │                         # NVDEC / MPP / DVPP / FFmpeg 软解
+│   │   ├── encode/rk/ encode/cpu/ encode/horizon/
+│   │   │                          # MPP 硬编 / FFmpeg 软编（含 nvenc 通道）/ VPU 硬编
+│   │   ├── decode/nvidia/ decode/rk/ decode/ascend/ decode/horizon/ decode/cpu/
+│   │   │                         # NVDEC / MPP / DVPP / VPU(sp 硬解) / FFmpeg 软解
 │   │   ├── image_accel/nvidia/ image_accel/rk/
-│   │   │   image_accel/ascend/ image_accel/cpu/
-│   │   │                         # NPP+CUDA / RGA / DVPP / OpenCV
+│   │   │   image_accel/ascend/ image_accel/horizon/ image_accel/cpu/
+│   │   │                         # NPP+CUDA / RGA / DVPP / OpenCV / OpenCV
 │   │   └── *_factory.cpp          # 工厂：运行时按编译选项选择后端（dlopen 惰性加载）
 │   ├── http/                      # REST API 服务
 │   │   ├── api_server.h/.cpp      # 同步/异步双模式 handler
@@ -108,6 +111,7 @@ ai_stream_pipeline/
 ├── tools/
 │   ├── benchmark/bench.cpp        # 管道性能基准（跑定时长输出指标）
 │   ├── model_converter/           # ONNX/TRT 转换与量化工具（Python）
+│   │   └── horizon/               # 地平线 ONNX→HBM 转换（convert.sh / 校准集 / 验证脚本）
 │   ├── videomae_train/            # 动作识别训练脚本
 │   └── train_climbing_svm.py
 │

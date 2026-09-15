@@ -4,7 +4,7 @@
 
 - CMake >= 3.16，C++17 编译器（GCC/Clang）
 - 必需：FFmpeg（avcodec/avformat/avutil/swscale）、OpenCV（core/imgproc/videoio）、spdlog、nlohmann_json
-- 可选：CUDA Toolkit、TensorRT、RKNN（RK3588）、Ascend CANN、Eigen3（跟踪）、libcurl（FTP）、GTest（测试）
+- 可选：CUDA Toolkit、TensorRT、RKNN（RK3588）、Ascend CANN、地平线 DNN（RDK S100P）、Eigen3（跟踪）、libcurl（FTP）、GTest（测试）
 
 依赖解析策略：
 
@@ -41,6 +41,7 @@ cmake -LH build   # 查看全部选项及说明
 | `WITH_NPP` | OFF | NPP 图像处理库 |
 | `WITH_RKNN` | OFF | RK3588 推理后端 |
 | `WITH_ASCEND` | OFF | 昇腾 CANN 推理后端 |
+| `WITH_HORIZON` | OFF | 地平线 RDK S100P 后端（BPU 推理 + VPU 编解码） |
 | `WITH_CPU_FALLBACK` | ON | CPU fallback 实现 |
 | `WITH_TRACK` | ON | 跟踪节点（需 Eigen3） |
 | `WITH_ALERT` | ON | 告警节点 |
@@ -71,6 +72,9 @@ cmake -B build-rk3588 \
 
 # 昇腾
 cmake -B build -DWITH_ASCEND=ON
+
+# 地平线 RDK S100P（板端本机编译）
+cmake -B build -DWITH_HORIZON=ON
 
 # 开发/CI 全量构建
 cmake -B build -DWITH_CUDA=ON -DWITH_TENSORRT=ON -DBUILD_TESTS=ON \
@@ -130,7 +134,28 @@ cmake --build build-rk3588 -j$(nproc)
   已接入 sink），x86 上选 `ffmpeg_h264`（软编，可 `encoder: h264_nvenc` 驱动 NVENC）
 - RKNN 库为 aarch64，x86 编译主机仅头文件编译、运行期 dlopen 失败自动回退
 
-## 7. 注意事项
+## 7. 地平线 RDK S100P
+
+板端本机构建（依赖 SDK 头文件 `/usr/include/hobot`、`/usr/hobot/include` 与库 `/usr/hobot/lib`）：
+
+```bash
+cmake -B build_horizon -DWITH_HORIZON=ON -DWITH_CUDA=OFF -DWITH_TENSORRT=OFF
+cmake --build build_horizon -j$(nproc)
+
+# 运行（需 SDK 运行库路径）
+LD_LIBRARY_PATH=/usr/hobot/lib:$LD_LIBRARY_PATH \
+  ./build_horizon/examples/simple_detection/simple_detection config/pipelines/fusion_pipeline_v2.json
+```
+
+要点：
+- 头文件/库通过 `cmake/FindHorizonDNN.cmake` 定位（`hb_dnn.h` / `libdnn.so`）
+- BPU 推理、VPU 编解码均通过 **dlopen 懒加载**（`libdnn.so` / `libspcdev.so`），
+  x86 主机也能编译，运行期库不可用则自动回退
+- 模型先用 HBDK 工具链在 x86 Docker 转成 `.hbm`，转换脚本与校准工具见
+  `tools/model_converter/horizon/`（详见 `readme` 与转换目录内说明）
+- 运行时 sink/evidence 编码写 `"hw_encoder": true` 即自动使用 VPU 硬编
+
+## 8. 注意事项
 
 - 不要全局添加 `-Wl,--allow-multiple-definition`：会掩盖真实的符号重复问题，
   链接报错时应定位根因

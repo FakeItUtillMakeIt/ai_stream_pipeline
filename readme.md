@@ -1,7 +1,7 @@
 # ai_stream_pipeline 文档索引
 
 模块化 AI 视频流处理框架：以**节点图（DAG）**组织处理逻辑，数据以 **Packet** 在节点间流动，
-通过 HTTP API 动态构建、启停管道。支持 x86 GPU（CUDA/TensorRT）与 ARM 平台（RKNN/Ascend）多后端。
+通过 HTTP API 动态构建、启停管道。支持 x86 GPU（CUDA/TensorRT）与 ARM 平台（RKNN/Ascend/地平线）多后端。
 
 ## 总体架构图
 
@@ -61,6 +61,7 @@ ctest --test-dir build --output-on-failure
 | CUDA / NPP | `WITH_CUDA` / `WITH_NPP` | GPU 解码/预处理/绘制加速 |
 | RKNN | `WITH_RKNN` | 瑞芯微 RK3588 推理 |
 | Ascend CANN | `WITH_ASCEND` | 华为昇腾推理 |
+| 地平线 BPU / VPU | `WITH_HORIZON` | 地平线 RDK S100P：BPU 推理 + VPU 硬解/硬编 |
 | CPU fallback | `WITH_CPU_FALLBACK` | 无 GPU 时 CPU 实现（默认开启） |
 
 所有后端通过 HAL（硬件抽象层，`src/hal/`）统一接口，缺失的可选依赖自动降级禁用，
