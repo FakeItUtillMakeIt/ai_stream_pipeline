@@ -17,8 +17,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 # Docker 镜像配置
-DOCKER_IMAGE="openexplorer/ai_toolchain_ubuntu_22_s100_s600_cpu:latest"
-DOCKER_IMAGE_GPU="openexplorer/ai_toolchain_ubuntu_22_s100_s600_gpu:latest"
+DOCKER_IMAGE="registry.d-robotics.cc/deliver/ai_toolchain_ubuntu_22_s100_s600_cpu:v3.7.0"
+DOCKER_IMAGE_GPU="registry.d-robotics.cc/deliver/ai_toolchain_ubuntu_22_s100_s600_gpu:v3.7.0"
 
 # 颜色输出
 GREEN='\033[0;32m'
