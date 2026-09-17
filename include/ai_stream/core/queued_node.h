@@ -92,15 +92,14 @@ public:
     void pushData(std::shared_ptr<BasePacket> packet) final {
         if (!packet || !this->running_.load()) return;
         // STREAM_END 是控制包：绝不允许被背压丢弃，否则下游无法级联自停。
-        // 无视丢帧策略，必要时挤掉最旧的数据包强制入队。
-        // 推入后立即置 running_=false，让 workerLoop 在处理完该包后自然退出。
+        // 无视丢帧策略，必要时挤掉最旧的数据包强制入队，交由 worker 线程
+        // 调用 processPacket() 处理（派生类在此广播 STREAM_END 并由基类统一 stop()）
         if (packet->type == PacketType::STREAM_END) {
             while (!queue_.tryPush(packet)) {
                 std::shared_ptr<BasePacket> discarded;
                 if (!queue_.tryPop(discarded)) return;   // 队列已停止
                 this->recordDropped();
             }
-            this->running_ = false;
             return;
         }
         bool ok = false;
@@ -151,7 +150,14 @@ private:
                 continue;
             }
             this->in_time_ms_ = utils::TimeUtil::currentTimeMs();
+            const bool is_stream_end = (packet->type == PacketType::STREAM_END);
             processPacket(std::move(packet));
+            if (is_stream_end) {
+                // STREAM_END 必须被 processPacket 处理（派生类在此广播并可能自停），
+                // 处理完后由基类统一 stop()，确保 onShutdown() 被调用且 running_ 归位
+                this->stop();
+                break;
+            }
         }
         queue_.clear();
     }
