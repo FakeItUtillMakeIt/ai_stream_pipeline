@@ -129,20 +129,32 @@ void TrackerNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
     }
 
     for (const auto& track : tracks) {
-        // 为新轨迹绑定 class_name
-        if (track_class_names_.count(track.track_id) == 0) {
-            float best_iou_bind = 0.0f;
-            std::string best_name;
-            for (const auto& det : infer_result->detections) {
-                float iou = computeIoU(det, track);
-                if (iou > best_iou_bind) {
-                    best_iou_bind = iou;
-                    best_name = det.class_name;
-                }
+        // 找与当前轨迹 IoU 最大的检测框（不限类别），用于类别绑定/跃迁判断
+        float best_iou = 0.0f;
+        const core::InferenceResultPacket::BBox* best_det = nullptr;
+        for (const auto& det : infer_result->detections) {
+            float iou = computeIoU(det, track);
+            if (iou > best_iou) {
+                best_iou = iou;
+                best_det = &det;
             }
-            if (best_iou_bind > 0.3f) {
-                track_class_names_[track.track_id] = best_name;
+        }
+
+        auto name_it = track_class_names_.find(track.track_id);
+        if (name_it == track_class_names_.end()) {
+            // 新轨迹：首次绑定类别
+            if (best_det && best_iou > 0.3f && !best_det->class_name.empty()) {
+                track_class_names_[track.track_id] = {best_det->class_id, best_det->class_name};
             }
+        } else if (best_det && best_iou > 0.5f &&
+                   !best_det->class_name.empty() &&
+                   name_it->second.name != best_det->class_name &&
+                   name_it->second.class_id != best_det->class_id) {
+            // 类别跃迁（如 person -> down）：name 与 class_id 同时变化时更新绑定，
+            // 保持 track_id 连续。若仅 name 变化（多源 class_id 冲突）则拒绝，交由匹配环节过滤
+            LOG_INFO_FMT("[TrackerNode] Track {} class transition: {} -> {}",
+                         track.track_id, name_it->second.name, best_det->class_name);
+            name_it->second = {best_det->class_id, best_det->class_name};
         }
 
         // 检测框匹配（使用 track_class_names_ 进行类别匹配）
@@ -154,9 +166,9 @@ void TrackerNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
 
             // 类别匹配
             bool class_match;
-            auto name_it = track_class_names_.find(track.track_id);
-            if (name_it != track_class_names_.end() && !name_it->second.empty() && !det.class_name.empty()) {
-                class_match = (name_it->second == det.class_name);
+            auto it = track_class_names_.find(track.track_id);
+            if (it != track_class_names_.end() && !it->second.name.empty() && !det.class_name.empty()) {
+                class_match = (it->second.name == det.class_name);
             } else {
                 class_match = (track.class_id == det.class_id);
             }

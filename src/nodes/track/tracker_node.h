@@ -48,10 +48,14 @@ private:
     ByteTrackConfig bytetrack_config_;
     TrackerPtr tracker_;
 
-    // track_id -> class_name 绑定（轨迹诞生时按 IoU 绑定，终身不变）。
+    // track_id -> 类别绑定（轨迹诞生时按 IoU 绑定；仅当 name 与 class_id 同时变化时才允许跃迁）。
     // 用于按名称匹配：多推理源融合场景下不同模型的 class_id 可能冲突，
-    // 而轨迹身份与语义类别绑定才正确
-    std::unordered_map<int, std::string> track_class_names_;
+    // 而轨迹身份与语义类别绑定才正确；同时支持同类模型内 person->down 等真实类别跃迁
+    struct TrackClassBinding {
+        int class_id = -1;
+        std::string name;
+    };
+    std::unordered_map<int, TrackClassBinding> track_class_names_;
 
     // 用于清理过期轨迹的 ID 集合
     std::unordered_set<int> active_track_ids_;

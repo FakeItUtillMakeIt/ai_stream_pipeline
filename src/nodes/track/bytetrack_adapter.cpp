@@ -73,6 +73,7 @@ std::vector<UnifiedTrackResult> ByteTrackAdapter::update(
             tr.w = track.tlwh[2];
             tr.h = track.tlwh[3];
             tr.track_id = track.track_id;
+            tr.class_id = track.class_label;
             tr.confidence = track.score;
             tr.age = track.tracklet_len;
             tr.active = track.is_activated;
