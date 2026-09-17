@@ -134,6 +134,32 @@ TEST_F(TrackerFixture, ClassNamePreventsCrossClassTrackInheritance) {
     EXPECT_EQ(f3->detections[0].track_id, -1);
 }
 
+// 类别跃迁：person(id0) -> down(id1) 同一目标，应保持同一 track_id（跌倒场景）
+TEST_F(TrackerFixture, ClassTransitionKeepsTrackId) {
+    auto f1 = pushFrame(1, {makeBox(0, 0, 0, "person")});
+    ASSERT_GE(f1->detections[0].track_id, 0);
+
+    auto f2 = pushFrame(2, {makeBox(2, 0, 0, "person")});
+    ASSERT_GE(f2->detections[0].track_id, 0);
+
+    // 同一位置，类别由 person 跃迁为 down（class_id 与 name 同时变化）
+    auto f3 = pushFrame(3, {makeBox(3, 0, 1, "down")});
+    EXPECT_EQ(f3->detections[0].track_id, f2->detections[0].track_id);
+    EXPECT_EQ(f3->detections[0].track_id, f1->detections[0].track_id);
+}
+
+// 仅 name 变化而 class_id 不变（多源冲突）不得触发跃迁
+TEST_F(TrackerFixture, NameOnlyChangeDoesNotTransition) {
+    auto f1 = pushFrame(1, {makeBox(0, 0, 0, "person")});
+    ASSERT_GE(f1->detections[0].track_id, 0);
+    int pid = f1->detections[0].track_id;
+
+    // 同一位置，name 变为 crystal，但 class_id 仍为 0
+    auto f2 = pushFrame(2, {makeBox(1, 0, 0, "crystal")});
+    EXPECT_EQ(f2->detections[0].track_id, -1);
+    EXPECT_NE(f2->detections[0].track_id, pid);
+}
+
 // 类别名为空时回退 class_id 匹配
 TEST_F(TrackerFixture, EmptyNameFallsBackToClassId) {
     auto f1 = pushFrame(1, {makeBox(0, 0, 3, "")});
