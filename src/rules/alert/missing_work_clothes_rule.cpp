@@ -162,7 +162,7 @@ namespace ai_stream
                 {
                     person_boxes.push_back(detection);
                 }
-                else if (detection.class_name.find("clothes") != std::string::npos)
+                else if (detection.class_name.find("clothes") != std::string::npos || detection.class_name.find("uniform") != std::string::npos)
                 {
                     work_clothes_boxes.push_back(detection);
                 }

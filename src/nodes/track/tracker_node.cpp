@@ -5,6 +5,7 @@
 #include "registry/node_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 #include <algorithm>
+#include <cmath>
 #include <unordered_set>
 
 // 注意：不包含 ocsort_adapter.h 和 bytetrack_adapter.h
@@ -51,6 +52,19 @@ int TrackerNode::getActiveTrackCount() const {
     return tracker_ ? tracker_->getActiveCount() : 0;
 }
 
+bool TrackerNode::configureImpl(const std::string& node_id, const nlohmann::json& params) {
+    if (params.contains("stitch") && params["stitch"].is_object()) {
+        const auto& s = params["stitch"];
+        stitch_enabled_ = s.value("enabled", stitch_enabled_);
+        stitch_gap_frames_ = s.value("gap_frames", stitch_gap_frames_);
+        stitch_dist_ratio_ = s.value("dist_ratio", stitch_dist_ratio_);
+        stitch_memory_frames_ = s.value("memory_frames", stitch_memory_frames_);
+        LOG_INFO_FMT("[TrackerNode] Stitch config: enabled={}, gap={}, ratio={}, memory={}",
+                     stitch_enabled_, stitch_gap_frames_, stitch_dist_ratio_, stitch_memory_frames_);
+    }
+    return ITrackerNode::configure(node_id, params);
+}
+
 bool TrackerNode::onStartup() {
     // 通过工厂创建跟踪器
     tracker_ = TrackerFactory::instance().create(tracker_type_);
@@ -69,6 +83,10 @@ void TrackerNode::onShutdown() {
         tracker_->reset();
     }
     track_class_names_.clear();
+    id_remap_.clear();
+    raw_last_frame_.clear();
+    track_memory_.clear();
+    stitch_frame_counter_ = 0;
     LOG_INFO_FMT("[TrackerNode] Stopped");
 }
 
@@ -101,6 +119,11 @@ void TrackerNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
         
     // 执行跟踪
     auto tracks = tracker_->update(infer_result->detections);
+
+    // 轨迹 ID 缝合：保持目标在短暂丢失/类别跃迁后的 ID 稳定
+    stitch_frame_counter_++;
+    applyStitching(tracks, stitch_frame_counter_);
+    cleanupStitchState(stitch_frame_counter_);
 
     // 收集当前活跃的轨迹 ID
     std::unordered_set<int> current_active_ids;
@@ -207,6 +230,89 @@ void TrackerNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
     LOG_DEBUG_FMT("{}",cost_time_str);
     //更新数据包
     broadcast(packet);
+}
+
+void TrackerNode::applyStitching(std::vector<UnifiedTrackResult>& tracks, int64_t frame_id) {
+    if (!stitch_enabled_) return;
+
+    std::unordered_set<int> taken;
+    std::vector<std::pair<size_t, int>> pending;  // (index, raw_id)
+
+    // 第一遍：已登记的原始 id 直接映射，先占位，避免被缝合抢占
+    for (size_t i = 0; i < tracks.size(); ++i) {
+        const int raw = tracks[i].track_id;
+        auto it = id_remap_.find(raw);
+        if (it != id_remap_.end()) {
+            tracks[i].track_id = it->second;
+            taken.insert(it->second);
+            raw_last_frame_[raw] = frame_id;
+        } else {
+            pending.emplace_back(i, raw);
+        }
+    }
+
+    // 第二遍：未登记的原始 id 尝试缝合到最近丢失且未被占用的轨迹
+    for (const auto& p : pending) {
+        auto& track = tracks[p.first];
+        const int raw = p.second;
+        int best = -1;
+        float best_dist = 0.0f;
+        const float cx1 = track.x + track.w / 2;
+        const float cy1 = track.y + track.h / 2;
+        for (const auto& kv : track_memory_) {
+            const int cid = kv.first;
+            if (taken.count(cid)) continue;
+            if (frame_id - kv.second.last_frame_id > stitch_gap_frames_) continue;
+            const float cx2 = kv.second.x + kv.second.w / 2;
+            const float cy2 = kv.second.y + kv.second.h / 2;
+            const float dx = cx1 - cx2;
+            const float dy = cy1 - cy2;
+            const float dist = std::sqrt(dx * dx + dy * dy);
+            const float scale = std::max({track.w, track.h, kv.second.w, kv.second.h});
+            if (scale <= 0.0f) continue;
+            if (dist <= stitch_dist_ratio_ * scale && (best < 0 || dist < best_dist)) {
+                best = cid;
+                best_dist = dist;
+            }
+        }
+        const int canonical = (best >= 0) ? best : raw;
+        id_remap_[raw] = canonical;
+        tracks[p.first].track_id = canonical;
+        taken.insert(canonical);
+        raw_last_frame_[raw] = frame_id;
+        if (best >= 0) {
+            LOG_INFO_FMT("[TrackerNode] Stitch track {} -> {} (dist={:.1f})", raw, canonical, best_dist);
+        }
+    }
+
+    // 更新归并后轨迹的最新位置
+    for (const auto& track : tracks) {
+        auto& mem = track_memory_[track.track_id];
+        mem.x = track.x;
+        mem.y = track.y;
+        mem.w = track.w;
+        mem.h = track.h;
+        mem.last_frame_id = frame_id;
+    }
+}
+
+void TrackerNode::cleanupStitchState(int64_t frame_id) {
+    const int64_t keep = frame_id - stitch_memory_frames_;
+    for (auto it = raw_last_frame_.begin(); it != raw_last_frame_.end();) {
+        if (it->second < keep) {
+            id_remap_.erase(it->first);
+            it = raw_last_frame_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (auto it = track_memory_.begin(); it != track_memory_.end();) {
+        if (it->second.last_frame_id < keep) {
+            it = track_memory_.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 float TrackerNode::computeIoU(const core::InferenceResultPacket::BBox& det,
