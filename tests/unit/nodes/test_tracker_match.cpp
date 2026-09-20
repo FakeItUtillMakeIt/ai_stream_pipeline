@@ -47,6 +47,17 @@ InferenceResultPacket::BBox makeBox(float x, float y, int class_id, const std::s
     return box;
 }
 
+InferenceResultPacket::BBox makeBoxWH(float x, float y, float w, float h,
+                                      int class_id, const std::string& name) {
+    InferenceResultPacket::BBox box;
+    box.x = x; box.y = y; box.w = w; box.h = h;
+    box.confidence = 0.9f;
+    box.class_id = class_id;
+    box.class_name = name;
+    box.track_id = -1;
+    return box;
+}
+
 std::shared_ptr<InferenceResultPacket> makeFrame(int64_t frame_id,
     std::vector<InferenceResultPacket::BBox> dets) {
     auto r = std::make_shared<InferenceResultPacket>();
@@ -146,6 +157,20 @@ TEST_F(TrackerFixture, ClassTransitionKeepsTrackId) {
     auto f3 = pushFrame(3, {makeBox(3, 0, 1, "down")});
     EXPECT_EQ(f3->detections[0].track_id, f2->detections[0].track_id);
     EXPECT_EQ(f3->detections[0].track_id, f1->detections[0].track_id);
+}
+
+// 轨迹 ID 缝合：跌倒时框由竖长变横宽（IoU 骤降，tracker 可能新建 ID），
+// 中心位置基本不变，缝合后应保持原 track_id
+TEST_F(TrackerFixture, StitchKeepsIdAcrossFallShapeChange) {
+    auto f1 = pushFrame(1, {makeBoxWH(100, 100, 100, 200, 0, "person")});
+    ASSERT_GE(f1->detections[0].track_id, 0);
+    auto f2 = pushFrame(2, {makeBoxWH(100, 100, 100, 200, 0, "person")});
+    ASSERT_EQ(f2->detections[0].track_id, f1->detections[0].track_id);
+    const int pid = f1->detections[0].track_id;
+
+    // 跌倒：中心不变，变为横宽矮框，类别 fall_down
+    auto f3 = pushFrame(3, {makeBoxWH(50, 190, 200, 20, 11, "fall_down")});
+    EXPECT_EQ(f3->detections[0].track_id, pid);
 }
 
 // 仅 name 变化而 class_id 不变（多源冲突）不得触发跃迁
