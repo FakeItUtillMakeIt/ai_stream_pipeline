@@ -77,9 +77,8 @@ bool GrayNode::onStartup() { return true; }
 void GrayNode::onShutdown() {}
 
 void GrayNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
-    // STREAM_END 标准处理：自停并转发
+    // STREAM_END 标准处理：转发即可，基类会在 processPacket 返回后统一 stop()
     if (packet->type == core::PacketType::STREAM_END) {
-        stop();
         broadcast(packet);
         return;
     }
@@ -110,9 +109,9 @@ REGISTER_NODE("gray", GrayNode)
 - `broadcast()` 推给所有下游，同时记录指标、清理失效下游
 - `in_time_ms_` 由 QueuedNode 在出队时自动刷新
 - 修改帧数据前先克隆（若该帧还会被其他分支使用）
-- worker 线程内调用 `stop()` 是安全的（基类已做自 join 防护）
-- STREAM_END 是控制包：入队时无视丢帧策略强制入队（基类保证），处理时务必转发，
-  否则下游无法级联自停
+- STREAM_END 是控制包：入队时无视丢帧策略强制入队（基类保证）；worker 会调用
+  `processPacket()` 处理它，**务必转发**（否则下游无法级联自停），基类随后统一
+  `stop()` + `onShutdown()`，派生类无需自行调用 `stop()`
 
 ## 4. 加入构建
 
@@ -149,7 +148,7 @@ gray/gray_node.cpp
 - [ ] 继承正确的基类/接口，重处理用 QueuedNode
 - [ ] 平台相关计算走 HAL 接口，不直接依赖具体 SDK
 - [ ] `configure/configureImpl` 解析全部参数，非法配置返回 false
-- [ ] STREAM_END 处理（stop + broadcast，务必转发）
+- [ ] STREAM_END 处理（broadcast 转发即可，基类自动 stop）
 - [ ] 非目标类型包透传而非丢弃
 - [ ] `REGISTER_NODE` 注册且类型名唯一
 - [ ] CMake 源文件列表已添加

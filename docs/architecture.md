@@ -71,8 +71,9 @@ ai_stream_pipeline 是一个模块化的视频流 AI 处理框架：以 **节点
 | `drop_oldest` | 丢最旧包保最新 |
 | `block` | 阻塞至超时后丢弃 |
 
-丢包计入 `MetricsCollector.dropped_packets`。STREAM_END 入队后由 worker 处理（stop + broadcast），
-worker 内自停已做 join 死锁防护。
+丢包计入 `MetricsCollector.dropped_packets`。STREAM_END 是控制包：入队时**无视丢帧策略强制入队**
+（必要时挤掉最旧数据），由 worker 线程调用 `processPacket()` 处理（派生类在此广播 STREAM_END），
+基类随后统一 `stop()` 并调用 `onShutdown()`；worker 内自停已做 join 死锁防护，自停后可直接再次 `start()`。
 
 ### 2.4 Pipeline（管道）
 
@@ -117,20 +118,26 @@ worker 内自停已做 join 死锁防护。
 | FFmpegDecodeNode | `ffmpeg_decode` | QueuedNode |
 | ResizeNormalizeNode | `resize_normalize` | QueuedNode，通过 HAL 图像加速器选择 CPU/RGA/DVPP/NPP 路径 |
 | DetectionInferNode | `detection_infer` | 自持 BoundedQueue + 推理线程（动态 batch） |
-| PoseInferNode / CudaPoseInferNode | `pose_infer` / `cuda_pose_infer` | 自持队列 + worker（推理走 HAL `IPoseEstimationEngine`） |
-| RknnDetectionInferNode | `rknn_detection_infer` | QueuedNode（RK3588 平台） |
+| PoseInferNode | `pose_infer` | 自持队列 + worker（推理走 HAL `IPoseEstimationEngine`，CPU/CUDA/RKNN 后端） |
 | ActionRecognitionVideoMAENode | `action_recognition_videomae` | QueuedNode |
 | DetectionPostProcessNode | `detection_post` | QueuedNode，NMS 通过 HAL 图像加速器执行 |
 | TrackerNode（OCSort/ByteTrack） | `tracker` | QueuedNode |
 | AlertNode | `alert` | QueuedNode（规则可并行 std::async） |
 | FusionNodeImpl | `fusion` | QueuedNode（双模式见下） |
 | OSDDrawNode | `osd_draw` | QueuedNode（矩形框经 HAL drawBoxes 路由，GPU 数据自动走 NPP；文字/关键点/面板 CPU 绘制，中文需 OpenCV freetype，缺失时英文回退 `cv::putText`） |
-| EvidenceNode | `evidence` | 同步轻分发（内部组件各自带队列） |
-| RTMPSinkNode / MP4SaveNode | `rtmp_sink` / `mp4_save` | 自持 BoundedQueue + 编码线程（drop_oldest） |
+| EvidenceNode | `evidence` | QueuedNode（双输入：告警触发 + 画框帧；内部 FrameBuffer/VideoRecorder/FtpUploader 各自带队列） |
+| RTMPSinkNode / MP4SaveNode | `rtmp_sink` / `mp4_save` | QueuedNode（编码在 worker 线程串行执行；队列满默认丢最旧） |
+
+> 检测/姿态推理节点（`detection_infer` / `pose_infer`）与源节点（`rtsp_source` / `file_source`）
+> 自持队列与专属线程，属于历史实现，未改为 QueuedNode。
+> 原生 RKNN 检测节点已并入 `detection_infer`（经 HAL `IDetectionInferenceEngine` 选择 RKNN 后端）。
 
 > 跟踪匹配说明：TrackerNode 将检测框关联到轨迹时，优先按轨迹绑定的 `class_name`
-> 匹配（轨迹诞生时按 IoU 绑定类别名），名称缺失时回退 `class_id` 比较。
-> 这保证了多推理源融合（class_id 可能冲突）场景下不会跨类别错配轨迹。
+> 匹配（轨迹诞生时按 IoU 绑定类别名），名称缺失时回退 `class_id` 比较；
+> 当 `name` 与 `class_id` **同时变化**时允许类别跃迁（如 `person → fall_down`）并保持同一 track_id，
+> 而多推理源融合下仅名称冲突（class_id 不冲突）则拒绝跨类继承。
+> 此外 **轨迹 ID 缝合**（`stitch`）会在目标短暂丢失后，按时空邻近性把新出现的轨迹 ID
+> 归并回原 ID，抑制跌倒等框形剧变场景下的 ID 跳变（详见 §5.1）。
 
 ## 4. 多推理源融合（Fusion）
 
@@ -170,6 +177,36 @@ FusionNode 支持两种模式（`params.mode`）：
 - 告警事件 `AlertEvent` 带状态机（occur/last/end），`toJson()` 可序列化上报
 - 具体规则 20+ 种（人员入侵、安全帽、吸烟、攀爬、打架、火焰/烟雾/结晶等场景识别），
   位于 `src/rules/alert/`，复杂检测器在 `src/rules/alert/detector/`
+
+### 5.1 跌倒相关规则（`fall_down` vs `falling`）
+
+| 注册键 | 规则 | 判定方式 |
+|---|---|---|
+| `fall_down` | `FallDownRule` | **静态**：当前帧存在 `fall_down` 类别框并持续 `alert_duration_ms` |
+| `falling` | `FallingRule` | **过程**：基于 track_id 追踪 `person → down` 类别转移，且 down 状态持续 `down_confirm_ms` |
+
+`falling` 依赖 TrackerNode 在类别跃迁时保持同一 track_id（见 §3）以及 ID 缝合（抑制跌倒时
+tracker 重建轨迹导致 ID 跳变）。配置示例：
+
+```json
+{
+  "type": "falling",
+  "params": {
+    "name": "falling1",
+    "person_class": "person",
+    "down_class": ["fall_down"],
+    "down_confirm_ms": 1000,
+    "track_timeout_ms": 5000,
+    "rule_zones": []
+  }
+}
+```
+
+- `person_class` 默认 `"person"`，`down_class` 默认 `["down"]`；**需按检测模型实际类别名配置**
+  （如本仓库 14 类模型输出 `fall_down`，须写 `"down_class": ["fall_down"]`）
+- `down_class` 支持字符串或字符串数组；`down_confirm_ms` 为 down 状态需持续的毫秒数
+- 未观测到 `person` 直接出现的 down 不触发；down 过程中恢复为 person 则取消本次判定
+- 告警类型复用 `AlertType::FALL_DOWN`，`object_ids` 携带跌倒目标 track_id
 
 ## 6. 证据链（Evidence）
 

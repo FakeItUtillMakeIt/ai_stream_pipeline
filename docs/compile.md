@@ -14,6 +14,9 @@
   `HAVE_OPENCV_FREETYPE` 宏并链接；缺失时代码自动回退 `cv::putText`（中文绘制受限），
   仅输出 STATUS 提示、不会导致配置失败
 - **cpp-httplib**：BUILD_HTTP_SERVER=ON 时 FetchContent 自动拉取
+- **libcurl**：WITH_FTP=ON 时优先使用系统 libcurl；找不到则 FetchContent 拉取
+  curl-8.7.1，构建为最小静态库（禁用测试/示例与不必要协议，FTP/FTPS 可用）；
+  WITH_FTP=OFF 时完全不查找，`FtpUploader` 相关代码经 `#ifdef WITH_FTP` 编译剔除
 
 ## 2. CMake 选项一览
 
@@ -45,6 +48,7 @@ cmake -LH build   # 查看全部选项及说明
 | `WITH_CPU_FALLBACK` | ON | CPU fallback 实现 |
 | `WITH_TRACK` | ON | 跟踪节点（需 Eigen3） |
 | `WITH_ALERT` | ON | 告警节点 |
+| `WITH_FTP` | ON | 证据 FTP 上传（libcurl，缺失时自动 FetchContent 拉取） |
 
 可选依赖查找失败时**自动禁用对应功能并输出 WARNING**（如 TensorRT 未找到则
 `WITH_TENSORRT` 自动置 OFF），不会中断配置。

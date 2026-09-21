@@ -33,12 +33,11 @@
 | `file_source` | FileSourceNode | 文件源（loop/realtime 可选） |
 | `ffmpeg_decode` | FFmpegDecodeNode | FFmpeg 解码 |
 | `resize_normalize` | 预处理 | 通过 HAL 图像加速器选择 CPU/RGA/DVPP/NPP 路径 |
-| `detection_infer` | DetectionInferNode | TensorRT 目标检测（动态 batch） |
-| `rknn_detection_infer` | RknnDetectionInferNode | RK3588 目标检测 |
-| `pose_infer` / `cuda_pose_infer` | 姿态估计 | CPU/CUDA 版 |
+| `detection_infer` | DetectionInferNode | 目标检测（HAL：TensorRT/RKNN/BPU；动态 batch） |
+| `pose_infer` | 姿态估计 | 推理走 HAL `IPoseEstimationEngine`（CPU/CUDA/RKNN） |
 | `action_recognition_videomae` | ActionRecognitionVideoMAENode | VideoMAE 动作识别 |
 | `detection_post` | 后处理（NMS） | 通过 HAL 图像加速器执行 |
-| `tracker` | TrackerNode | OCSort/ByteTrack 跟踪 |
+| `tracker` | TrackerNode | OCSort/ByteTrack 跟踪（类别跃迁 + ID 缝合） |
 | `alert` | AlertNode | 告警规则容器 |
 | `fusion` | FusionNodeImpl | 多推理源融合 |
 | `osd_draw` | OSD 绘制（CPU/GPU 自适应，框绘制走 HAL） | 中文绘制需 OpenCV freetype |
@@ -47,6 +46,20 @@
 
 > 具体节点参数请参考各节点的 `configure()` 实现及
 > `config/pipelines/` 下的示例管道 JSON。
+
+`tracker` 可选配置（轨迹 ID 缝合，抑制跌倒等框形剧变导致的 ID 跳变）：
+
+```json
+{
+  "tracker_type": "ocsort",
+  "sub_stream_id": "src1",
+  "ocsort_config": { "iou_threshold": 0.3, "inertia": 0.2, "max_age": 30 },
+  "stitch": { "enabled": true, "gap_frames": 15, "dist_ratio": 0.5, "memory_frames": 300 }
+}
+```
+
+> `falling` 告警规则的 `down_class` 必须与检测模型实际类别名一致
+> （本仓库 14 类模型输出 `fall_down`，须写 `"down_class": ["fall_down"]`）。
 
 ---
 

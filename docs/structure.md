@@ -9,6 +9,8 @@ ai_stream_pipeline/
 │   ├── FindHorizonDNN.cmake       # 地平线 RDK S100P 平台
 │   ├── FindEigen3.cmake
 │   ├── Findnlohmann_json.cmake
+│   ├── aarch64-rk3588.toolchain.cmake      # RK3588 交叉编译工具链
+│   ├── aarch64-s100p.toolchain.cmake       # 地平线 S100P 交叉编译工具链
 │   └── ai_stream_pipelineConfig.cmake.in  # 安装包配置模板
 │
 ├── include/                       # 【公开头文件目录】对外 API 边界
@@ -74,18 +76,17 @@ ai_stream_pipeline/
 │   │   ├── source/                # rtsp_source / file_source
 │   │   ├── decode/                # ffmpeg_decode / decoder_pool
 │   │   ├── preprocess/            # resize_normalize（HAL 统一入口）
-│   │   ├── infer/                 # detection_infer / pose_infer / cuda_pose_infer /
-│   │   │                          # action_recognition_videomae / rknn_detection_infer /
-│   │   │                          # int8_calibrator
+│   │   ├── infer/                 # detection_infer / pose_infer /
+│   │   │                          # action_recognition_videomae / int8_calibrator
 │   │   ├── postprocess/           # detection_post（HAL NMS）
-│   │   ├── track/                 # tracker_node + ocsort/bytetrack 适配器 + GPU Kalman
+│   │   ├── track/                 # tracker_node（类别跃迁 + ID 缝合）+ ocsort/bytetrack 适配器 + GPU Kalman
 │   │   ├── alert/                 # alert_node（规则容器，并行/串行）
 │   │   ├── fusion/                # fusion_node（动作+检测融合，跨源 NMS 去重）
 │   │   ├── draw/                  # osd_draw（HAL 路由，CPU/GPU 自适应）/ draw_panel（告警面板）
 │   │   ├── evidence/              # evidence_node / frame_buffer / video_recorder /
 │   │   │                          # video_rollover / ftp_uploader
 │   │   └── sink/                  # rtmp_sink / mp4_save / encoder_base
-│   └── rules/alert/               # 20+ 告警规则 + alert_rule_factory
+│   └── rules/alert/               # 20+ 告警规则（含 falling 跌倒过程）+ alert_rule_factory
 │       └── detector/              # 攀爬/打架/打电话等复合检测器
 │
 ├── 3rd_party/                     # 第三方依赖
@@ -100,7 +101,7 @@ ai_stream_pipeline/
 │
 ├── tests/
 │   ├── unit/core/                 # 单元测试（GTest）：队列/节点/管道生命周期/数据包
-│   ├── unit/nodes/                # 节点测试：跟踪匹配/融合/文件源自停重启
+│   ├── unit/nodes/                # 节点测试：跟踪匹配/ID 缝合/跌倒规则/融合/文件源自停重启
 │   ├── data/sample_5s.mp4         # 测试视频
 │   └── CMakeLists.txt
 │

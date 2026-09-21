@@ -6,7 +6,7 @@
 - 实时视频流动作检测
 - 三分类：攀爬(climb)、打架(fight)、其他(other)
 - 帧缓冲和滑动窗口机制
-- TensorRT 加速推理（HAL 后端：`src/hal/tensorrt/tensorrt_action_recognition.h`）
+- TensorRT 加速推理（HAL 后端：`src/hal/infer/nvidia/`，引擎经 `IActionRecognition` 工厂选择）
 
 ## 训练
  run_train.sh
