@@ -13,6 +13,9 @@ find_path(HORIZON_DNN_INCLUDE_DIR
     NAMES hb_dnn.h
     PATHS
         ${HORIZON_DNN_ROOT}/include
+        ${CMAKE_SYSROOT}/usr/include/hobot/dnn
+        ${CMAKE_SYSROOT}/usr/include/hobot
+        ${CMAKE_SYSROOT}/usr/hobot/include
         /usr/include/hobot/dnn
         /usr/include/hobot
         /usr/hobot/include
@@ -25,6 +28,7 @@ find_library(HORIZON_DNN_LIBRARY
     NAMES dnn hb_dnn
     PATHS
         ${HORIZON_DNN_ROOT}/lib
+        ${CMAKE_SYSROOT}/usr/hobot/lib
         /usr/hobot/lib
         /usr/lib
         /usr/local/lib
@@ -36,6 +40,7 @@ find_library(HORIZON_UCP_LIBRARY
     NAMES hbucp ucp
     PATHS
         ${HORIZON_DNN_ROOT}/lib
+        ${CMAKE_SYSROOT}/usr/hobot/lib
         /usr/hobot/lib
         /usr/lib
         /usr/local/lib
@@ -48,6 +53,7 @@ find_library(HORIZON_BPU_LIBRARY
     NAMES bpu hb_bpu
     PATHS
         ${HORIZON_DNN_ROOT}/lib
+        ${CMAKE_SYSROOT}/usr/hobot/lib
         /usr/hobot/lib
         /usr/lib
         /usr/local/lib
