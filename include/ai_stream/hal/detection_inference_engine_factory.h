@@ -5,6 +5,8 @@
 #include "ai_stream/hal/i_detection_inference_engine.h"
 #include <functional>
 #include <unordered_map>
+#include <map>
+#include <vector>
 
 namespace ai_stream {
 namespace hal {
@@ -58,6 +60,8 @@ public:
 private:
     DetectionInferenceEngineFactory() = default;
     std::unordered_map<DetectionBackend, std::function<DetectionInferenceEnginePtr()>> creators_;
+    // 可用性探测结果缓存：避免诊断/HTTP 反复构造引擎并触发 dlopen
+    mutable std::map<DetectionBackend, bool> availability_cache_;
 };
 
 /**

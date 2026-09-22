@@ -40,6 +40,7 @@ namespace ai_stream
 
         nlohmann::json UnlicensedVendorRule::getStatistics() const
         {
+            std::lock_guard<std::mutex> lock(mutex_);
             LOG_INFO_FMT("UnlicensedVendorRule::getStatistics()");
             return nlohmann::json();
         }

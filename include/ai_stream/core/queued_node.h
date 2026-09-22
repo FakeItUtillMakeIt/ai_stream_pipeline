@@ -65,12 +65,12 @@ public:
 
     bool start() final {
         if (this->running_.load()) return true;
-        if (!onStartup()) return false;
-        // 清理 STREAM_END 自停后残留的未 join 线程（worker 内自停无法 join 自身），
-        // 否则对 joinable 的 std::thread 赋值会触发 std::terminate
+        // 先回收上一轮残留 worker（STREAM_END 自停后线程可能仍 joinable），
+        // 再执行 onStartup，避免与旧 worker 的收尾并发
         if (worker_.joinable()) {
             worker_.join();
         }
+        if (!onStartup()) return false;
         queue_.setMaxSize(queue_capacity_);
         queue_.reset();
         this->running_ = true;

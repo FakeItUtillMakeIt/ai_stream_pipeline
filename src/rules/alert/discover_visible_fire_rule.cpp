@@ -39,6 +39,7 @@ namespace ai_stream
 
         nlohmann::json DiscoverVisibleFireRule::getStatistics() const
         {
+            std::lock_guard<std::mutex> lock(mutex_);
             LOG_INFO_FMT("DiscoverVisibleFireRule::getStatistics()");
             return nlohmann::json();
         }

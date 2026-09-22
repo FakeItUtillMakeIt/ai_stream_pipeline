@@ -427,6 +427,14 @@ private:
         const PixelPoint &q,
         const PixelPoint &r)
     {
+        // 先判共线（叉积≈0），再判 q 落在 pr 的包围盒内；
+        // 仅做包围盒判断会把斜边附近但不在线段上的点误判为“在边界上”。
+        const float cross = (q.y - p.y) * (r.x - p.x) - (q.x - p.x) * (r.y - p.y);
+        const float scale = std::fabs(r.x - p.x) + std::fabs(r.y - p.y) + 1.0f;
+        if (std::fabs(cross) > 1e-3f * scale)
+        {
+            return false;
+        }
         return q.x <= std::max(p.x, r.x) &&
                q.x >= std::min(p.x, r.x) &&
                q.y <= std::max(p.y, r.y) &&

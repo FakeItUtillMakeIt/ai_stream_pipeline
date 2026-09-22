@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <map>
+#include <utility>
 
 namespace ai_stream {
 namespace hal {
@@ -57,7 +59,11 @@ public:
 
 private:
     InferenceEngineFactory() = default;
+    // 探测某后端可用性并缓存（available, backend_name）
+    std::pair<bool, std::string> probe(InferenceBackend type) const;
+
     std::unordered_map<InferenceBackend, Creator> creators_;
+    mutable std::map<InferenceBackend, std::pair<bool, std::string>> probe_cache_;
 };
 
 /**

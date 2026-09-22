@@ -325,7 +325,7 @@ bool ResizeNormalizeNode::processCpuFrame(const std::shared_ptr<core::VideoFrame
     new_packet->cost_time_map = frame->cost_time_map;
     new_packet->cost_time_map.insert({name_, new_packet->cost_ms});
 
-    LOG_INFO_FMT("[ResizeNormalize] Resized CPU frame to {}x{}", dst_width, dst_height);
+    LOG_DEBUG_FMT("[ResizeNormalize] Resized CPU frame to {}x{}", dst_width, dst_height);
     broadcast(new_packet);
     return true;
 }
@@ -509,7 +509,7 @@ bool ResizeNormalizeNode::processGpuFrame(const std::shared_ptr<core::VideoFrame
     new_packet->cost_time_map = frame->cost_time_map;
     new_packet->cost_time_map.insert({name_, new_packet->cost_ms});
 
-    LOG_INFO_FMT("[ResizeNormalize] Resized GPU frame to {}x{}", dst_width, dst_height);
+    LOG_DEBUG_FMT("[ResizeNormalize] Resized GPU frame to {}x{}", dst_width, dst_height);
     broadcast(new_packet);
     return true;
 }

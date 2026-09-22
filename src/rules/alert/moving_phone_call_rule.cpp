@@ -148,7 +148,7 @@ namespace ai_stream
                     bool is_moving = false;
                     if (person_box.track_id > 0)
                     {
-                        is_moving = moving_pc_detector_.update_track(person_box.track_id, {person_box.x, person_box.y, person_box.w, person_box.y}, packet->frame_id);
+                        is_moving = moving_pc_detector_.update_track(person_box.track_id, {person_box.x, person_box.y, person_box.x + person_box.w, person_box.y + person_box.h}, packet->frame_id);
                         if (person_box.track_age > 10 && is_moving)
                             is_moving = true;
                     }
@@ -168,6 +168,7 @@ namespace ai_stream
 
         nlohmann::json MovingPhoneCallRule::getStatistics() const
         {
+            std::lock_guard<std::mutex> lock(mutex_);
             nlohmann::json stats;
             stats["active_alerts"] = zone_alert_map_.size();
             return stats;

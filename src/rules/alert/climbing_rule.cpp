@@ -121,6 +121,7 @@ namespace ai_stream
 
         nlohmann::json ClimbingRule::getStatistics() const
         {
+            std::lock_guard<std::mutex> lock(mutex_);
             LOG_INFO_FMT("ClimbingRule::getStatistics()");
             return nlohmann::json();
         }

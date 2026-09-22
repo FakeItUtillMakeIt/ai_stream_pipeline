@@ -39,6 +39,7 @@ namespace ai_stream
 
         nlohmann::json DiscoverCrystalRule::getStatistics() const
         {
+            std::lock_guard<std::mutex> lock(mutex_);
             LOG_INFO_FMT("DiscoverCrystalRule::getStatistics()");
             return nlohmann::json();
         }

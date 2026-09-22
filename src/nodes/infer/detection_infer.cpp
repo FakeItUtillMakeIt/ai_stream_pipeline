@@ -166,7 +166,7 @@ void DetectionInferNode::flushBatch() {
     auto t1 = std::chrono::high_resolution_clock::now();
 
     float batch_infer_ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
-    LOG_INFO_FMT("[DetectionInfer] Batch inference: {} frames, total={:.2f}ms, avg={:.2f}ms/frame",
+    LOG_DEBUG_FMT("[DetectionInfer] Batch inference: {} frames, total={:.2f}ms, avg={:.2f}ms/frame",
                  actual_batch, batch_infer_ms, batch_infer_ms / actual_batch);
 
     const auto& frame_cost_map = batch_frames.front()->cost_time_map;
@@ -461,7 +461,7 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
             results[i]->detections = std::move(all_detections[idx++]);
         }
 
-        LOG_INFO_FMT("[DetectionInfer] Batch done: gpu={} cpu={} valid_batch={} total_dets={}, detections={}",
+        LOG_DEBUG_FMT("[DetectionInfer] Batch done: gpu={} cpu={} valid_batch={} total_dets={}, detections={}",
                      gpu_batch, cpu_batch, valid_batch, total_dets, results[0]->detections.size());
 #else
         // ============================================================
@@ -602,7 +602,7 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
             }
         }
 
-        LOG_INFO_FMT("[DetectionInfer] Host batch done: frames={} total_dets={}",
+        LOG_DEBUG_FMT("[DetectionInfer] Host batch done: frames={} total_dets={}",
                      slot, total_dets);
         return results;
 #endif // 主机引擎路径结束

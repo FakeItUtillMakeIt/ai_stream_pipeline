@@ -200,8 +200,9 @@ void FileSourceNode::workerFunc() {
                 break;
             }
 
-            // 循环播放：回到文件开头，重置 pacing 基准
+            // 循环播放：回到文件开头，重置 pacing 基准；时间戳偏移累加保持单调
             LOG_INFO_FMT("[FileSource] Looping file (stream_id={})", my_stream_id_);
+            pts_offset_ms_ += last_pkt_ms_ + 1;
             av_seek_frame(fmt_ctx_, video_stream_index_, 0, AVSEEK_FLAG_BACKWARD);
             base_pkt_ms = -1;
             base_wall = std::chrono::steady_clock::now();
@@ -249,7 +250,13 @@ void FileSourceNode::workerFunc() {
         raw_pkt->stream_id = my_stream_id_;
         raw_pkt->source_id = source_id_;
         raw_pkt->frame_id = frame_count;
-        raw_pkt->timestamp_ms = utils::TimeUtil::currentTimeMs();
+        // 优先使用原始 pts（+ loop 偏移）保留帧间隔；无 pts 时回退墙钟
+        if (pkt_ms > 0) {
+            last_pkt_ms_ = pkt_ms;
+            raw_pkt->timestamp_ms = pkt_ms + pts_offset_ms_;
+        } else {
+            raw_pkt->timestamp_ms = utils::TimeUtil::currentTimeMs();
+        }
         raw_pkt->is_key_frame = (pkt->flags & AV_PKT_FLAG_KEY);
         raw_pkt->codec_id = codec_id_;
         raw_pkt->data.assign(pkt->data, pkt->data + pkt->size);

@@ -39,6 +39,7 @@ namespace ai_stream
 
         nlohmann::json DiscoverHoseCutoffRule::getStatistics() const
         {
+            std::lock_guard<std::mutex> lock(mutex_);
             LOG_INFO_FMT("DiscoverHoseCutoffRule::getStatistics()");
             return nlohmann::json();
         }

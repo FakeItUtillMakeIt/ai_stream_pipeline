@@ -49,24 +49,36 @@ InferenceEnginePtr InferenceEngineFactory::create(InferenceBackend type) {
     return nullptr;
 }
 
+std::pair<bool, std::string> InferenceEngineFactory::probe(InferenceBackend type) const {
+    auto cit = probe_cache_.find(type);
+    if (cit != probe_cache_.end()) {
+        return cit->second;
+    }
+    std::pair<bool, std::string> r{false, ""};
+    auto it = creators_.find(type);
+    if (it != creators_.end()) {
+        auto engine = it->second();
+        if (engine && engine->isAvailable()) {
+            r = {true, engine->getBackendName()};
+        }
+    }
+    probe_cache_[type] = r;
+    return r;
+}
+
 std::vector<std::pair<InferenceBackend, std::string>> InferenceEngineFactory::getAvailableBackends() const {
     std::vector<std::pair<InferenceBackend, std::string>> result;
     for (const auto& [type, creator] : creators_) {
-        auto engine = creator();
-        if (engine && engine->isAvailable()) {
-            result.emplace_back(type, engine->getBackendName());
+        auto p = probe(type);
+        if (p.first) {
+            result.emplace_back(type, p.second);
         }
     }
     return result;
 }
 
 bool InferenceEngineFactory::isBackendAvailable(InferenceBackend type) const {
-    auto it = creators_.find(type);
-    if (it != creators_.end()) {
-        auto engine = it->second();
-        return engine && engine->isAvailable();
-    }
-    return false;
+    return probe(type).first;
 }
 
 } // namespace hal

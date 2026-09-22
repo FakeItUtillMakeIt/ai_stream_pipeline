@@ -69,6 +69,17 @@ namespace ai_stream
 
         void RisingRule::onPreProcess(const std::shared_ptr<core::InferenceResultPacket> &packet)
         {
+            // 首次拿到源帧时按真实分辨率设置检测器归一化基准（默认 1080p 会致灵敏度漂移）
+            if (!resolution_set_ && packet->source_frame &&
+                packet->source_frame->width > 0 && packet->source_frame->height > 0)
+            {
+                rising_detector_.set_video_resolution(packet->source_frame->width,
+                                                      packet->source_frame->height);
+                resolution_set_ = true;
+                LOG_INFO_FMT("[RisingRule] detector resolution set to {}x{}",
+                             packet->source_frame->width, packet->source_frame->height);
+            }
+
             // 每帧只运行一次检测器（多 zone 时不得重复推进状态机）
             std::vector<core::InferenceResultPacket::BBox> person_boxes;
             for (const auto &detection : packet->detections)
@@ -88,6 +99,7 @@ namespace ai_stream
 
         nlohmann::json RisingRule::getStatistics() const
         {
+            std::lock_guard<std::mutex> lock(mutex_);
             LOG_INFO_FMT("RisingRule::getStatistics()");
             return nlohmann::json();
         }

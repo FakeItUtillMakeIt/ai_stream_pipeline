@@ -12,6 +12,7 @@
 #include <fstream>
 #include <algorithm>
 #include <numeric>
+#include <random>
 
 namespace ai_stream {
 namespace nodes {
@@ -76,8 +77,9 @@ bool Int8EntropyCalibrator::initialize(
                      calibration_image_paths_.size(), batch_size_);
     }
 
-    // 打乱顺序
-    std::random_shuffle(calibration_image_paths_.begin(), calibration_image_paths_.end());
+    // 打乱顺序（std::random_shuffle 在 C++17 已移除）
+    std::mt19937 rng(12345);  // 固定种子，保证校准可复现
+    std::shuffle(calibration_image_paths_.begin(), calibration_image_paths_.end(), rng);
 
     input_size_ = static_cast<size_t>(batch_size_) * input_channels_
                   * input_height_ * input_width_ * sizeof(float);
@@ -160,7 +162,13 @@ const void* Int8EntropyCalibrator::readCalibrationCache(size_t& length) noexcept
     }
 
     file.seekg(0, std::ios::end);
-    size_t sz = file.tellg();
+    std::streampos end_pos = file.tellg();
+    if (end_pos < 0) {
+        LOG_ERROR_FMT("[Int8Calibrator] tellg failed for cache: {}", cache_file_);
+        length = 0;
+        return nullptr;
+    }
+    size_t sz = static_cast<size_t>(end_pos);
     file.seekg(0, std::ios::beg);
 
     calibration_cache_.resize(sz);

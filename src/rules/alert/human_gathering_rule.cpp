@@ -66,6 +66,7 @@ namespace ai_stream
 
         nlohmann::json HumanGatheringRule::getStatistics() const
         {
+            std::lock_guard<std::mutex> lock(mutex_);
             LOG_INFO_FMT("HumanGatheringRule::getStatistics()");
             return nlohmann::json();
         }

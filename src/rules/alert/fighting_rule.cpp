@@ -106,6 +106,7 @@ namespace ai_stream
 
         nlohmann::json FightingRule::getStatistics() const
         {
+            std::lock_guard<std::mutex> lock(mutex_);
             LOG_INFO_FMT("FightingRule::getStatistics()");
             return nlohmann::json();
         }

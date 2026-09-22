@@ -40,6 +40,7 @@ namespace ai_stream
 
         nlohmann::json PhotographerRule::getStatistics() const
         {
+            std::lock_guard<std::mutex> lock(mutex_);
             LOG_INFO_FMT("PhotographerRule::getStatistics()");
             return nlohmann::json();
         }

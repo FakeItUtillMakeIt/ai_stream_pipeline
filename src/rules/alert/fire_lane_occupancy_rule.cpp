@@ -100,6 +100,7 @@ namespace ai_stream
 
         nlohmann::json FireLaneOccupancyRule::getStatistics() const
         {
+            std::lock_guard<std::mutex> lock(mutex_);
             return nlohmann::json();
         }
 

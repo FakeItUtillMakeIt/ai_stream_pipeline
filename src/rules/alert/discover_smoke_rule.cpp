@@ -40,6 +40,7 @@ namespace ai_stream
 
         nlohmann::json DiscoverSmokeRule::getStatistics() const
         {
+            std::lock_guard<std::mutex> lock(mutex_);
             LOG_INFO_FMT("DiscoverSmokeRule::getStatistics()");
             return nlohmann::json();
         }

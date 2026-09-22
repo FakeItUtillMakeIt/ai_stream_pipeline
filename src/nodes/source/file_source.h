@@ -63,6 +63,11 @@ private:
 
     std::atomic<int64_t> total_frames_{0};
     uint8_t skip_frames_ = 1;
+
+    // 时间戳：优先使用原始 pts（保留帧间隔，利于 fusion/证据时间对齐）；
+    // loop 时通过 pts_offset_ms_ 累加，保证时间戳单调不倒退
+    int64_t pts_offset_ms_ = 0;
+    int64_t last_pkt_ms_ = 0;
 };
 
 } // namespace nodes

@@ -144,11 +144,11 @@ void FFmpegDecodeNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
     auto t0 = std::chrono::high_resolution_clock::now();
     auto frame_pkt = decodePacket(raw_pkt, decoder_ctx);
     auto t1 = std::chrono::high_resolution_clock::now();
-    LOG_INFO_FMT("[FFmpegDecode] Decoded frame {} ({} ms)", frame_count_,
+    LOG_DEBUG_FMT("[FFmpegDecode] Decoded frame {} ({} ms)", frame_count_,
                  std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
 
     if (frame_pkt) {
-        LOG_INFO_FMT("[FFmpegDecode] broadcast frame {} ", frame_count_);
+        LOG_DEBUG_FMT("[FFmpegDecode] broadcast frame {} ", frame_count_);
         broadcast(frame_pkt);
 
         frame_count_++;

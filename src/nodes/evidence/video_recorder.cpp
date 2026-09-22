@@ -48,15 +48,15 @@ bool VideoRecorder::startRecording(
     }
 
     auto first_frame = pre_frames.front();
-    int width = first_frame->mat->cols;
-    int height = first_frame->mat->rows;
+    width_ = first_frame->mat->cols;
+    height_ = first_frame->mat->rows;
 
     std::filesystem::path filepath = output_dir_;
     filepath /= filename;
 
     current_filepath_ = filepath.string();
 
-    if (!initEncoder(current_filepath_, width, height)) {
+    if (!initEncoder(current_filepath_, width_, height_)) {
         LOG_ERROR_FMT("[VideoRecorder] Failed to initialize encoder for: {}", current_filepath_);
         return false;
     }
@@ -66,8 +66,9 @@ bool VideoRecorder::startRecording(
     pts_ = 0;
 
     for (auto& frame : pre_frames) {
-        if (frame && frame->mat && !frame->mat->empty()) {
-            encoder_->encodeFrame(frame->mat->data, frame->width, frame->height,
+        if (frame && frame->mat && !frame->mat->empty() &&
+            frame->mat->cols == width_ && frame->mat->rows == height_) {
+            encoder_->encodeFrame(frame->mat->data, width_, height_,
                                   static_cast<int>(frame->mat->step), pts_++);
         }
     }
@@ -91,6 +92,7 @@ void VideoRecorder::enqueueFrame(std::shared_ptr<core::VideoFramePacket> frame) 
 }
 
 void VideoRecorder::stop() {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (stop_flag_.exchange(true)) {
         return;
     }
@@ -130,7 +132,11 @@ void VideoRecorder::encodingLoop() {
         }
 
         if (frame && frame->mat && !frame->mat->empty() && encoder_) {
-            encoder_->encodeFrame(frame->mat->data, frame->width, frame->height,
+            // 统一以初始化尺寸编码；尺寸不一致的帧跳过，避免破坏码流
+            if (frame->mat->cols != width_ || frame->mat->rows != height_) {
+                continue;
+            }
+            encoder_->encodeFrame(frame->mat->data, width_, height_,
                                   static_cast<int>(frame->mat->step), pts_++);
         }
     }

@@ -47,6 +47,7 @@ namespace ai_stream
 
         nlohmann::json AbsenceRule::getStatistics() const
         {
+            std::lock_guard<std::mutex> lock(mutex_);
             nlohmann::json stats;
             stats["active_alerts"] = zone_alert_map_.size();
             return stats;

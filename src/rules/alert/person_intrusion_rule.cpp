@@ -40,6 +40,7 @@ namespace ai_stream
 
         nlohmann::json PersonIntrusionRule::getStatistics() const
         {
+            std::lock_guard<std::mutex> lock(mutex_);
             LOG_INFO_FMT("PersonIntrusionRule::getStatistics()");
             return nlohmann::json();
         }

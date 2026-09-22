@@ -119,7 +119,7 @@ void PoseInferNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
     auto t1 = std::chrono::high_resolution_clock::now();
 
     float infer_ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
-    LOG_INFO_FMT("[PoseInfer] Frame processed: {} persons, total={:.2f}ms",
+    LOG_DEBUG_FMT("[PoseInfer] Frame processed: {} persons, total={:.2f}ms",
                  packet_infer->pose_results.size(), infer_ms);
 
     packet_infer->cost_ms = utils::TimeUtil::currentTimeMs() - in_time_ms_;
@@ -157,7 +157,7 @@ void PoseInferNode::processFrame(std::shared_ptr<core::InferenceResultPacket> pa
 
     int num_persons = static_cast<int>(person_indices.size());
     if (num_persons == 0) {
-        LOG_INFO_FMT("[PoseInfer] No person detected in this frame");
+        LOG_DEBUG_FMT("[PoseInfer] No person detected in this frame");
         return;
     }
 

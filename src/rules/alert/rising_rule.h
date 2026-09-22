@@ -34,6 +34,7 @@ namespace ai_stream
             // 每帧只运行一次检测器，结果缓存供各 zone 的 rule_logic 复用，
             // 避免多区域配置下重复推进检测器状态机
             RisingResult last_rising_result_;
+            bool resolution_set_ = false;   // 是否已按视频分辨率设置检测器归一化基准
         };
     }
 }

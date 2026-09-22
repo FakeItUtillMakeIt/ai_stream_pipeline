@@ -216,6 +216,7 @@ namespace ai_stream
 
         nlohmann::json FallingRule::getStatistics() const
         {
+            std::lock_guard<std::mutex> lock(mutex_);
             nlohmann::json stats;
             stats["active_alerts"] = zone_alert_map_.size();
             stats["tracking_tracks"] = track_states_.size();

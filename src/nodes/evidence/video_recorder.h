@@ -43,7 +43,9 @@ private:
     mutable std::mutex mutex_;
 
     std::unique_ptr<FileEncoder> encoder_;
-    int64_t pts_ = 0;
+    std::atomic<int64_t> pts_{0};
+    int width_ = 0;      // 编码器初始化尺寸（以首帧 mat 为准）
+    int height_ = 0;
 
     // 有界队列（满时丢最旧帧，防止编码慢时无界增长）
     core::BoundedQueue<std::shared_ptr<core::VideoFramePacket>> frame_queue_{256};

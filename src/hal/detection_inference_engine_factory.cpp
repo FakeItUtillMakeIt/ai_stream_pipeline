@@ -61,21 +61,26 @@ std::vector<std::pair<DetectionBackend, std::string>> DetectionInferenceEngineFa
     };
     for (const auto& [type, creator] : creators_) {
         auto it = names.find(type);
-        if (it != names.end()) {
-            auto engine = creator();
-            if (engine && engine->isAvailable()) {
-                result.emplace_back(type, it->second);
-            }
+        if (it != names.end() && isBackendAvailable(type)) {
+            result.emplace_back(type, it->second);
         }
     }
     return result;
 }
 
 bool DetectionInferenceEngineFactory::isBackendAvailable(DetectionBackend type) const {
+    auto cit = availability_cache_.find(type);
+    if (cit != availability_cache_.end()) {
+        return cit->second;
+    }
     auto it = creators_.find(type);
-    if (it == creators_.end()) return false;
-    auto engine = it->second();
-    return engine && engine->isAvailable();
+    bool avail = false;
+    if (it != creators_.end()) {
+        auto engine = it->second();
+        avail = engine && engine->isAvailable();
+    }
+    availability_cache_[type] = avail;
+    return avail;
 }
 
 } // namespace hal
