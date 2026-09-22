@@ -2,12 +2,15 @@
 // RKNN 姿态估计推理引擎实现——与 rknn_detection_engine 相同的 dlopen 桩模式
 #include "rknn_pose_estimation.h"
 #include "ai_stream/hal/pose_estimation_factory.h"
+#include "ai_stream/hal/dl_library.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 
 #include <dlfcn.h>
 #include <algorithm>
 #include <cstring>
 #include <fstream>
+#include <mutex>
+#include <memory>
 
 namespace ai_stream {
 namespace hal {
@@ -33,29 +36,33 @@ rknn_outputs_get_fn p_outputs_get = nullptr;
 rknn_outputs_release_fn p_outputs_release = nullptr;
 rknn_set_core_mask_fn p_set_core_mask = nullptr;
 
+std::shared_ptr<DlLibrary> g_rknn_lib;
+std::once_flag g_rknn_once;
+
 bool load_rknn_lib() {
-    static bool tried = false;
-    static bool ok = false;
-    if (tried) return ok;
-    tried = true;
-    void* h = dlopen("librknnrt.so", RTLD_NOW | RTLD_GLOBAL);
-    if (!h) {
-        LOG_WARN_FMT("[RknnPoseEstimation] dlopen librknnrt.so failed: {}", dlerror());
-        return false;
-    }
-    auto sym = [&](const char* n) { return dlsym(h, n); };
-    p_init = reinterpret_cast<rknn_init_fn>(sym("rknn_init"));
-    p_destroy = reinterpret_cast<rknn_destroy_fn>(sym("rknn_destroy"));
-    p_query = reinterpret_cast<rknn_query_fn>(sym("rknn_query"));
-    p_inputs_set = reinterpret_cast<rknn_inputs_set_fn>(sym("rknn_inputs_set"));
-    p_run = reinterpret_cast<rknn_run_fn>(sym("rknn_run"));
-    p_outputs_get = reinterpret_cast<rknn_outputs_get_fn>(sym("rknn_outputs_get"));
-    p_outputs_release = reinterpret_cast<rknn_outputs_release_fn>(sym("rknn_outputs_release"));
-    p_set_core_mask = reinterpret_cast<rknn_set_core_mask_fn>(sym("rknn_set_core_mask"));
-    ok = p_init && p_destroy && p_query && p_inputs_set && p_run &&
-         p_outputs_get && p_outputs_release && p_set_core_mask;
-    if (!ok) LOG_ERROR("[RknnPoseEstimation] Failed to load RKNN API symbols");
-    return ok;
+    std::call_once(g_rknn_once, []() {
+        g_rknn_lib = DlLibrary::get("librknnrt.so");
+        if (!g_rknn_lib || !g_rknn_lib->isOpen()) {
+            g_rknn_lib.reset();
+            return;
+        }
+        p_init = g_rknn_lib->symAs<rknn_init_fn>("rknn_init");
+        p_destroy = g_rknn_lib->symAs<rknn_destroy_fn>("rknn_destroy");
+        p_query = g_rknn_lib->symAs<rknn_query_fn>("rknn_query");
+        p_inputs_set = g_rknn_lib->symAs<rknn_inputs_set_fn>("rknn_inputs_set");
+        p_run = g_rknn_lib->symAs<rknn_run_fn>("rknn_run");
+        p_outputs_get = g_rknn_lib->symAs<rknn_outputs_get_fn>("rknn_outputs_get");
+        p_outputs_release = g_rknn_lib->symAs<rknn_outputs_release_fn>("rknn_outputs_release");
+        p_set_core_mask = g_rknn_lib->symAs<rknn_set_core_mask_fn>("rknn_set_core_mask");
+        bool ok = p_init && p_destroy && p_query && p_inputs_set && p_run &&
+                  p_outputs_get && p_outputs_release && p_set_core_mask;
+        if (!ok) {
+            LOG_ERROR("[RknnPoseEstimation] Failed to load RKNN API symbols");
+            p_init = nullptr;
+            g_rknn_lib.reset();
+        }
+    });
+    return p_init != nullptr;
 }
 
 // 压缩 dims（去掉 1 值维度）

@@ -3,11 +3,14 @@
 #include "mpp_video_encoder.h"
 #include "ai_stream/hal/i_video_encoder.h"
 #include "ai_stream/hal/h264_extradata.h"
+#include "ai_stream/hal/dl_library.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 
 #include <dlfcn.h>
 #include <algorithm>
 #include <cstring>
+#include <mutex>
+#include <memory>
 
 #ifndef MPP_ALIGN
 #define MPP_ALIGN(x, a) (((x) + (a) - 1) & ~((a) - 1))
@@ -75,52 +78,60 @@ mpp_packet_get_pts_fn p_pkt_pts = nullptr;
 mpp_packet_get_eos_fn p_pkt_eos = nullptr;
 mpp_packet_deinit_fn p_pkt_deinit = nullptr;
 
+std::shared_ptr<DlLibrary> g_mpp_lib;
+std::once_flag g_mpp_once;
+
 bool load_mpp_lib() {
-    static bool tried = false;
-    static bool ok = false;
-    if (tried) return ok;
-    tried = true;
-    void* h = dlopen("librockchip_mpp.so", RTLD_NOW | RTLD_GLOBAL);
-    if (!h) h = dlopen("librockchip_mpp.so.1", RTLD_NOW | RTLD_GLOBAL);
-    if (!h) {
-        LOG_WARN_FMT("[MppVideoEncoder] dlopen librockchip_mpp failed: {}", dlerror());
-        return false;
-    }
-    auto sym = [&](const char* n) { return dlsym(h, n); };
-    p_create = reinterpret_cast<mpp_create_fn>(sym("mpp_create"));
-    p_init = reinterpret_cast<mpp_init_fn>(sym("mpp_init"));
-    p_destroy = reinterpret_cast<mpp_destroy_fn>(sym("mpp_destroy"));
-    p_cfg_init = reinterpret_cast<mpp_enc_cfg_init_fn>(sym("mpp_enc_cfg_init"));
-    p_cfg_deinit = reinterpret_cast<mpp_enc_cfg_deinit_fn>(sym("mpp_enc_cfg_deinit"));
-    p_cfg_s32 = reinterpret_cast<mpp_enc_cfg_set_s32_fn>(sym("mpp_enc_cfg_set_s32"));
-    p_cfg_u32 = reinterpret_cast<mpp_enc_cfg_set_u32_fn>(sym("mpp_enc_cfg_set_u32"));
-    p_buf_group_get = reinterpret_cast<mpp_buffer_group_get_fn>(sym("mpp_buffer_group_get"));
-    p_buf_group_put = reinterpret_cast<mpp_buffer_group_put_fn>(sym("mpp_buffer_group_put"));
-    p_buf_get = reinterpret_cast<mpp_buffer_get_with_tag_fn>(sym("mpp_buffer_get_with_tag"));
-    p_buf_put = reinterpret_cast<mpp_buffer_put_fn>(sym("mpp_buffer_put"));
-    p_buf_ptr = reinterpret_cast<mpp_buffer_get_ptr_with_caller_fn>(sym("mpp_buffer_get_ptr_with_caller"));
-    p_frame_init = reinterpret_cast<mpp_frame_init_fn>(sym("mpp_frame_init"));
-    p_frame_deinit = reinterpret_cast<mpp_frame_deinit_fn>(sym("mpp_frame_deinit"));
-    p_frame_w = reinterpret_cast<mpp_frame_set_width_fn>(sym("mpp_frame_set_width"));
-    p_frame_h = reinterpret_cast<mpp_frame_set_height_fn>(sym("mpp_frame_set_height"));
-    p_frame_hs = reinterpret_cast<mpp_frame_set_hor_stride_fn>(sym("mpp_frame_set_hor_stride"));
-    p_frame_vs = reinterpret_cast<mpp_frame_set_ver_stride_fn>(sym("mpp_frame_set_ver_stride"));
-    p_frame_fmt = reinterpret_cast<mpp_frame_set_fmt_fn>(sym("mpp_frame_set_fmt"));
-    p_frame_buf = reinterpret_cast<mpp_frame_set_buffer_fn>(sym("mpp_frame_set_buffer"));
-    p_frame_pts = reinterpret_cast<mpp_frame_set_pts_fn>(sym("mpp_frame_set_pts"));
-    p_pkt_data = reinterpret_cast<mpp_packet_get_data_fn>(sym("mpp_packet_get_data"));
-    p_pkt_len = reinterpret_cast<mpp_packet_get_length_fn>(sym("mpp_packet_get_length"));
-    p_pkt_pts = reinterpret_cast<mpp_packet_get_pts_fn>(sym("mpp_packet_get_pts"));
-    p_pkt_eos = reinterpret_cast<mpp_packet_get_eos_fn>(sym("mpp_packet_get_eos"));
-    p_pkt_deinit = reinterpret_cast<mpp_packet_deinit_fn>(sym("mpp_packet_deinit"));
-    ok = p_create && p_init && p_destroy && p_cfg_init && p_cfg_deinit &&
-         p_cfg_s32 && p_cfg_u32 && p_buf_group_get && p_buf_group_put &&
-         p_buf_get && p_buf_put && p_buf_ptr && p_frame_init && p_frame_deinit &&
-         p_frame_w && p_frame_h && p_frame_hs && p_frame_vs && p_frame_fmt &&
-         p_frame_buf && p_frame_pts && p_pkt_data && p_pkt_len && p_pkt_eos &&
-         p_pkt_deinit;
-    if (!ok) LOG_ERROR("[MppVideoEncoder] Failed to load MPP API symbols");
-    return ok;
+    std::call_once(g_mpp_once, []() {
+        g_mpp_lib = DlLibrary::get("librockchip_mpp.so");
+        if (!g_mpp_lib || !g_mpp_lib->isOpen()) {
+            g_mpp_lib = DlLibrary::get("librockchip_mpp.so.1");
+        }
+        if (!g_mpp_lib || !g_mpp_lib->isOpen()) {
+            LOG_WARN("[MppVideoEncoder] dlopen librockchip_mpp failed");
+            g_mpp_lib.reset();
+            return;
+        }
+        auto sym = [&](const char* n) { return g_mpp_lib->sym(n); };
+        p_create = reinterpret_cast<mpp_create_fn>(sym("mpp_create"));
+        p_init = reinterpret_cast<mpp_init_fn>(sym("mpp_init"));
+        p_destroy = reinterpret_cast<mpp_destroy_fn>(sym("mpp_destroy"));
+        p_cfg_init = reinterpret_cast<mpp_enc_cfg_init_fn>(sym("mpp_enc_cfg_init"));
+        p_cfg_deinit = reinterpret_cast<mpp_enc_cfg_deinit_fn>(sym("mpp_enc_cfg_deinit"));
+        p_cfg_s32 = reinterpret_cast<mpp_enc_cfg_set_s32_fn>(sym("mpp_enc_cfg_set_s32"));
+        p_cfg_u32 = reinterpret_cast<mpp_enc_cfg_set_u32_fn>(sym("mpp_enc_cfg_set_u32"));
+        p_buf_group_get = reinterpret_cast<mpp_buffer_group_get_fn>(sym("mpp_buffer_group_get"));
+        p_buf_group_put = reinterpret_cast<mpp_buffer_group_put_fn>(sym("mpp_buffer_group_put"));
+        p_buf_get = reinterpret_cast<mpp_buffer_get_with_tag_fn>(sym("mpp_buffer_get_with_tag"));
+        p_buf_put = reinterpret_cast<mpp_buffer_put_fn>(sym("mpp_buffer_put"));
+        p_buf_ptr = reinterpret_cast<mpp_buffer_get_ptr_with_caller_fn>(sym("mpp_buffer_get_ptr_with_caller"));
+        p_frame_init = reinterpret_cast<mpp_frame_init_fn>(sym("mpp_frame_init"));
+        p_frame_deinit = reinterpret_cast<mpp_frame_deinit_fn>(sym("mpp_frame_deinit"));
+        p_frame_w = reinterpret_cast<mpp_frame_set_width_fn>(sym("mpp_frame_set_width"));
+        p_frame_h = reinterpret_cast<mpp_frame_set_height_fn>(sym("mpp_frame_set_height"));
+        p_frame_hs = reinterpret_cast<mpp_frame_set_hor_stride_fn>(sym("mpp_frame_set_hor_stride"));
+        p_frame_vs = reinterpret_cast<mpp_frame_set_ver_stride_fn>(sym("mpp_frame_set_ver_stride"));
+        p_frame_fmt = reinterpret_cast<mpp_frame_set_fmt_fn>(sym("mpp_frame_set_fmt"));
+        p_frame_buf = reinterpret_cast<mpp_frame_set_buffer_fn>(sym("mpp_frame_set_buffer"));
+        p_frame_pts = reinterpret_cast<mpp_frame_set_pts_fn>(sym("mpp_frame_set_pts"));
+        p_pkt_data = reinterpret_cast<mpp_packet_get_data_fn>(sym("mpp_packet_get_data"));
+        p_pkt_len = reinterpret_cast<mpp_packet_get_length_fn>(sym("mpp_packet_get_length"));
+        p_pkt_pts = reinterpret_cast<mpp_packet_get_pts_fn>(sym("mpp_packet_get_pts"));
+        p_pkt_eos = reinterpret_cast<mpp_packet_get_eos_fn>(sym("mpp_packet_get_eos"));
+        p_pkt_deinit = reinterpret_cast<mpp_packet_deinit_fn>(sym("mpp_packet_deinit"));
+        bool ok = p_create && p_init && p_destroy && p_cfg_init && p_cfg_deinit &&
+             p_cfg_s32 && p_cfg_u32 && p_buf_group_get && p_buf_group_put &&
+             p_buf_get && p_buf_put && p_buf_ptr && p_frame_init && p_frame_deinit &&
+             p_frame_w && p_frame_h && p_frame_hs && p_frame_vs && p_frame_fmt &&
+             p_frame_buf && p_frame_pts && p_pkt_data && p_pkt_len && p_pkt_eos &&
+             p_pkt_deinit;
+        if (!ok) {
+            LOG_ERROR("[MppVideoEncoder] Failed to load MPP API symbols");
+            p_create = nullptr;
+            g_mpp_lib.reset();
+        }
+    });
+    return p_create != nullptr;
 }
 
 } // namespace

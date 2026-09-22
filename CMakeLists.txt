@@ -34,7 +34,7 @@ option(WITH_TENSORRT     "Enable TensorRT inference support" OFF)
 
 # GPU 加速选项
 option(WITH_CUDA "Enable CUDA support for GPU acceleration" OFF)
-option(WITH_NPP "Enable NPP library for GPU image processing" OFF)
+option(WITH_NPP "Deprecated no-op (NPP is enabled via WITH_CUDA)" OFF)
 
 # 新平台推理后端
 option(WITH_RKNN  "Enable RKNN inference support (RK3588)" OFF)
@@ -43,7 +43,7 @@ option(WITH_HORIZON "Enable Horizon BPU inference support (RDK S100P)" OFF)
 option(RKNN_ALLOW_X86_SIMULATOR "Allow RKNN backend on x86_64 for simulator-only builds" OFF)
 
 # CPU fallback：无 GPU 时用 CPU 实现预处理/后处理/绘制
-option(WITH_CPU_FALLBACK "Enable CPU fallback for preprocess/postprocess/draw" ON)
+option(WITH_CPU_FALLBACK "Deprecated no-op (CPU fallback backends are always built)" ON)
 
 option(WITH_TRACK "Enable tracking node" ON)
 option(WITH_ALERT "Enable alert node" ON)
@@ -155,6 +155,7 @@ find_package(FFmpeg REQUIRED COMPONENTS avcodec avformat avutil swscale)
 
 # FTP上传依赖（可选）——与 spdlog 同策略：
 # 优先系统 libcurl，找不到则从 GitHub FetchContent 拉取构建
+set(CURL_FETCHED FALSE)   # 供安装包配置模板使用，确保始终有定义
 if(WITH_FTP)
     find_package(CURL QUIET)
     if(CURL_FOUND)
@@ -331,14 +332,14 @@ if(WITH_HORIZON)
 endif()
 
 if(WITH_TRACK)
-    find_package(Eigen3 REQUIRED)
+    find_package(Eigen3 QUIET)
     if(EIGEN3_FOUND)
         message(STATUS "Found Eigen3: ${EIGEN3_INCLUDE_DIR}")
-    else(EIGEN3_FOUND)
+        add_subdirectory(${PROJECT_SOURCE_DIR}/3rd_party/tracker)
+    else()
         message(WARNING "Eigen3 not found. Tracking node will be disabled.")
         set(WITH_TRACK OFF)
     endif()
-    add_subdirectory(${PROJECT_SOURCE_DIR}/3rd_party/tracker)
 endif()
 
 if(WITH_ALERT)
@@ -529,6 +530,7 @@ install(FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindTensorRT.cmake"
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindRKNN.cmake"
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindAscend.cmake"
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindHorizonDNN.cmake"
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ai_stream_pipeline
 )
 

@@ -1,12 +1,15 @@
 // src/hal/rga/rga_image_accelerator.cpp — Rockchip RGA 2D 加速（dlopen 动态加载，x86 仅头文件编译）
 #include "rga_image_accelerator.h"
 #include "ai_stream/hal/image_accelerator_factory.h"
+#include "ai_stream/hal/dl_library.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 #include <dlfcn.h>
 #include <unistd.h>
 #include <cstring>
 #include <algorithm>
 #include <cmath>
+#include <mutex>
+#include <memory>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/imgcodecs.hpp>
 
@@ -21,36 +24,36 @@ namespace ai_stream {
 namespace hal {
 
 #ifdef WITH_RKNN
-static void* g_rga_handle = nullptr;
-static bool g_rga_loaded = false;
-static bool g_rga_load_tried = false;
+static std::shared_ptr<DlLibrary> g_rga_lib;
+static std::once_flag g_rga_once;
 
 static bool load_rga() {
-    if (g_rga_load_tried) return g_rga_loaded;
-    g_rga_load_tried = true;
-    // 优先 3rd_party 路径，其次系统路径
-    const char* cand[] = {
-        "3rd_party/rk_platform/rga/lib/aarch64/librga.so",
-        "librga.so",
-        nullptr
-    };
-    for (int i = 0; cand[i]; ++i) {
-        g_rga_handle = dlopen(cand[i], RTLD_NOW);
-        if (g_rga_handle) break;
-    }
-    if (!g_rga_handle) {
-        LOG_DEBUG_FMT("[RgaImageAccelerator] dlopen librga.so failed: {}", dlerror() ? dlerror() : "unknown");
-        return false;
-    }
-    // 验证关键符号
-    if (!dlsym(g_rga_handle, "c_RkRgaInit") && !dlsym(g_rga_handle, "imresize")) {
-        LOG_WARN("[RgaImageAccelerator] librga.so missing expected symbols");
-        dlclose(g_rga_handle); g_rga_handle = nullptr;
-        return false;
-    }
-    g_rga_loaded = true;
-    LOG_INFO("[RgaImageAccelerator] librga.so loaded");
-    return true;
+    std::call_once(g_rga_once, []() {
+        // 优先 3rd_party 路径，其次系统路径
+        const char* cand[] = {
+            "3rd_party/rk_platform/rga/lib/aarch64/librga.so",
+            "librga.so",
+            nullptr
+        };
+        for (int i = 0; cand[i]; ++i) {
+            g_rga_lib = DlLibrary::get(cand[i], RTLD_NOW);
+            if (g_rga_lib && g_rga_lib->isOpen()) break;
+            g_rga_lib.reset();
+        }
+        if (!g_rga_lib || !g_rga_lib->isOpen()) {
+            LOG_DEBUG("[RgaImageAccelerator] dlopen librga.so failed");
+            g_rga_lib.reset();
+            return;
+        }
+        // 验证关键符号
+        if (!g_rga_lib->sym("c_RkRgaInit") && !g_rga_lib->sym("imresize")) {
+            LOG_WARN("[RgaImageAccelerator] librga.so missing expected symbols");
+            g_rga_lib.reset();
+            return;
+        }
+        LOG_INFO("[RgaImageAccelerator] librga.so loaded");
+    });
+    return g_rga_lib != nullptr;
 }
 #endif
 
@@ -87,7 +90,7 @@ bool RgaImageAccelerator::initRga() {
     }
     if (!load_rga()) return false;
     // c_RkRgaInit 在新版 RGA 中可空操作，仍调用一次
-    auto fnInit = (int(*)())dlsym(g_rga_handle, "c_RkRgaInit");
+    auto fnInit = (int(*)())g_rga_lib->sym("c_RkRgaInit");
     if (fnInit) {
         int ret = fnInit();
         if (ret != 0) LOG_WARN_FMT("[RgaImageAccelerator] c_RkRgaInit ret={}", ret);
@@ -101,8 +104,8 @@ bool RgaImageAccelerator::initRga() {
 
 void RgaImageAccelerator::cleanup() {
 #ifdef WITH_RKNN
-    if (g_rga_handle) {
-        auto fnDeInit = (void(*)())dlsym(g_rga_handle, "c_RkRgaDeInit");
+    if (g_rga_lib) {
+        auto fnDeInit = (void(*)())g_rga_lib->sym("c_RkRgaDeInit");
         if (fnDeInit) fnDeInit();
         // 保持句柄常驻，避免重复 dlopen；如需释放可 dlclose
     }
@@ -156,7 +159,7 @@ bool RgaImageAccelerator::resizeNormalize(const uint8_t* src, const ResizeNormal
     if (!src || !dst) return false;
 #ifdef WITH_RKNN
     // 尝试 RGA 路径
-    if (initialized_ && g_rga_handle && access("/dev/rga", F_OK) == 0) {
+    if (initialized_ && g_rga_lib && access("/dev/rga", F_OK) == 0) {
         // 使用 RGA 做 resize 到中间 BGR 缓冲，再 CPU 归一化
         int sw = params.src_width, sh = params.src_height;
         int dw = params.dst_width, dh = params.dst_height;
@@ -164,8 +167,8 @@ bool RgaImageAccelerator::resizeNormalize(const uint8_t* src, const ResizeNormal
             // 中间缓冲
             std::vector<uint8_t> tmp(dw * dh * 3);
             // wrapbuffer 虚拟地址
-            auto fnWrap = (rga_buffer_t(*)(void*,int,int,int,int,int))dlsym(g_rga_handle, "wrapbuffer_virtualaddr_t");
-            auto fnResize = (int(*)(rga_buffer_t, rga_buffer_t, double, double, int, int))dlsym(g_rga_handle, "imresize_t");
+            auto fnWrap = (rga_buffer_t(*)(void*,int,int,int,int,int))g_rga_lib->sym("wrapbuffer_virtualaddr_t");
+            auto fnResize = (int(*)(rga_buffer_t, rga_buffer_t, double, double, int, int))g_rga_lib->sym("imresize_t");
             if (fnWrap && fnResize) {
                 int fmt = RK_FORMAT_RGB_888; // 与 BGR 888 同布局，RGA 会处理
                 // 注意 rga 期望 BGR/RGB 格式；使用 RGB_888

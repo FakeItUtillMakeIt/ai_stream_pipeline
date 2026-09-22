@@ -272,7 +272,7 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
 #ifdef WITH_CUDA
 #ifdef WITH_TENSORRT
         // 设置动态输入形状（通过原始 TensorRT context，仅 TensorRT 后端）
-        if (auto* raw_context = static_cast<nvinfer1::IExecutionContext*>(engine_->getRawContext())) {
+        if (auto* raw_context = graph_engine_ ? static_cast<nvinfer1::IExecutionContext*>(graph_engine_->getRawContext()) : nullptr) {
             nvinfer1::Dims4 input_dims(valid_batch, 3, input_height_, input_width_);
             if (!raw_context->setInputShape(input_name_.c_str(), input_dims)) {
                 LOG_ERROR_FMT("[DetectionInfer] setInputShape failed for batch={}", valid_batch);
@@ -484,7 +484,7 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
                 auto& fr = frames[b];
                 if (fr && fr->is_nv12 && fr->nv12 &&
                     fr->nv12_width > 0 && fr->nv12_height > 0) {
-                    if (engine_->setNv12Input(fr->nv12->data(), fr->nv12_width, fr->nv12_height) &&
+                    if (nv12_engine_ && nv12_engine_->setNv12Input(fr->nv12->data(), fr->nv12_width, fr->nv12_height) &&
                         engine_->infer()) {
                         const int sw = fr->nv12_width, sh = fr->nv12_height;
                         const float sc = std::min(static_cast<float>(input_width_) / sw,
@@ -697,7 +697,7 @@ std::vector<std::vector<core::InferenceResultPacket::BBox>> DetectionInferNode::
 #ifdef WITH_CUDA
 bool DetectionInferNode::captureCudaGraph(int batch_size) {
 #ifdef WITH_TENSORRT
-    auto* raw_context = static_cast<nvinfer1::IExecutionContext*>(engine_->getRawContext());
+    auto* raw_context = graph_engine_ ? static_cast<nvinfer1::IExecutionContext*>(graph_engine_->getRawContext()) : nullptr;
     if (!raw_context) return false;
 
     destroyCudaGraph();
@@ -718,8 +718,8 @@ bool DetectionInferNode::captureCudaGraph(int batch_size) {
         engine_->setOutputTensor(num_dets_name_, d_num_dets_);
 
         // TRT 10.3: 使用 updateDeviceMemorySizeForShapes 获取实际所需大小（含 activation + scratch）
-        size_t actual_mem_size = engine_->updateDeviceMemorySizeForShapes();
-        size_t static_mem_size = engine_->getDeviceMemorySize();
+        size_t actual_mem_size = graph_engine_->updateDeviceMemorySizeForShapes();
+        size_t static_mem_size = graph_engine_->getDeviceMemorySize();
         size_t workspace_size = (actual_mem_size > 0) ? actual_mem_size : static_mem_size;
 
         LOG_INFO_FMT("[DetectionInfer] CUDA Graph: workspace size: static={}KB, actual={}KB",
@@ -737,7 +737,7 @@ bool DetectionInferNode::captureCudaGraph(int batch_size) {
                 return false;
             }
             // 使用 setDeviceMemoryV2 设置内存和大小
-            if (!engine_->setDeviceMemoryV2(d_workspace, static_cast<int64_t>(alloc_size))) {
+            if (!graph_engine_->setDeviceMemoryV2(d_workspace, static_cast<int64_t>(alloc_size))) {
                 LOG_ERROR_FMT("[DetectionInfer] CUDA Graph: setDeviceMemoryV2 failed");
                 cudaFree(d_workspace);
                 return false;
@@ -934,6 +934,9 @@ bool DetectionInferNode::initEngine(const std::string& engine_path) {
                      "platform, running in mock mode");
             return true;
         }
+        // 探测可选能力接口（CUDA Graph/NV12 直通），不支持则为 nullptr
+        graph_engine_ = dynamic_cast<hal::IGraphCapturable*>(engine_.get());
+        nv12_engine_ = dynamic_cast<hal::INv12Input*>(engine_.get());
 
         hal::DetectionInferenceConfig config;
         config.model_path = engine_path;

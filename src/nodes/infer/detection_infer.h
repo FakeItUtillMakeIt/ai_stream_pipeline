@@ -6,6 +6,7 @@
 #include "ai_stream/nodes/i_infer_node.h"
 #include "ai_stream/core/queued_node.h"
 #include "ai_stream/hal/i_detection_inference_engine.h"
+#include "ai_stream/hal/i_detection_capabilities.h"
 #include "ai_stream/hal/detection_inference_engine_factory.h"
 
 #ifdef WITH_CUDA
@@ -148,6 +149,9 @@ private:
 
     // HAL 推理引擎
     hal::DetectionInferenceEnginePtr engine_;
+    // 可选能力接口（避免把 TRT/NV12 细节泄漏进通用检测接口）
+    hal::IGraphCapturable* graph_engine_ = nullptr;
+    hal::INv12Input* nv12_engine_ = nullptr;
     hal::DetectionBackend backend_type_ = hal::DetectionBackend::AUTO;
 
     // 双流架构：compute_stream 用于推理，transfer_stream 用于内存传输

@@ -4,7 +4,6 @@
 
 add_executable(http_server
     api_server.cpp
-    ${PROJECT_SOURCE_DIR}/3rd_party/log_mgr/log_mgr.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
 )
 

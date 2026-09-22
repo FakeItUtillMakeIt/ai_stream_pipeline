@@ -3,6 +3,7 @@
 #pragma once
 
 #include "ai_stream/hal/i_detection_inference_engine.h"
+#include "ai_stream/hal/i_detection_capabilities.h"
 #include "trt_core.h"
 #include <string>
 #include <vector>
@@ -24,8 +25,10 @@ namespace hal {
  * 封装 TensorRT 推理逻辑到 IDetectionInferenceEngine 接口。
  * 支持多输出 tensor、异步推理、CUDA Graph。
  * 引擎生命周期与缓冲区由 TrtCore 内核承担。
+ *
+ * 额外实现 IGraphCapturable，暴露 CUDA Graph / workspace 所需的原始句柄。
  */
-class TensorrtDetectionEngine : public IDetectionInferenceEngine {
+class TensorrtDetectionEngine : public IDetectionInferenceEngine, public IGraphCapturable {
 public:
     TensorrtDetectionEngine();
     ~TensorrtDetectionEngine() override;
@@ -45,6 +48,8 @@ public:
     int getMaxBatchSize() const override;
     std::string getBackendName() const override { return "TensorRT (NVIDIA)"; }
     bool isAvailable() const override;
+
+    // IGraphCapturable
     void* getRawContext() const override;
     void* getRawEngine() const override;
     size_t getDeviceMemorySize() const override;

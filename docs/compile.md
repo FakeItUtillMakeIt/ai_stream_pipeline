@@ -41,11 +41,11 @@ cmake -LH build   # 查看全部选项及说明
 |---|---|---|
 | `WITH_CUDA` | OFF | GPU 加速（解码/预处理/绘制），启用 CUDA 语言 |
 | `WITH_TENSORRT` | OFF | TensorRT 推理后端 |
-| `WITH_NPP` | OFF | NPP 图像处理库 |
+| `WITH_NPP` | OFF | 已废弃 no-op（NPP 由 `WITH_CUDA` 一并启用） |
 | `WITH_RKNN` | OFF | RK3588 推理后端 |
 | `WITH_ASCEND` | OFF | 昇腾 CANN 推理后端 |
 | `WITH_HORIZON` | OFF | 地平线 RDK S100P 后端（BPU 推理 + VPU 编解码） |
-| `WITH_CPU_FALLBACK` | ON | CPU fallback 实现 |
+| `WITH_CPU_FALLBACK` | ON | 已废弃 no-op（CPU fallback 后端始终编入） |
 | `WITH_TRACK` | ON | 跟踪节点（需 Eigen3） |
 | `WITH_ALERT` | ON | 告警节点 |
 | `WITH_FTP` | ON | 证据 FTP 上传（libcurl，缺失时自动 FetchContent 拉取） |

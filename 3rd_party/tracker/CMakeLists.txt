@@ -7,10 +7,10 @@ find_package(Eigen3 REQUIRED)
 # OCSort 库（纯头文件，使用 INTERFACE）
 # ============================================================
 # 收集头文件（可选，用于 IDE 显示）
-file(GLOB OCSORT_SOURCES 
+file(GLOB OCSORT_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/OCSort/*.cpp")
 
-file(GLOB OCSORT_HEADERS 
+file(GLOB OCSORT_HEADERS CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/OCSort/*.h" 
     "${CMAKE_CURRENT_SOURCE_DIR}/OCSort/*.hpp")
 
@@ -34,11 +34,11 @@ target_link_libraries(ocsort
 # ByteTrack 库（有源文件，编译为 SHARED）
 # ============================================================
 # 收集 ByteTrack 源文件
-file(GLOB_RECURSE BYTETRACK_SOURCES
+file(GLOB_RECURSE BYTETRACK_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/ByteTrack/*.cpp"
 )
 
-file(GLOB_RECURSE BYTETRACK_HEADERS
+file(GLOB_RECURSE BYTETRACK_HEADERS CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/ByteTrack/*.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/ByteTrack/*.h"
 )

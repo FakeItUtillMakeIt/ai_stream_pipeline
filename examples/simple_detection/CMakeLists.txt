@@ -3,7 +3,6 @@ find_package(nlohmann_json REQUIRED)
 find_package(OpenCV REQUIRED)
 
 add_executable(simple_detection
-    ${PROJECT_SOURCE_DIR}/3rd_party/log_mgr/log_mgr.cpp
     main.cpp
 )
 

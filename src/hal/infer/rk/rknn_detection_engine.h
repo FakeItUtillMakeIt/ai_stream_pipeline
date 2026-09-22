@@ -54,9 +54,6 @@ public:
     std::string getBackendName() const override { return "RKNN Detection (Rockchip NPU)"; }
     bool isAvailable() const override;
 
-    void* getRawContext() const override { return nullptr; }
-    void* getRawEngine() const override { return nullptr; }
-
 private:
     // 单帧推理：输入 host NCHW float [1,3,H,W]
     bool inferOne(const float* input_nchw, int batch_slot);

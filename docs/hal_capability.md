@@ -35,6 +35,9 @@
   （TensorRT > RKNN > Ascend > 地平线 BPU > CPU）
 - 硬件后端（RKNN/NVDEC/MPP/VPU…）通过 **dlopen 惰性加载**：x86 编译主机
   无对应库时 `isAvailable()` 返回 false，自动回退下一优先级
+- 动态库加载统一使用 `include/ai_stream/hal/dl_library.h` 的 RAII `DlLibrary`（进程级共享、
+  引用计数、线程安全，最后一个引用释放时 `dlclose`）；RKNN / MPP / RGA 后端已迁移，
+  地平线 VPU/BPU 后端待板端 SDK 环境跟进
 - 编码器（`video_encoder_factory`）的 `AUTO` 依次尝试 **`horizon_h264`（VPU）→
   `mpp_h264`（RK）→ `ffmpeg_h264`（软编/nvenc）**；sink/evidence 配置里写
   `"hw_encoder": true` 即自动选硬件（false 为软编），无需手写后端名；

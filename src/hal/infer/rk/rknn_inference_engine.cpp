@@ -3,11 +3,14 @@
 // 通过 dlopen/dlsym 动态加载 librknnrt.so，兼容 x86_64 编译主机
 #include "rknn_inference_engine.h"
 #include "ai_stream/hal/inference_engine_factory.h"
+#include "ai_stream/hal/dl_library.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 #include <dlfcn.h>
 #include <fstream>
 #include <cstring>
 #include <unistd.h>
+#include <mutex>
+#include <memory>
 
 namespace ai_stream {
 namespace hal {
@@ -23,7 +26,8 @@ typedef int (*rknn_run_fn)(rknn_context, void*);
 typedef int (*rknn_set_core_mask_fn)(rknn_context, int);
 typedef int (*rknn_set_batch_core_num_fn)(rknn_context, int);
 
-static void* rknn_dl_handle = nullptr;
+static std::shared_ptr<DlLibrary> g_rknn_lib;
+static std::once_flag g_rknn_once;
 static rknn_init_fn p_rknn_init = nullptr;
 static rknn_destroy_fn p_rknn_destroy = nullptr;
 static rknn_query_fn p_rknn_query = nullptr;
@@ -35,29 +39,29 @@ static rknn_set_core_mask_fn p_rknn_set_core_mask = nullptr;
 static rknn_set_batch_core_num_fn p_rknn_set_batch_core_num = nullptr;
 
 static bool load_rknn_lib() {
-    if (rknn_dl_handle) return true;
-    rknn_dl_handle = dlopen("librknnrt.so", RTLD_NOW | RTLD_GLOBAL);
-    if (!rknn_dl_handle) {
-        LOG_WARN_FMT("[RknnInferenceEngine] dlopen librknnrt.so failed: {}", dlerror());
-        return false;
-    }
-    p_rknn_init = (rknn_init_fn)dlsym(rknn_dl_handle, "rknn_init");
-    p_rknn_destroy = (rknn_destroy_fn)dlsym(rknn_dl_handle, "rknn_destroy");
-    p_rknn_query = (rknn_query_fn)dlsym(rknn_dl_handle, "rknn_query");
-    p_rknn_inputs_set = (rknn_inputs_set_fn)dlsym(rknn_dl_handle, "rknn_inputs_set");
-    p_rknn_outputs_get = (rknn_outputs_get_fn)dlsym(rknn_dl_handle, "rknn_outputs_get");
-    p_rknn_outputs_release = (rknn_outputs_release_fn)dlsym(rknn_dl_handle, "rknn_outputs_release");
-    p_rknn_run = (rknn_run_fn)dlsym(rknn_dl_handle, "rknn_run");
-    p_rknn_set_core_mask = (rknn_set_core_mask_fn)dlsym(rknn_dl_handle, "rknn_set_core_mask");
-    p_rknn_set_batch_core_num = (rknn_set_batch_core_num_fn)dlsym(rknn_dl_handle, "rknn_set_batch_core_num");
-    if (!p_rknn_init || !p_rknn_destroy || !p_rknn_query || !p_rknn_inputs_set ||
-        !p_rknn_outputs_get || !p_rknn_outputs_release || !p_rknn_run || !p_rknn_set_core_mask) {
-        LOG_ERROR("[RknnInferenceEngine] Failed to load RKNN API symbols");
-        dlclose(rknn_dl_handle);
-        rknn_dl_handle = nullptr;
-        return false;
-    }
-    return true;
+    std::call_once(g_rknn_once, []() {
+        g_rknn_lib = DlLibrary::get("librknnrt.so");
+        if (!g_rknn_lib || !g_rknn_lib->isOpen()) {
+            g_rknn_lib.reset();
+            return;
+        }
+        p_rknn_init = g_rknn_lib->symAs<rknn_init_fn>("rknn_init");
+        p_rknn_destroy = g_rknn_lib->symAs<rknn_destroy_fn>("rknn_destroy");
+        p_rknn_query = g_rknn_lib->symAs<rknn_query_fn>("rknn_query");
+        p_rknn_inputs_set = g_rknn_lib->symAs<rknn_inputs_set_fn>("rknn_inputs_set");
+        p_rknn_outputs_get = g_rknn_lib->symAs<rknn_outputs_get_fn>("rknn_outputs_get");
+        p_rknn_outputs_release = g_rknn_lib->symAs<rknn_outputs_release_fn>("rknn_outputs_release");
+        p_rknn_run = g_rknn_lib->symAs<rknn_run_fn>("rknn_run");
+        p_rknn_set_core_mask = g_rknn_lib->symAs<rknn_set_core_mask_fn>("rknn_set_core_mask");
+        p_rknn_set_batch_core_num = g_rknn_lib->symAs<rknn_set_batch_core_num_fn>("rknn_set_batch_core_num");
+        if (!p_rknn_init || !p_rknn_destroy || !p_rknn_query || !p_rknn_inputs_set ||
+            !p_rknn_outputs_get || !p_rknn_outputs_release || !p_rknn_run || !p_rknn_set_core_mask) {
+            LOG_ERROR("[RknnInferenceEngine] Failed to load RKNN API symbols");
+            p_rknn_init = nullptr;
+            g_rknn_lib.reset();
+        }
+    });
+    return p_rknn_init != nullptr;
 }
 
 static inline bool rknn_loaded() { return p_rknn_init != nullptr; }

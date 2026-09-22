@@ -19,14 +19,6 @@ set(NODES_SOURCES
     fusion/fusion_node.cpp
 )
 
-# CPU fallback 节点（无 GPU 时使用）
-if(WITH_CPU_FALLBACK)
-    list(APPEND NODES_SOURCES
-        # CPU 版本的预处理/后处理已在上面注册
-        # 这里可以添加更多 CPU 专用实现
-    )
-endif()
-
 # 预处理节点：根据 CUDA 支持选择 CPU 或 GPU 版本
 if(WITH_CUDA)
     find_package(CUDAToolkit REQUIRED)

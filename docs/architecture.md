@@ -112,6 +112,11 @@ ai_stream_pipeline 是一个模块化的视频流 AI 处理框架：以 **节点
 （如无 GPU 回退 CPU 实现）。OSD 绘制的中文渲染依赖 OpenCV freetype 模块，
 缺失时通过 `HAVE_OPENCV_FREETYPE` 宏回退到 `cv::putText`。
 
+后端专有能力通过**可选能力接口**（`include/ai_stream/hal/i_detection_capabilities.h`）暴露：
+`IGraphCapturable`（TensorRT 的 CUDA Graph / 设备 workspace）、`INv12Input`（地平线 BPU 的 NV12
+直通）。通用 `IDetectionInferenceEngine` 不再包含这些厂商专有方法，调用方（如 `detection_infer`）
+用 `dynamic_cast` 探测，不支持时自动降级。
+
 ## 3. 节点清单与线程模型
 
 | 节点 | type | 线程模型 |

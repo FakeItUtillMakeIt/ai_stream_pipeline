@@ -14,9 +14,10 @@
 #include <atomic>
 #include <cstddef>
 #include <deque>
+#include <map>
 #include <memory>
 #include <mutex>
-#include <unordered_map>
+#include <utility>
 #include "3rd_party/log_mgr/log_mgr.h"
 
 namespace ai_stream {
@@ -27,22 +28,31 @@ public:
     using Buffer = std::shared_ptr<void>;
 
     static GpuBufferPool& instance() {
-        static GpuBufferPool pool;
-        return pool;
+        // 故意保持存活（不析构）：避免静态析构顺序问题——若进程退出时仍有
+        // Buffer 存活，其 deleter 会访问池；池销毁后访问即为 UB。
+        // 进程结束时由 OS 回收，空闲块无需显式释放。
+        static GpuBufferPool* pool = new GpuBufferPool();
+        return *pool;
     }
 
     // 申请至少 bytes 字节的设备缓冲区；失败返回空 shared_ptr。
+    // 按当前设备（cudaGetDevice）分桶，避免多卡间误复用指针。
     Buffer acquire(size_t bytes) {
         if (bytes == 0) return nullptr;
 
+        int device = 0;
+        cudaGetDevice(&device);
+
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            auto it = free_blocks_.find(bytes);
+            auto it = free_blocks_.find({device, bytes});
             if (it != free_blocks_.end() && !it->second.empty()) {
                 void* ptr = it->second.front();
                 it->second.pop_front();
                 if (it->second.empty()) free_blocks_.erase(it);
-                return Buffer(ptr, [bytes](void* p) { GpuBufferPool::instance().release(p, bytes); });
+                return Buffer(ptr, [device, bytes](void* p) {
+                    GpuBufferPool::instance().release(p, device, bytes);
+                });
             }
         }
 
@@ -52,7 +62,9 @@ public:
             return nullptr;
         }
         allocated_count_.fetch_add(1);
-        return Buffer(ptr, [bytes](void* p) { GpuBufferPool::instance().release(p, bytes); });
+        return Buffer(ptr, [device, bytes](void* p) {
+            GpuBufferPool::instance().release(p, device, bytes);
+        });
     }
 
     // 空闲块数（诊断用）
@@ -68,18 +80,12 @@ public:
 
 private:
     GpuBufferPool() = default;
-    ~GpuBufferPool() {
-        // 进程退出时统一释放；此时持有者应已全部析构。
-        std::lock_guard<std::mutex> lock(mutex_);
-        for (auto& [_, q] : free_blocks_) {
-            for (void* p : q) cudaFree(p);
-        }
-    }
+    ~GpuBufferPool() = default;  // 单例不析构，见 instance()
 
-    void release(void* ptr, size_t bytes) {
+    void release(void* ptr, int device, size_t bytes) {
         if (!ptr) return;
         std::lock_guard<std::mutex> lock(mutex_);
-        auto& q = free_blocks_[bytes];
+        auto& q = free_blocks_[{device, bytes}];
         if (q.size() >= kMaxIdlePerSize) {
             cudaFree(ptr);  // 空闲超额，直接归还驱动
             return;
@@ -87,10 +93,10 @@ private:
         q.push_back(ptr);
     }
 
-    static constexpr size_t kMaxIdlePerSize = 8;  // 每种尺寸最多缓存的空闲块
+    static constexpr size_t kMaxIdlePerSize = 8;  // 每种(设备,尺寸)最多缓存的空闲块
 
     mutable std::mutex mutex_;
-    std::unordered_map<size_t, std::deque<void*>> free_blocks_;
+    std::map<std::pair<int, size_t>, std::deque<void*>> free_blocks_;
     std::atomic<size_t> allocated_count_{0};
 };
 

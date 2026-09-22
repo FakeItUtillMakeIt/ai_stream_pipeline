@@ -54,21 +54,6 @@ public:
     virtual bool setInputTensor(const std::string& name, void* gpu_ptr) = 0;
 
     /**
-     * @brief 设置 NV12 输入（NV12 输入硬件模型直通路径）
-     *
-     * 紧凑 NV12 布局：Y(width*height) 紧接 UV(width*height/2)。
-     * 设置后调用 infer() 即走 NV12 分支；默认空实现（返回 false）。
-     *
-     * @param nv12  紧凑 NV12 数据指针
-     * @param width  帧宽
-     * @param height 帧高
-     * @return 是否接受该输入
-     */
-    virtual bool setNv12Input(const uint8_t* /*nv12*/, int /*width*/, int /*height*/) {
-        return false;
-    }
-
-    /**
      * @brief 设置输出 tensor 地址（GPU 内存）
      * @param name tensor 名称
      * @param gpu_ptr GPU 内存指针
@@ -145,37 +130,6 @@ public:
      * @brief 检查后端是否可用
      */
     virtual bool isAvailable() const = 0;
-
-    /**
-     * @brief 获取原始上下文指针（用于高级优化，如 CUDA Graph）
-     */
-    virtual void* getRawContext() const = 0;
-
-    /**
-     * @brief 获取原始引擎指针（用于高级优化）
-     */
-    virtual void* getRawEngine() const = 0;
-
-    /**
-     * @brief 获取执行推理所需的设备端 workspace 大小（用于 CUDA Graph 预分配）
-     */
-    virtual size_t getDeviceMemorySize() const { return 0; }
-
-    /**
-     * @brief 根据当前已设置的 input shape 重新计算所需设备内存（含 activation + scratch）
-     * 必须在 setInputShape 之后调用
-     */
-    virtual size_t updateDeviceMemorySizeForShapes() { return 0; }
-
-    /**
-     * @brief 设置预分配的设备端 workspace（避免 enqueueV3 内部 cudaMallocAsync）
-     */
-    virtual bool setDeviceMemory(void* ptr) { (void)ptr; return false; }
-
-    /**
-     * @brief 设置预分配的设备端 workspace 及其大小（TRT 10.3+ 推荐）
-     */
-    virtual bool setDeviceMemoryV2(void* ptr, int64_t size) { (void)ptr; (void)size; return false; }
 };
 
 using DetectionInferenceEnginePtr = std::shared_ptr<IDetectionInferenceEngine>;

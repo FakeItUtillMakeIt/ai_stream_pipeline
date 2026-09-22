@@ -35,7 +35,12 @@ if(@WITH_ASCEND@)
     find_dependency(Ascend)
 endif()
 
-if(@WITH_FTP@)
+if(@WITH_HORIZON@)
+    find_dependency(HorizonDNN)
+endif()
+
+# curl 由本包 FetchContent 静态链接时无需下游查找；仅系统 CURL 才 find_dependency
+if(@WITH_FTP@ AND NOT @CURL_FETCHED@)
     find_dependency(CURL)
 endif()
 

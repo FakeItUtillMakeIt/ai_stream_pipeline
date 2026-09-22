@@ -12,6 +12,7 @@
 #pragma once
 
 #include "ai_stream/hal/i_detection_inference_engine.h"
+#include "ai_stream/hal/i_detection_capabilities.h"
 #include <string>
 #include <vector>
 #include <map>
@@ -20,7 +21,7 @@
 namespace ai_stream {
 namespace hal {
 
-class HorizonDetectionEngine : public IDetectionInferenceEngine {
+class HorizonDetectionEngine : public IDetectionInferenceEngine, public INv12Input {
 public:
     HorizonDetectionEngine();
     ~HorizonDetectionEngine() override;
@@ -45,9 +46,6 @@ public:
     int getMaxBatchSize() const override;
     std::string getBackendName() const override { return "Horizon BPU Detection (RDK)"; }
     bool isAvailable() const override;
-
-    void* getRawContext() const override { return nullptr; }
-    void* getRawEngine() const override { return nullptr; }
 
 private:
     bool loadDnnLib();
