@@ -13,6 +13,8 @@ InferenceEngineFactory& InferenceEngineFactory::instance() {
 
 void InferenceEngineFactory::registerBackend(InferenceBackend type, Creator creator) {
     creators_[type] = std::move(creator);
+    std::lock_guard<std::mutex> lock(cache_mutex_);
+    probe_cache_.erase(type);
     LOG_INFO_FMT("[InferenceEngineFactory] Registered backend: {}", static_cast<int>(type));
 }
 
@@ -50,10 +52,14 @@ InferenceEnginePtr InferenceEngineFactory::create(InferenceBackend type) {
 }
 
 std::pair<bool, std::string> InferenceEngineFactory::probe(InferenceBackend type) const {
-    auto cit = probe_cache_.find(type);
-    if (cit != probe_cache_.end()) {
-        return cit->second;
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        auto cit = probe_cache_.find(type);
+        if (cit != probe_cache_.end()) {
+            return cit->second;
+        }
     }
+    // 缓存未命中：锁外探测（避免持锁 dlopen），再回写
     std::pair<bool, std::string> r{false, ""};
     auto it = creators_.find(type);
     if (it != creators_.end()) {
@@ -62,7 +68,10 @@ std::pair<bool, std::string> InferenceEngineFactory::probe(InferenceBackend type
             r = {true, engine->getBackendName()};
         }
     }
-    probe_cache_[type] = r;
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        probe_cache_[type] = r;
+    }
     return r;
 }
 

@@ -81,17 +81,6 @@ namespace ai_stream
                 {
                     alert_duration_ms_ = static_cast<uint64_t>(config["alert_duration_ms"].get<int64_t>());
                 }
-                if (config.contains("rule_zones") && config["rule_zones"].is_array())
-                {
-                    for (size_t i = 0; i < config["rule_zones"].size(); i++)
-                    {
-                        for (size_t k = 0; k < config["rule_zones"][i].size(); k++)
-                        {
-                            LOG_INFO_FMT("Rule zone {} add point {}: [{}, {}]", int(i + 1), int(k + 1), config["rule_zones"][i][k][0].get<float>(), config["rule_zones"][i][k][1].get<float>());
-                            intrusion_zones_[uint8_t(i + 1)].push_back(PixelPoint(config["rule_zones"][i][k][0].get<float>(), config["rule_zones"][i][k][1].get<float>()));
-                        }
-                    }
-                }
             }
             catch (const std::exception &e)
             {
@@ -102,26 +91,7 @@ namespace ai_stream
             LOG_INFO_FMT("FallingRule::initialize() person_class={}, down_classes={}, down_confirm_ms={}, track_timeout_ms={}, alert_duration_ms={}",
                          person_class_, down_classes_.size(), down_confirm_ms_, track_timeout_ms_, alert_duration_ms_);
 
-            // 判断区域是否有效/配置
-            uint8_t invaild_zone_count = 0;
-            for (const auto &det_zone : intrusion_zones_)
-            {
-                bool zone_is_valid = ZoneValidator::zoneIsValid(det_zone.second);
-                if (!zone_is_valid)
-                {
-                    LOG_INFO_FMT("FallingRule::initialize() zone {} is invalid", det_zone.first);
-                    invaild_zone_count++;
-                    continue;
-                }
-                valid_intrusion_zones_[det_zone.first] = det_zone.second;
-            }
-            // 如果所有区域都无效，则全域监测(不进行区域过滤)
-            if (valid_intrusion_zones_.empty())
-            {
-                LOG_INFO("FallingRule::initialize() all zones are invalid, global monitoring");
-            }
-
-            return true;
+            return parseZones(config);
         }
 
         void FallingRule::onPreProcess(const std::shared_ptr<core::InferenceResultPacket> &packet)

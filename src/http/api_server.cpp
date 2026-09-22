@@ -629,14 +629,17 @@ void ApiServer::handleMetricsPipeline(const httplib::Request& req, httplib::Resp
 
         json nodes_json = json::array();
         for (const auto& m : nodes) {
-            uint64_t avg = m.total_packets > 0 ? (m.total_latency_ms / m.total_packets) : 0;
+            double avg = m.total_packets > 0
+                ? static_cast<double>(m.total_latency_ms) / m.total_packets : 0.0;
+            // min 用哨兵（UINT64_MAX）表示未设置，对外统一输出 0
+            uint64_t minv = m.total_packets > 0 ? m.min_latency_ms : 0;
             nodes_json.push_back({
                 {"node_name", m.node_name},
                 {"total_packets", m.total_packets},
                 {"dropped_packets", m.dropped_packets},
                 {"latency_ms", {
                     {"avg", avg},
-                    {"min", m.min_latency_ms},
+                    {"min", minv},
                     {"max", m.max_latency_ms},
                     {"last", m.last_latency_ms}
                 }},

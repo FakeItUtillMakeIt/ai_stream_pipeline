@@ -11,7 +11,7 @@ namespace nodes {
 
 RTMPSinkNode::RTMPSinkNode() : QueuedNode("RTMPSink") {}
 
-RTMPSinkNode::~RTMPSinkNode() = default;
+RTMPSinkNode::~RTMPSinkNode() { stop(); }
 
 void RTMPSinkNode::setTarget(const std::string& target) {
     output_url_ = target;

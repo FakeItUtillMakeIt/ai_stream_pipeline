@@ -346,8 +346,7 @@ void OSDDrawNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
     if (packet->type == core::PacketType::STREAM_END)
     {
         LOG_INFO_FMT("[OSDDraw] Received stream end");
-        // 不在此处调用 stop()，避免从 worker 线程调用导致自连接死锁
-        // running_ 会在 workerLoop 中检查，worker 线程会自然退出
+        // STREAM_END：由 worker 处理完本帧后基类统一 stop()；此处仅转发(broadcast)
         broadcast(packet);
         return;
     }

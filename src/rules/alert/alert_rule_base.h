@@ -34,6 +34,7 @@ namespace ai_stream
                 if (!packet)
                     return RuleStatus::RULE_STATUS_FAIL;
 
+                skip_finalize_ = false;
                 onPreProcess(packet);
 
                 if (valid_intrusion_zones_.empty())
@@ -48,11 +49,18 @@ namespace ai_stream
                     }
                 }
 
-                finalizeEvents(alert_result);
+                // 无有效输入帧（如无岗位/无源帧）不推进告警状态机，保持原语义
+                if (!skip_finalize_)
+                {
+                    finalizeEvents(alert_result);
+                }
                 return RuleStatus::RULE_STATUS_OK;
             }
 
         protected:
+            // 本帧是否跳过事件聚合/衰减（派生类在 onPreProcess/rule_logic 中置位）
+            bool skip_finalize_ = false;
+
             // 每帧、进入 zone 循环前的钩子（如运行有状态检测器一次）；默认空实现
             virtual void onPreProcess(const std::shared_ptr<core::InferenceResultPacket> &packet)
             {

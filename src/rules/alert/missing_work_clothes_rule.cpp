@@ -86,24 +86,7 @@ namespace ai_stream
             }
             if (person_not_work_clothes_count > 0)
             {
-                auto it = zone_alert_map_.find(zone_no);
-                if (it == zone_alert_map_.end())
-                {
-                    auto alert_target = AlertEvent();
-                    alert_target.detect_ms = packet->timestamp_ms;
-                    alert_target.zone_no = zone_no;
-                    alert_target.non_update_count = 0;
-                    alert_target.duration_ms = 0;
-                    alert_target.object_ids = not_work_clothes_track_ids;
-                    zone_alert_map_.insert(std::make_pair(zone_no, alert_target));
-                }
-                else
-                {
-                    auto &alert_target = it->second;
-                    alert_target.non_update_count = 0;
-                    alert_target.duration_ms = packet->timestamp_ms - alert_target.detect_ms;
-                    alert_target.object_ids = not_work_clothes_track_ids;
-                }
+                updateZoneEvent(zone_no, packet, not_work_clothes_track_ids);
             }
             return RuleStatus::RULE_STATUS_OK;
         }

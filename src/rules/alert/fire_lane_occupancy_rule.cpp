@@ -111,6 +111,8 @@ namespace ai_stream
 
             if (!packet->source_frame || !packet->source_frame->mat)
             {
+                // 无源帧：保持原语义——不推进告警状态机
+                skip_finalize_ = true;
                 return RuleStatus::RULE_STATUS_OK;
             }
             const cv::Mat &frame = *packet->source_frame->mat;
@@ -204,21 +206,7 @@ namespace ai_stream
 
             if (occupy_counts_[zone_no] >= confirm_frames_)
             {
-                auto alert_it = zone_alert_map_.find(zone_no);
-                if (alert_it == zone_alert_map_.end())
-                {
-                    AlertEvent event;
-                    event.detect_ms = packet->timestamp_ms;
-                    event.zone_no = zone_no;
-                    event.non_update_count = 0;
-                    event.duration_ms = 0;
-                    zone_alert_map_[zone_no] = event;
-                }
-                else
-                {
-                    alert_it->second.non_update_count = 0;
-                    alert_it->second.duration_ms = packet->timestamp_ms - alert_it->second.detect_ms;
-                }
+                updateZoneEvent(zone_no, packet, {});
             }
 
             return RuleStatus::RULE_STATUS_OK;

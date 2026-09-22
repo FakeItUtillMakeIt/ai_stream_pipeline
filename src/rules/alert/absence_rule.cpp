@@ -36,6 +36,8 @@ namespace ai_stream
         {
             // 使用岗位检测器更新岗位区域（每帧一次）
             all_station_regions_ = station_detector_.getAllStations(packet->detections);
+            // 无岗位帧不推进告警状态机（与原 process 早返回语义一致）
+            skip_finalize_ = all_station_regions_.empty();
         }
 
         void AbsenceRule::reset()

@@ -80,7 +80,7 @@ bool isFrameValid(const cv::Mat& mat) {
 
 EvidenceNode::EvidenceNode() : QueuedNode("EvidenceNode") {}
 
-EvidenceNode::~EvidenceNode() = default;
+EvidenceNode::~EvidenceNode() { stop(); }
 
 bool EvidenceNode::onStartup() {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -189,9 +189,9 @@ void EvidenceNode::handleFrame(std::shared_ptr<core::VideoFramePacket> frame) {
 
     auto stats = analyzeFrame(*frame->mat);
     if (!isFrameValid(*frame->mat)) {
-        LOG_WARN_FMT("[EvidenceNode] Skipping corrupted frame: green_ratio={:.2%}, "
+        LOG_WARN_FMT("[EvidenceNode] Skipping corrupted frame: green_ratio={:.1f}%, "
                      "mean_bgr=({:.0f},{:.0f},{:.0f}), std_bgr=({:.0f},{:.0f},{:.0f})",
-                     stats.green_ratio, stats.mean_b, stats.mean_g, stats.mean_r,
+                     stats.green_ratio * 100.0f, stats.mean_b, stats.mean_g, stats.mean_r,
                      stats.std_b, stats.std_g, stats.std_r);
         return;
     }

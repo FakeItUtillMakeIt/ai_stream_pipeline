@@ -4,6 +4,7 @@
 #include "node.h"
 #include "bounded_queue.h"
 #include <algorithm>
+#include <mutex>
 #include <thread>
 #include <chrono>
 
@@ -65,12 +66,15 @@ public:
 
     bool start() final {
         if (this->running_.load()) return true;
-        // 先回收上一轮残留 worker（STREAM_END 自停后线程可能仍 joinable），
-        // 再执行 onStartup，避免与旧 worker 的收尾并发
+        // 先回收上一轮残留 worker（自停后线程可能仍 joinable），再执行 onStartup
         if (worker_.joinable()) {
             worker_.join();
         }
         if (!onStartup()) return false;
+        {
+            std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+            shutdown_done_ = false;   // 新一轮生命周期，允许 onShutdown 再次执行
+        }
         queue_.setMaxSize(queue_capacity_);
         queue_.reset();
         this->running_ = true;
@@ -79,14 +83,13 @@ public:
     }
 
     void stop() final {
-        if (!this->running_.exchange(false)) return;
+        this->running_ = false;
         queue_.stop();
-        // stop() 可能由 worker 线程内的 processPacket 触发（如 STREAM_END），
-        // 此时不能 join 自身线程，join 交由析构完成
+        // 外部调用：join worker（worker 退出前会执行 onShutdown）；
+        // worker 线程内自停时不能 join 自身，交由 workerLoop 收尾
         if (worker_.joinable() && std::this_thread::get_id() != worker_.get_id()) {
             worker_.join();
         }
-        onShutdown();
     }
 
     void pushData(std::shared_ptr<BasePacket> packet) final {
@@ -152,10 +155,21 @@ protected:
     }
 
 private:
+    // onShutdown 每轮生命周期只执行一次（由 worker 退出前统一调用，线程一致）
+    void finalizeShutdown() {
+        {
+            std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+            if (shutdown_done_) return;
+            shutdown_done_ = true;
+        }
+        onShutdown();
+    }
+
     void workerLoop() {
         while (this->running_.load()) {
             std::shared_ptr<BasePacket> packet;
             if (!queue_.pop(packet, poll_timeout_)) {
+                if (!this->running_.load()) break;   // 外部 stop：退出前不再触发 onIdle
                 onIdle();
                 continue;
             }
@@ -163,13 +177,15 @@ private:
             const bool is_stream_end = (packet->type == PacketType::STREAM_END);
             processPacket(std::move(packet));
             if (is_stream_end) {
-                // STREAM_END 必须被 processPacket 处理（派生类在此广播并可能自停），
-                // 处理完后由基类统一 stop()，确保 onShutdown() 被调用且 running_ 归位
-                this->stop();
+                // STREAM_END 已由 processPacket 处理（派生类在此广播），
+                // 置停并跳出循环，onShutdown 在循环外统一执行
+                this->running_ = false;
+                queue_.stop();
                 break;
             }
         }
         queue_.clear();
+        finalizeShutdown();
     }
 
     BoundedQueue<std::shared_ptr<BasePacket>> queue_{64};
@@ -178,6 +194,8 @@ private:
     DropPolicy drop_policy_ = DropPolicy::DROP_NEWEST;
     int push_timeout_ms_ = 10;
     std::chrono::milliseconds poll_timeout_{100};
+    std::mutex lifecycle_mutex_;
+    bool shutdown_done_ = true;   // 初始无 onStartup，无需 onShutdown
 };
 
 } // namespace core

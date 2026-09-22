@@ -20,21 +20,9 @@ namespace ai_stream
             LOG_INFO_FMT("MovingPhoneCallRule::initialize()");
             try
             {
-                LOG_INFO_FMT("MovingPhoneCallRule::initialize() config: {}", config.dump().c_str());
                 if (config.contains("name") && config["name"].is_string())
                 {
                     setName(config.value("name", ""));
-                }
-                if (config.contains("rule_zones") && config["rule_zones"].is_array())
-                {
-                    for (size_t i = 0; i < config["rule_zones"].size(); i++)
-                    {
-                        for (size_t k = 0; k < config["rule_zones"][i].size(); k++)
-                        {
-                            LOG_INFO_FMT("Rule zone {} add point {}: [{}, {}]", int(i + 1), int(k + 1), config["rule_zones"][i][k][0].get<float>(), config["rule_zones"][i][k][1].get<float>());
-                            intrusion_zones_[uint8_t(i + 1)].push_back(PixelPoint(config["rule_zones"][i][k][0].get<float>(), config["rule_zones"][i][k][1].get<float>()));
-                        }
-                    }
                 }
             }
             catch (const std::exception &e)
@@ -42,29 +30,7 @@ namespace ai_stream
                 LOG_WARN_FMT("MovingPhoneCallRule::initialize() exception: {}", e.what());
                 return false;
             }
-            LOG_INFO_FMT("MovingPhoneCallRule::initialize() success");
-
-            // 判断区域是否有效/配置
-            uint8_t invaild_zone_count = 0;
-
-            for (const auto &det_zone : intrusion_zones_)
-            {
-                bool zone_is_valid = ZoneValidator::zoneIsValid(det_zone.second);
-                if (!zone_is_valid)
-                {
-                    LOG_INFO_FMT("MovingPhoneCallRule::initialize() zone {} is invalid", det_zone.first);
-                    invaild_zone_count++;
-                    continue;
-                }
-                valid_intrusion_zones_[det_zone.first] = det_zone.second;
-            }
-            // 如果所有区域都无效，则全域监测(不进行区域过滤)
-            if (valid_intrusion_zones_.empty())
-            {
-                LOG_INFO("MovingPhoneCallRule::initialize() all zones are invalid, global monitoring");
-            }
-
-            return true;
+            return parseZones(config);
         }
 
         void MovingPhoneCallRule::onPreProcess(const std::shared_ptr<core::InferenceResultPacket> &packet)
@@ -183,24 +149,7 @@ namespace ai_stream
             {
                 return RuleStatus::RULE_STATUS_OK;
             }
-            auto it = zone_alert_map_.find(zone_no);
-            if (it == zone_alert_map_.end())
-            {
-                auto alert_target = AlertEvent();
-                alert_target.detect_ms = packet->timestamp_ms;
-                alert_target.zone_no = zone_no;
-                alert_target.non_update_count = 0;
-                alert_target.duration_ms = 0;
-                alert_target.object_ids = last_moving_phonecall_track_ids_;
-                zone_alert_map_.insert(std::make_pair(zone_no, alert_target));
-            }
-            else
-            {
-                auto &alert_target = it->second;
-                alert_target.non_update_count = 0;
-                alert_target.duration_ms = packet->timestamp_ms - alert_target.detect_ms;
-                alert_target.object_ids = last_moving_phonecall_track_ids_;
-            }
+            updateZoneEvent(zone_no, packet, last_moving_phonecall_track_ids_);
             return RuleStatus::RULE_STATUS_OK;
         }
         REGISTER_ALERT_RULE("moving_phone_call", MovingPhoneCallRule)

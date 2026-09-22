@@ -8,6 +8,7 @@
 #include <vector>
 #include <unordered_map>
 #include <map>
+#include <mutex>
 #include <utility>
 
 namespace ai_stream {
@@ -63,6 +64,7 @@ private:
     std::pair<bool, std::string> probe(InferenceBackend type) const;
 
     std::unordered_map<InferenceBackend, Creator> creators_;
+    mutable std::mutex cache_mutex_;
     mutable std::map<InferenceBackend, std::pair<bool, std::string>> probe_cache_;
 };
 

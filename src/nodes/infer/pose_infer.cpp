@@ -191,36 +191,48 @@ void PoseInferNode::processFrame(std::shared_ptr<core::InferenceResultPacket> pa
     alignas(64) static thread_local std::vector<float> host_input;
     host_input.resize(static_cast<size_t>(num_persons) * person_stride);
 
-    // 4. 逐人 crop + letterbox preprocess
-    std::vector<float> h_letterbox_params(static_cast<size_t>(num_persons) * 3);
+    // 4. 逐人 crop + letterbox preprocess（跳过失败项并压缩槽位，避免脏参数/残留输入）
+    std::vector<int> valid_indices;
+    valid_indices.reserve(num_persons);
+    std::vector<float> h_letterbox_params;
+    h_letterbox_params.reserve(static_cast<size_t>(num_persons) * 3);
+    int slot = 0;
     for (int i = 0; i < num_persons; ++i) {
         int det_idx = person_indices[i];
         const auto& det = packet->detections[det_idx];
 
-        float scale, pad_x, pad_y;
-        if (!cropAndPreprocess(source_mat, det, host_input.data(), i,
+        float scale = 1.0f, pad_x = 0.0f, pad_y = 0.0f;
+        if (!cropAndPreprocess(source_mat, det, host_input.data(), slot,
                                scale, pad_x, pad_y)) {
-            LOG_WARN_FMT("[PoseInfer] Failed to crop person {}", det_idx);
+            LOG_WARN_FMT("[PoseInfer] Failed to crop person {}, skipped", det_idx);
+            continue;
         }
-        h_letterbox_params[i * 3 + 0] = scale;
-        h_letterbox_params[i * 3 + 1] = pad_x;
-        h_letterbox_params[i * 3 + 2] = pad_y;
+        valid_indices.push_back(det_idx);
+        h_letterbox_params.push_back(scale);
+        h_letterbox_params.push_back(pad_x);
+        h_letterbox_params.push_back(pad_y);
+        ++slot;
+    }
+    const int valid_persons = static_cast<int>(valid_indices.size());
+    if (valid_persons == 0) {
+        LOG_DEBUG_FMT("[PoseInfer] No valid person to infer");
+        return;
     }
 
     // 5. 通过 HAL 引擎推理
     auto t0 = std::chrono::high_resolution_clock::now();
     std::vector<float> output_host;
-    if (!engine_->inferHost(host_input.data(), num_persons, output_host)) {
-        LOG_ERROR_FMT("[PoseInfer] Engine inference failed for batch={}", num_persons);
+    if (!engine_->inferHost(host_input.data(), valid_persons, output_host)) {
+        LOG_ERROR_FMT("[PoseInfer] Engine inference failed for batch={}", valid_persons);
         return;
     }
     auto t1 = std::chrono::high_resolution_clock::now();
 
     float infer_ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
-    LOG_INFO_FMT("[PoseInfer] Backend inference: {} persons, {:.2f}ms", num_persons, infer_ms);
+    LOG_DEBUG_FMT("[PoseInfer] Backend inference: {} persons, {:.2f}ms", valid_persons, infer_ms);
 
     // 6. 后处理：解码关键点
-    pose_postprocess::decodeFrame(packet, person_indices, num_persons,
+    pose_postprocess::decodeFrame(packet, valid_indices, valid_persons,
                                   output_host.data(), h_letterbox_params,
                                   conf_thresh_, kpt_conf_thresh_, "PoseInfer");
 }

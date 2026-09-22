@@ -14,6 +14,8 @@ DetectionInferenceEngineFactory& DetectionInferenceEngineFactory::instance() {
 void DetectionInferenceEngineFactory::registerBackend(
     DetectionBackend type, std::function<DetectionInferenceEnginePtr()> creator) {
     creators_[type] = std::move(creator);
+    std::lock_guard<std::mutex> lock(cache_mutex_);
+    availability_cache_.erase(type);
     LOG_INFO_FMT("[DetectionInferenceEngineFactory] Registered backend: {}", static_cast<int>(type));
 }
 
@@ -69,17 +71,24 @@ std::vector<std::pair<DetectionBackend, std::string>> DetectionInferenceEngineFa
 }
 
 bool DetectionInferenceEngineFactory::isBackendAvailable(DetectionBackend type) const {
-    auto cit = availability_cache_.find(type);
-    if (cit != availability_cache_.end()) {
-        return cit->second;
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        auto cit = availability_cache_.find(type);
+        if (cit != availability_cache_.end()) {
+            return cit->second;
+        }
     }
+    // 缓存未命中：在锁外探测（避免持锁 dlopen），再回写缓存
     auto it = creators_.find(type);
     bool avail = false;
     if (it != creators_.end()) {
         auto engine = it->second();
         avail = engine && engine->isAvailable();
     }
-    availability_cache_[type] = avail;
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        availability_cache_[type] = avail;
+    }
     return avail;
 }
 

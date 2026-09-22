@@ -6,6 +6,7 @@
 #include <functional>
 #include <unordered_map>
 #include <map>
+#include <mutex>
 #include <vector>
 
 namespace ai_stream {
@@ -61,6 +62,7 @@ private:
     DetectionInferenceEngineFactory() = default;
     std::unordered_map<DetectionBackend, std::function<DetectionInferenceEnginePtr()>> creators_;
     // 可用性探测结果缓存：避免诊断/HTTP 反复构造引擎并触发 dlopen
+    mutable std::mutex cache_mutex_;
     mutable std::map<DetectionBackend, bool> availability_cache_;
 };
 

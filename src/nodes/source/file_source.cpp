@@ -221,6 +221,7 @@ void FileSourceNode::workerFunc() {
         }
 
         int64_t pkt_ms = 0;
+        const bool has_pts = (pkt->pts != AV_NOPTS_VALUE) || (pkt->dts != AV_NOPTS_VALUE);
         if (pkt->pts != AV_NOPTS_VALUE) {
             pkt_ms = av_rescale_q(pkt->pts, time_base, AV_TIME_BASE_Q) / 1000;
         } else if (pkt->dts != AV_NOPTS_VALUE) {
@@ -228,7 +229,7 @@ void FileSourceNode::workerFunc() {
         }
 
         // 按原始帧率节奏推送，避免文件读取过快压垮下游
-        if (realtime_) {
+        if (realtime_ && has_pts) {
             if (base_pkt_ms < 0) {
                 base_pkt_ms = pkt_ms;
                 base_wall = std::chrono::steady_clock::now();
@@ -251,7 +252,7 @@ void FileSourceNode::workerFunc() {
         raw_pkt->source_id = source_id_;
         raw_pkt->frame_id = frame_count;
         // 优先使用原始 pts（+ loop 偏移）保留帧间隔；无 pts 时回退墙钟
-        if (pkt_ms > 0) {
+        if (has_pts) {
             last_pkt_ms_ = pkt_ms;
             raw_pkt->timestamp_ms = pkt_ms + pts_offset_ms_;
         } else {

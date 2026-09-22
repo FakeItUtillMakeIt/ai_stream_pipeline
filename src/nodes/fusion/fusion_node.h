@@ -13,7 +13,7 @@ namespace nodes {
     class FusionNodeImpl : public core::QueuedNode<IFusionNode> {
     public:
         FusionNodeImpl();
-        ~FusionNodeImpl() override = default;
+        ~FusionNodeImpl() override { stop(); }
 
         // QueuedNode 接口
         void processPacket(std::shared_ptr<core::BasePacket> packet) override;

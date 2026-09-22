@@ -112,6 +112,7 @@ DetectionPostProcessNode::DetectionPostProcessNode()
 }
 
 DetectionPostProcessNode::~DetectionPostProcessNode() {
+    stop();
     LOG_INFO_FMT("[DetectionPostProcessNode] deinitialized");
 }
 

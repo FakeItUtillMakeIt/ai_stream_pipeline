@@ -249,7 +249,7 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
                 d_ptrs.push_back(frames[b]->d_ptr);
                 d_pitches.push_back(frames[b]->d_pitch);
             } else {
-                const bool nv12_ok = input_nv12_ && frames[b]->is_nv12 && frames[b]->nv12;
+                const bool nv12_ok = input_nv12_ && frames[b]->is_nv12 && frames[b]->nv12 && nv12_engine_;
                 if (nv12_ok ||
                     (frames[b]->mat && !frames[b]->mat->empty() && frames[b]->mat->type() == CV_32FC3)) {
                     cpu_indices.push_back(b);
@@ -478,6 +478,9 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
         std::vector<int> v_px(valid_batch, 0), v_py(valid_batch, 0), v_lu(valid_batch, 0);
 
         int slot = 0;
+        // 显式记录 slot -> 帧下标 b 的映射，回填时不再重复推导判定条件
+        std::vector<int> slot_to_frame;
+        slot_to_frame.reserve(valid_batch);
         for (int b = 0; b < actual_batch && slot < valid_batch; ++b) {
             // ---- NV12 直通分支（NV12 输入模型）----
             if (input_nv12_) {
@@ -515,6 +518,7 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
                         v_px[slot] = fr->letter_pad_x;
                         v_py[slot] = fr->letter_pad_y;
                         v_lu[slot] = 1;
+                        slot_to_frame.push_back(b);
                         ++slot;
                         continue;
                     }
@@ -572,6 +576,7 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
             v_px[slot] = frames[b]->letter_pad_x;
             v_py[slot] = frames[b]->letter_pad_y;
             v_lu[slot] = frames[b]->letterbox_used ? 1 : 0;
+            slot_to_frame.push_back(b);
             ++slot;
         }
 
@@ -595,11 +600,8 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
                                                v_lu.data());
 
         int out_idx = 0;
-        for (int b = 0; b < actual_batch; ++b) {
-            if (frames[b]->mat && !frames[b]->mat->empty() &&
-                frames[b]->mat->type() == CV_32FC3 && frames[b]->mat->cols == input_width_) {
-                results[b]->detections = std::move(all_detections[out_idx++]);
-            }
+        for (int s = 0; s < slot && out_idx < static_cast<int>(all_detections.size()); ++s) {
+            results[slot_to_frame[s]]->detections = std::move(all_detections[out_idx++]);
         }
 
         LOG_DEBUG_FMT("[DetectionInfer] Host batch done: frames={} total_dets={}",
@@ -951,6 +953,8 @@ bool DetectionInferNode::initEngine(const std::string& engine_path) {
         if (!engine_->loadModel(config)) {
             LOG_ERROR_FMT("[DetectionInfer] Failed to load model: {}", engine_path);
             engine_.reset();
+            graph_engine_ = nullptr;
+            nv12_engine_ = nullptr;
             return false;
         }
 

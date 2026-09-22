@@ -123,6 +123,7 @@ NodeMetrics MetricsCollector::getNodeMetrics(const std::string& pipeline_id, con
     NodeMetrics empty;
     empty.pipeline_id = pipeline_id;
     empty.node_name = node_name;
+    empty.min_latency_ms = 0;   // 归一化哨兵，保持对外语义一致
     return empty;
 }
 
@@ -182,7 +183,7 @@ std::string MetricsCollector::formatJson() const {
         for (const auto& m : nodes) {
             const double avg = m.total_packets > 0
                 ? static_cast<double>(m.total_latency_ms) / m.total_packets : 0.0;
-            const uint64_t minv = m.total_packets > 0 ? m.min_latency_ms : 0;
+            const uint64_t minv = (m.min_latency_ms != std::numeric_limits<uint64_t>::max()) ? m.min_latency_ms : 0;
             nodes_json.push_back({
                 {"node_name", m.node_name},
                 {"total_packets", m.total_packets},
@@ -244,7 +245,7 @@ std::string MetricsCollector::formatPrometheus() const {
         for (const auto& m : nodes) {
             const double avg = m.total_packets > 0
                 ? static_cast<double>(m.total_latency_ms) / m.total_packets : 0.0;
-            const uint64_t minv = m.total_packets > 0 ? m.min_latency_ms : 0;
+            const uint64_t minv = (m.min_latency_ms != std::numeric_limits<uint64_t>::max()) ? m.min_latency_ms : 0;
             const std::string enode = escapePromLabel(m.node_name);
             oss << "ai_stream_node_latency_ms{pipeline=\"" << epid
                 << "\",node=\"" << enode << "\",type=\"avg\"} "

@@ -127,10 +127,13 @@ public:
     }
 
     void setMaxSize(size_t max_size) {
+        std::lock_guard<std::mutex> lock(mutex_);
         max_size_ = max_size;
+        not_full_.notify_all();
     }
 
     size_t getMaxSize() const {
+        std::lock_guard<std::mutex> lock(mutex_);
         return max_size_;
     }
 

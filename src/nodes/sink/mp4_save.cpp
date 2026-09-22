@@ -12,7 +12,7 @@ namespace nodes {
 
 MP4SaveNode::MP4SaveNode() : QueuedNode("MP4Save") {}
 
-MP4SaveNode::~MP4SaveNode() = default;
+MP4SaveNode::~MP4SaveNode() { stop(); }
 
 void MP4SaveNode::setTarget(const std::string& target) {
     file_path_ = target;
