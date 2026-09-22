@@ -2,6 +2,8 @@
 #include "moving_phone_call_rule.h"
 #include "alert_rule_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
+#include <unordered_set>
+#include <vector>
 
 namespace ai_stream
 {
@@ -74,6 +76,96 @@ namespace ai_stream
             std::lock_guard<std::mutex> lock(mutex_);
             if (!packet)
                 return RuleStatus::RULE_STATUS_FAIL;
+
+            // 每帧只运行一次检测器（多 zone 时不得重复推进状态机），缓存移动打电话目标
+            last_moving_phonecall_track_ids_.clear();
+            {
+                std::vector<core::InferenceResultPacket::BBox> person_boxes;
+                std::vector<core::InferenceResultPacket::BBox> head_boxes;
+                std::vector<core::InferenceResultPacket::BBox> helmet_boxes;
+                std::vector<core::InferenceResultPacket::BBox> phone_boxes;
+                for (const auto &detection : packet->detections)
+                {
+                    if (detection.class_name == "person")
+                        person_boxes.push_back(detection);
+                    else if (detection.class_name == "head")
+                        head_boxes.push_back(detection);
+                    else if (detection.class_name == "helmet")
+                        helmet_boxes.push_back(detection);
+                    else if (detection.class_name == "phone")
+                        phone_boxes.push_back(detection);
+                }
+                std::unordered_set<int> active_track_ids;
+                active_track_ids.reserve(person_boxes.size());
+                for (const auto &person_box : person_boxes)
+                {
+                    if (person_box.track_id > 0)
+                        active_track_ids.insert(person_box.track_id);
+                    std::vector<PixelPoint> person_zone{
+                        PixelPoint(person_box.x, person_box.y),
+                        PixelPoint(person_box.x + person_box.w, person_box.y),
+                        PixelPoint(person_box.x + person_box.w, person_box.y + person_box.h),
+                        PixelPoint(person_box.x, person_box.y + person_box.h)};
+                    std::vector<core::InferenceResultPacket::BBox> person_head_boxes;
+                    std::vector<core::InferenceResultPacket::BBox> person_helmet_boxes;
+                    for (const auto &head_box : head_boxes)
+                    {
+                        if (ZoneValidator::pointInPolygon(
+                                PixelPoint(head_box.x + head_box.w / 2, head_box.y + head_box.h / 2),
+                                person_zone))
+                            person_head_boxes.push_back(head_box);
+                    }
+                    for (const auto &helmet_box : helmet_boxes)
+                    {
+                        if (ZoneValidator::pointInPolygon(
+                                PixelPoint(helmet_box.x + helmet_box.w / 2, helmet_box.y + helmet_box.h / 2),
+                                person_zone))
+                            person_helmet_boxes.push_back(helmet_box);
+                    }
+                    person_head_boxes.insert(person_head_boxes.end(), person_helmet_boxes.begin(), person_helmet_boxes.end());
+                    if (person_head_boxes.empty())
+                        continue;
+                    std::vector<core::InferenceResultPacket::BBox> person_phone_boxes;
+                    for (const auto &phone_box : phone_boxes)
+                    {
+                        if (ZoneValidator::pointInPolygon(
+                                PixelPoint(phone_box.x + phone_box.w / 2, phone_box.y + phone_box.h / 2),
+                                person_zone))
+                            person_phone_boxes.push_back(phone_box);
+                    }
+                    if (person_phone_boxes.empty())
+                        continue;
+                    bool phone_in_head = false;
+                    for (const auto &phone_box : person_phone_boxes)
+                    {
+                        for (const auto &head_box : person_head_boxes)
+                        {
+                            if (ZoneValidator::boxIsIntersect(
+                                    std::vector<PixelPoint>{PixelPoint(phone_box.x, phone_box.y), PixelPoint(phone_box.x + phone_box.w, phone_box.y), PixelPoint(phone_box.x + phone_box.w, phone_box.y + phone_box.h), PixelPoint(phone_box.x, phone_box.y + phone_box.h)},
+                                    std::vector<PixelPoint>{PixelPoint(head_box.x, head_box.y), PixelPoint(head_box.x + head_box.w, head_box.y), PixelPoint(head_box.x + head_box.w, head_box.y + head_box.h), PixelPoint(head_box.x, head_box.y + head_box.h)}))
+                            {
+                                phone_in_head = true;
+                                break;
+                            }
+                        }
+                        if (phone_in_head)
+                            break;
+                    }
+                    if (!phone_in_head)
+                        continue;
+                    bool is_moving = false;
+                    if (person_box.track_id > 0)
+                    {
+                        is_moving = moving_pc_detector_.update_track(person_box.track_id, {person_box.x, person_box.y, person_box.w, person_box.y}, packet->frame_id);
+                        if (person_box.track_age > 10 && is_moving)
+                            is_moving = true;
+                    }
+                    if (is_moving)
+                        last_moving_phonecall_track_ids_.push_back(person_box.track_id);
+                }
+                moving_pc_detector_.cleanup_old_tracks(active_track_ids);
+            }
+
             if (valid_intrusion_zones_.empty())
             {
                 rule_logic(packet, global_zone_no_, {});
@@ -151,128 +243,8 @@ namespace ai_stream
             const std::shared_ptr<core::InferenceResultPacket> packet,
             uint8_t zone_no, ZonePoints zone_points)
         {
-            LOG_INFO_FMT("MovingPhoneCallRule::rule_logic()");
-            std::vector<core::InferenceResultPacket::BBox> person_boxes;
-            std::vector<core::InferenceResultPacket::BBox> head_boxes;
-            std::vector<core::InferenceResultPacket::BBox> helmet_boxes;
-            std::vector<core::InferenceResultPacket::BBox> phone_boxes;
-            int phone_count = 0;
-            int moving_phonecall_count = 0;
-            std::vector<int> person_phone_call_track_ids;
-            for (const auto &detection : packet->detections)
-            {
-                if (detection.class_name == "person")
-                {
-                    person_boxes.push_back(detection);
-                }
-                else if (detection.class_name == "head")
-                {
-                    head_boxes.push_back(detection);
-                }
-                else if (detection.class_name == "helmet")
-                {
-                    helmet_boxes.push_back(detection);
-                }
-                else if (detection.class_name == "phone")
-                {
-                    phone_boxes.push_back(detection);
-                }
-            }
-            std::unordered_set<int> active_track_ids;
-            active_track_ids.reserve(person_boxes.size());
-            for (const auto &person_box : person_boxes)
-            {
-                if (person_box.track_id > 0)
-                    active_track_ids.insert(person_box.track_id);
-                std::vector<PixelPoint> person_zone{
-                    PixelPoint(person_box.x, person_box.y),
-                    PixelPoint(person_box.x + person_box.w, person_box.y),
-                    PixelPoint(person_box.x + person_box.w, person_box.y + person_box.h),
-                    PixelPoint(person_box.x, person_box.y + person_box.h)};
-                // 筛选人体范围内的人头
-                std::vector<core::InferenceResultPacket::BBox> person_head_boxes;
-                std::vector<core::InferenceResultPacket::BBox> person_helmet_boxes;
-                for (const auto &head_box : head_boxes)
-                {
-                    if (ZoneValidator::pointInPolygon(
-                            PixelPoint(head_box.x + head_box.w / 2, head_box.y + head_box.h / 2),
-                            person_zone))
-                    {
-                        person_head_boxes.push_back(head_box);
-                    }
-                }
-                // 筛选人体范围内的安全帽
-                for (const auto &helmet_box : helmet_boxes)
-                {
-                    if (ZoneValidator::pointInPolygon(
-                            PixelPoint(helmet_box.x + helmet_box.w / 2, helmet_box.y + helmet_box.h / 2),
-                            person_zone))
-                    {
-                        person_helmet_boxes.push_back(helmet_box);
-                    }
-                }
-                // 合并人头和安全帽
-                person_head_boxes.insert(person_head_boxes.end(), person_helmet_boxes.begin(), person_helmet_boxes.end());
-                if (person_head_boxes.empty())
-                {
-                    continue;
-                }
-                // 筛选人体范围内的电话框
-                std::vector<core::InferenceResultPacket::BBox> person_phone_boxes;
-                for (const auto &phone_box : phone_boxes)
-                {
-                    if (ZoneValidator::pointInPolygon(
-                            PixelPoint(phone_box.x + phone_box.w / 2, phone_box.y + phone_box.h / 2),
-                            person_zone))
-                    {
-                        person_phone_boxes.push_back(phone_box);
-                    }
-                }
-                if (person_phone_boxes.empty())
-                {
-                    continue;
-                }
-
-                // 检查电话框是否与人头/安全帽范围相交
-                bool phone_in_head = false;
-                for (const auto &phone_box : person_phone_boxes)
-                {
-                    for (const auto &head_box : person_head_boxes)
-                    {
-                        if (ZoneValidator::boxIsIntersect(
-                                std::vector<PixelPoint>{PixelPoint(phone_box.x, phone_box.y), PixelPoint(phone_box.x + phone_box.w, phone_box.y), PixelPoint(phone_box.x + phone_box.w, phone_box.y + phone_box.h), PixelPoint(phone_box.x, phone_box.y + phone_box.h)},
-                                std::vector<PixelPoint>{PixelPoint(head_box.x, head_box.y), PixelPoint(head_box.x + head_box.w, head_box.y), PixelPoint(head_box.x + head_box.w, head_box.y + head_box.h), PixelPoint(head_box.x, head_box.y + head_box.h)}))
-                        {
-                            phone_in_head = true;
-                            break;
-                        }
-                    }
-                    if (phone_in_head)
-                        break;
-                }
-                if (!phone_in_head)
-                    continue;
-                // 检测到打电话
-                phone_count++;
-                // 判断是否在移动
-                bool is_moving = false;
-                if (person_box.track_id > 0)
-                {
-                    is_moving = moving_pc_detector_.update_track(person_box.track_id, {person_box.x, person_box.y, person_box.w, person_box.y}, packet->frame_id);
-                    // 跟踪长度辅助判断
-                    if (person_box.track_age > 10 && is_moving)
-                        is_moving = true;
-                }
-                if (is_moving)
-                {
-                    moving_phonecall_count++;
-                    person_phone_call_track_ids.push_back(person_box.track_id);
-                }
-            }
-            // 清理不活跃的轨迹
-            moving_pc_detector_.cleanup_old_tracks(active_track_ids);
-            // 更新map
-            if (moving_phonecall_count <= 0)
+            // 检测结果已在本帧 process() 中计算一次，这里只做 zone 归属聚合
+            if (last_moving_phonecall_track_ids_.empty())
             {
                 return RuleStatus::RULE_STATUS_OK;
             }
@@ -284,7 +256,7 @@ namespace ai_stream
                 alert_target.zone_no = zone_no;
                 alert_target.non_update_count = 0;
                 alert_target.duration_ms = 0;
-                alert_target.object_ids = person_phone_call_track_ids;
+                alert_target.object_ids = last_moving_phonecall_track_ids_;
                 zone_alert_map_.insert(std::make_pair(zone_no, alert_target));
             }
             else
@@ -292,7 +264,7 @@ namespace ai_stream
                 auto &alert_target = it->second;
                 alert_target.non_update_count = 0;
                 alert_target.duration_ms = packet->timestamp_ms - alert_target.detect_ms;
-                alert_target.object_ids = person_phone_call_track_ids;
+                alert_target.object_ids = last_moving_phonecall_track_ids_;
             }
             return RuleStatus::RULE_STATUS_OK;
         }

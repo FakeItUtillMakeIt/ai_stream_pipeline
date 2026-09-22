@@ -108,21 +108,18 @@ void PoseInferNode::stop() {
 }
 
 void PoseInferNode::pushData(std::shared_ptr<core::BasePacket> packet) {
-    if (packet->type == core::PacketType::STREAM_END)
-    {
-        LOG_INFO_FMT("[PoseInfer] Received stream end");
-        // 不在此处调用 stop()，避免从 worker 线程调用导致自连接死锁
-        // running_ 会在 inferLoop 中检查，worker 线程会自然退出
-        broadcast(packet);
+    if (!packet || !running_) return;
+    if (packet->type == core::PacketType::STREAM_END) {
+        // 控制包强制入队，worker 处理完前序帧后再广播、退出
+        while (!queue_.tryPush(packet)) {
+            std::shared_ptr<core::BasePacket> discarded;
+            if (!queue_.tryPop(discarded)) return;
+        }
         return;
     }
-    if (!running_) return;
     if (packet->type != core::PacketType::META_DATA) return;
-
-    auto infer_pkt = std::dynamic_pointer_cast<core::InferenceResultPacket>(packet);
-    if (infer_pkt) {
-        queue_.push(infer_pkt, std::chrono::milliseconds(10));
-    }
+    if (!std::dynamic_pointer_cast<core::InferenceResultPacket>(packet)) return;
+    queue_.push(packet, std::chrono::milliseconds(10));
 }
 
 // ============================================================
@@ -132,10 +129,19 @@ void PoseInferNode::inferLoop() {
     while (running_) {
         in_time_ms_ = utils::TimeUtil::currentTimeMs();
 
-        std::shared_ptr<core::InferenceResultPacket> packet;
-        if (!queue_.pop(packet, std::chrono::milliseconds(100))) {
+        std::shared_ptr<core::BasePacket> pkt;
+        if (!queue_.pop(pkt, std::chrono::milliseconds(100))) {
             continue;
         }
+
+        if (pkt->type == core::PacketType::STREAM_END) {
+            LOG_INFO_FMT("[PoseInfer] Stream end received in worker thread");
+            running_ = false;
+            broadcast(pkt);
+            break;
+        }
+
+        auto packet = std::static_pointer_cast<core::InferenceResultPacket>(pkt);
 
         auto t0 = std::chrono::high_resolution_clock::now();
         processFrame(packet);

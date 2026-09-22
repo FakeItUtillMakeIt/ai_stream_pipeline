@@ -63,22 +63,39 @@ static std::shared_ptr<BasePacket> trimGpuPayload(const std::shared_ptr<BasePack
 } // namespace
 
 void Node::broadcast(std::shared_ptr<BasePacket> packet) {
+    if (!packet) return;
     auto it = packet->cost_time_map.find(name_);
     if (it != packet->cost_time_map.end()) {
         recordMetricsImpl(it->second, false);
     }
     // 打戳生产者：下游可据此区分数据来源（如 fusion 区分多路推理结果）
     packet->producer_id = name_;
+
+    // 统计有效下游数：>1 时每个分支使用独立副本，避免各下游 worker 并发修改同一包。
+    size_t valid_count = 0;
+    for (const auto& weak_down : downstreams_) {
+        if (!weak_down.node.expired()) ++valid_count;
+    }
+
     bool has_expired = false;
+    size_t valid_idx = 0;
     for (auto& weak_down : downstreams_) {
-        if (auto down = weak_down.node.lock()) {
-            if (weak_down.gpu_needed) {
-                down->pushData(packet);
-            } else {
-                down->pushData(trimGpuPayload(packet));
-            }
-        } else {
+        auto down = weak_down.node.lock();
+        if (!down) {
             has_expired = true;
+            continue;
+        }
+        // 最后一个有效分支复用原包，其余分支克隆（图像负载共享、容器深拷贝）
+        std::shared_ptr<BasePacket> branch = packet;
+        if (valid_count > 1 && valid_idx < valid_count - 1) {
+            branch = packet->cloneForBranch();
+        }
+        ++valid_idx;
+
+        if (weak_down.gpu_needed) {
+            down->pushData(branch);
+        } else {
+            down->pushData(trimGpuPayload(branch));
         }
     }
     // 清理已失效的下游弱引用（构建完成后 downstreams_ 无并发写入）

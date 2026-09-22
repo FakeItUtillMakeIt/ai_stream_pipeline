@@ -122,22 +122,18 @@ void DetectionInferNode::stop() {
 }
 
 void DetectionInferNode::pushData(std::shared_ptr<core::BasePacket> packet) {
+    if (!packet || !running_) return;
     if (packet->type == core::PacketType::STREAM_END) {
-        LOG_INFO_FMT("[DetectionInfer] Received stream end");
-        // 不在此处调用 stop()，避免从 worker 线程调用导致自连接死锁
-        // running_ 会在 inferLoop 中检查，worker 线程会自然退出
-        running_ = false;
-        broadcast(packet);
+        // 控制包强制入队（必要时挤掉最旧帧），保证在途帧先处理，
+        // 由 worker 处理完前序帧后再广播 STREAM_END 并退出，避免下游提前停机
+        while (!queue_.tryPush(packet)) {
+            std::shared_ptr<core::BasePacket> discarded;
+            if (!queue_.tryPop(discarded)) return;
+        }
         return;
     }
-    if (!running_) return;
     if (packet->type != core::PacketType::DECODED_FRAME) return;
-
-    // 使用 static_pointer_cast 替代 dynamic_pointer_cast，因为已检查类型
-    auto frame = std::static_pointer_cast<core::VideoFramePacket>(packet);
-    if (frame) {
-        queue_.push(frame, std::chrono::milliseconds(10));
-    }
+    queue_.push(packet, std::chrono::milliseconds(10));
 }
 
 // ============================================================
@@ -149,29 +145,36 @@ void DetectionInferNode::inferLoop() {
         std::vector<std::shared_ptr<core::VideoFramePacket>> batch_frames;
         batch_frames.reserve(max_batch_size_);
 
-        std::shared_ptr<core::VideoFramePacket> first_frame;
-        if (!queue_.pop(first_frame, std::chrono::milliseconds(batch_timeout_ms_))) {
+        std::shared_ptr<core::BasePacket> first;
+        if (!queue_.pop(first, std::chrono::milliseconds(batch_timeout_ms_))) {
             continue;
         }
 
-        // 检查是否为流结束信号
-        if (first_frame->type == core::PacketType::STREAM_END) {
+        // 流结束（顺序在队列末尾，此前帧已处理）
+        if (first->type == core::PacketType::STREAM_END) {
             LOG_INFO_FMT("[DetectionInfer] Stream end received in worker thread");
+            running_ = false;
+            broadcast(first);
             break;
         }
 
-        batch_frames.push_back(first_frame);
+        batch_frames.push_back(std::static_pointer_cast<core::VideoFramePacket>(first));
 
         auto batch_start_time = std::chrono::high_resolution_clock::now();
+        std::shared_ptr<core::BasePacket> stream_end_pkt;
 
         while (static_cast<int>(batch_frames.size()) < max_batch_size_) {
-            std::shared_ptr<core::VideoFramePacket> frame;
+            std::shared_ptr<core::BasePacket> pkt;
             auto elapsed = std::chrono::high_resolution_clock::now() - batch_start_time;
             auto remaining = batch_timeout_ms_ - std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
             if (remaining.count() <= 0) break;
 
-            if (queue_.pop(frame, remaining)) {
-                batch_frames.push_back(frame);
+            if (queue_.pop(pkt, remaining)) {
+                if (pkt->type == core::PacketType::STREAM_END) {
+                    stream_end_pkt = pkt;   // 停止收集，先处理当前批次
+                    break;
+                }
+                batch_frames.push_back(std::static_pointer_cast<core::VideoFramePacket>(pkt));
             } else {
                 break;
             }
@@ -188,13 +191,20 @@ void DetectionInferNode::inferLoop() {
         LOG_INFO_FMT("[DetectionInfer] Batch inference: {} frames, total={:.2f}ms, avg={:.2f}ms/frame",
                      actual_batch, batch_infer_ms, batch_infer_ms / actual_batch);
 
+        const auto& frame_cost_map = batch_frames.front()->cost_time_map;
         for (auto& result : results) {
             if (result) {
                 result->cost_ms = utils::TimeUtil::currentTimeMs() - in_time_ms_;
-                result->cost_time_map = first_frame->cost_time_map;
+                result->cost_time_map = frame_cost_map;
                 result->cost_time_map.insert({name_, result->cost_ms});
                 broadcast(result);
             }
+        }
+
+        if (stream_end_pkt) {
+            running_ = false;
+            broadcast(stream_end_pkt);
+            break;
         }
     }
 }

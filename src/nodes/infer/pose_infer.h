@@ -88,7 +88,7 @@ private:
     };
 
     // 数据队列和线程
-    core::BoundedQueue<std::shared_ptr<core::InferenceResultPacket>> queue_{64};
+    core::BoundedQueue<std::shared_ptr<core::BasePacket>> queue_{64};
     std::thread worker_;
     std::atomic<bool> running_{false};
 

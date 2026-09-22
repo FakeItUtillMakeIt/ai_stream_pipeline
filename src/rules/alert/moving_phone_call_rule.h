@@ -30,6 +30,8 @@ namespace rules {
 
     private:
             MovingPhonecallDetector moving_pc_detector_;
+            // 每帧只运行一次检测器，结果缓存供各 zone 复用
+            std::vector<int> last_moving_phonecall_track_ids_;
     };
 }
 }

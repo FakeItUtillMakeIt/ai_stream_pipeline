@@ -32,6 +32,9 @@ namespace ai_stream
 
         private:
             PersonBoxRisingDetector rising_detector_;
+            // 每帧只运行一次检测器，结果缓存供各 zone 的 rule_logic 复用，
+            // 避免多区域配置下重复推进检测器状态机
+            RisingResult last_rising_result_;
         };
     }
 }

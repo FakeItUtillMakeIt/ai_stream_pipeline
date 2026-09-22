@@ -32,6 +32,9 @@ namespace ai_stream
 
         private:
             ClimbingDetector climbing_detector_;
+            // 每帧只运行一次检测器，结果缓存供各 zone 复用
+            bool last_is_climbing_ = false;
+            std::vector<int> last_climb_track_ids_;
         };
     }
 }

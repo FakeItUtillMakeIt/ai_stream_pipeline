@@ -2,6 +2,8 @@
 #include "fighting_rule.h"
 #include "alert_rule_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
+#include <algorithm>
+#include <vector>
 
 namespace ai_stream
 {
@@ -74,6 +76,36 @@ namespace ai_stream
             std::lock_guard<std::mutex> lock(mutex_);
             if (!packet)
                 return RuleStatus::RULE_STATUS_FAIL;
+
+            // 每帧只运行一次检测器（多 zone 时不得重复推进状态机）
+            last_is_fighting_ = false;
+            last_fight_track_ids_.clear();
+            {
+                std::vector<ai_stream::core::InferenceResultPacket::BBox> person_boxes;
+                for (const auto &detection : packet->detections)
+                {
+                    if (detection.class_name == "person")
+                        person_boxes.push_back(detection);
+                }
+                if (!person_boxes.empty())
+                {
+                    if (action_recognition_mode_ == ActionRecongnitionType::ACTION_RECOGNITION_MODEL)
+                    {
+                        for (const auto &action_result : packet->action_results)
+                        {
+                            if (action_result.action_label == alertTypeMap[AlertType::FIGHTING])
+                                last_is_fighting_ = true;
+                        }
+                    }
+                    else if (action_recognition_mode_ == ActionRecongnitionType::ACTION_RECOGNITION_POSE)
+                    {
+                        auto fight_result = fighting_detector_.process(person_boxes);
+                        last_is_fighting_ = fight_result.is_fighting;
+                        last_fight_track_ids_ = fight_result.active_track_ids;
+                    }
+                }
+            }
+
             if (valid_intrusion_zones_.empty())
             {
                 rule_logic(packet, global_zone_no_, {});
@@ -150,67 +182,61 @@ namespace ai_stream
             const std::shared_ptr<core::InferenceResultPacket> packet,
             uint8_t zone_no, ZonePoints zone_points)
         {
-            LOG_INFO_FMT("FightingRule::rule_logic()");
+            // 统计 zone 内人数（保持“至少2人”语义）；检测结果已在本帧 process() 计算一次
             int person_count = 0;
-            std::vector<ai_stream::core::InferenceResultPacket::BBox> person_boxes;
-            std::vector<int> person_track_ids;
+            std::vector<int> in_zone_track_ids;
             for (const auto &detection : packet->detections)
             {
                 if (detection.class_name != "person")
-                {
                     continue;
-                }
                 bool in_zone = zone_points.empty() ? true : ZoneValidator::pointInPolygon(PixelPoint(detection.x + detection.w / 2, detection.y + detection.h / 2), zone_points);
                 if (in_zone)
                 {
                     person_count++;
-                    person_boxes.push_back(detection);
+                    if (detection.track_id > 0)
+                        in_zone_track_ids.push_back(detection.track_id);
                 }
             }
-            // 更新zone_alert_map_ 打架至少2人
-            if (person_count < 2)
+            if (person_count < 2 || !last_is_fighting_)
                 return RuleStatus::RULE_STATUS_OK;
-            bool is_fighting = false;
-            if (action_recognition_mode_==ActionRecongnitionType::ACTION_RECOGNITION_MODEL)
-            {
-                if (packet->action_results.empty())
-                    return RuleStatus::RULE_STATUS_OK;
-                for (const auto &action_result : packet->action_results)
-                {
-                    if (action_result.action_label != alertTypeMap[AlertType::FIGHTING])
-                        continue;
-                    is_fighting = true;
-                }
-            }
+
+            std::vector<int> fight_ids;
             if (action_recognition_mode_ == ActionRecongnitionType::ACTION_RECOGNITION_POSE)
-            {// 调用打架检测器
-                auto fight_result = fighting_detector_.process(person_boxes);
-                is_fighting = fight_result.is_fighting;
-                person_track_ids = fight_result.active_track_ids;
-            }
-            
-            if (is_fighting)
             {
-                auto it = zone_alert_map_.find(zone_no);
-                if (it == zone_alert_map_.end())
+                if (last_fight_track_ids_.empty())
                 {
-                    auto alert_target = AlertEvent();
-                    alert_target.detect_ms = packet->timestamp_ms;
-                    alert_target.zone_no = zone_no;
-                    alert_target.non_update_count = 0;
-                    alert_target.duration_ms = 0;
-                    alert_target.object_ids = person_track_ids;
-                    zone_alert_map_.insert(std::make_pair(zone_no, alert_target));
+                    fight_ids = in_zone_track_ids;
                 }
                 else
                 {
-                    auto &alert_target = it->second;
-                    alert_target.non_update_count = 0;
-                    alert_target.duration_ms = packet->timestamp_ms - alert_target.detect_ms;
-                    alert_target.object_ids = person_track_ids;
+                    for (int id : last_fight_track_ids_)
+                    {
+                        if (std::find(in_zone_track_ids.begin(), in_zone_track_ids.end(), id) != in_zone_track_ids.end())
+                            fight_ids.push_back(id);
+                    }
+                    if (fight_ids.size() < 2)
+                        return RuleStatus::RULE_STATUS_OK;
                 }
             }
 
+            auto it = zone_alert_map_.find(zone_no);
+            if (it == zone_alert_map_.end())
+            {
+                auto alert_target = AlertEvent();
+                alert_target.detect_ms = packet->timestamp_ms;
+                alert_target.zone_no = zone_no;
+                alert_target.non_update_count = 0;
+                alert_target.duration_ms = 0;
+                alert_target.object_ids = fight_ids;
+                zone_alert_map_.insert(std::make_pair(zone_no, alert_target));
+            }
+            else
+            {
+                auto &alert_target = it->second;
+                alert_target.non_update_count = 0;
+                alert_target.duration_ms = packet->timestamp_ms - alert_target.detect_ms;
+                alert_target.object_ids = fight_ids;
+            }
             return RuleStatus::RULE_STATUS_OK;
         }
 

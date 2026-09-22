@@ -89,22 +89,26 @@ void ApiServer::setupRoutes() {
 }
 
 bool ApiServer::start(const std::string& host, int port) {
-    if (running_) return true;
+    if (running_.exchange(true)) return true;
 
     server_thread_ = std::thread([this, host, port]() {
-        running_ = true;
         LOG_INFO_FMT("HTTP server listening on {}:{}", host, port);
         server_.listen(host.c_str(), port);
         running_ = false;
     });
 
-    // 等待一小段时间确保服务启动
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // 轮询等待服务就绪或线程退出，替代固定 sleep（避免慢机器误判与竞态）
+    for (int i = 0; i < 100 && running_.load(); ++i) {
+        if (server_.is_running()) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
     return server_.is_running();
 }
 
 void ApiServer::stop() {
-    if (!running_) return;
+    // 无论 running_ 状态如何都必须 join 线程（listen 失败/启动中途停止时
+    // running_ 可能为 false，但 server_thread_ 仍 joinable，否则析构触发 terminate）
+    running_ = false;
     server_.stop();
     if (server_thread_.joinable()) {
         server_thread_.join();

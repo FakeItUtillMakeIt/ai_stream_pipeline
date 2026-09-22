@@ -76,6 +76,18 @@ namespace ai_stream
             std::lock_guard<std::mutex> lock(mutex_);
             if (!packet)
                 return RuleStatus::RULE_STATUS_FAIL;
+
+            // 每帧只运行一次检测器（多 zone 时不得重复推进状态机）
+            {
+                std::vector<core::InferenceResultPacket::BBox> person_boxes;
+                for (const auto &detection : packet->detections)
+                {
+                    if (detection.class_name == "person")
+                        person_boxes.push_back(detection);
+                }
+                last_rising_result_ = rising_detector_.process(person_boxes, packet->frame_id);
+            }
+
             if (valid_intrusion_zones_.empty())
             {
                 rule_logic(packet, global_zone_no_, {});
@@ -150,25 +162,14 @@ namespace ai_stream
             const std::shared_ptr<core::InferenceResultPacket> packet,
             uint8_t zone_no, ZonePoints zone_points)
         {
-            LOG_INFO_FMT("RisingRule::rule_logic()");
-            std::vector<ai_stream::core::InferenceResultPacket::BBox> person_boxes;
-            for (const auto &detection : packet->detections)
-            {
-                if (detection.class_name == "person")
-                {
-                    person_boxes.push_back(detection);
-                }
-            }
-            if (person_boxes.empty())
+            // 检测结果已在本帧 process() 中计算一次，这里只做 zone 归属聚合
+            if (!last_rising_result_.is_rising)
             {
                 return RuleStatus::RULE_STATUS_OK;
             }
 
-            std::vector<int> rising_track_ids;
-            auto climb_result = rising_detector_.process(person_boxes, packet->frame_id);
-            if(climb_result.is_rising)
+            std::vector<int> rising_track_ids = last_rising_result_.active_track_ids;
             {
-                rising_track_ids = climb_result.active_track_ids;
                 auto it = zone_alert_map_.find(zone_no);
                 if (it == zone_alert_map_.end())
                 {

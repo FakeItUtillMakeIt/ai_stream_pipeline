@@ -218,8 +218,8 @@ private:
         "safety_belt", "sleeping", "toy", "pad", "camera", "ring_light"
     };
 
-    // 数据队列和线程
-    core::BoundedQueue<std::shared_ptr<core::VideoFramePacket>> queue_{64};
+    // 数据队列和线程（BasePacket：需承载 STREAM_END 控制包）
+    core::BoundedQueue<std::shared_ptr<core::BasePacket>> queue_{64};
     std::thread worker_;
     std::atomic<bool> running_{false};
 

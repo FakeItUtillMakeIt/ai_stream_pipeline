@@ -15,6 +15,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <cstdint>
+#include <new>
 #include <atomic>
 #include <algorithm>
 
@@ -157,7 +158,8 @@ bool fillFrameNv12(const void* y_src, int y_stride, const void* uv_src,
     if (!y_src || !uv_src || w <= 0 || h <= 0 || y_stride < w || uv_stride < w)
         return false;
     int y_sz = w * h;
-    uint8_t* buf = static_cast<uint8_t*>(malloc(y_sz + y_sz / 2));
+    // 与消费侧 ffmpeg_decode 的 delete[] 配对，避免 malloc/delete[] 不匹配
+    uint8_t* buf = new (std::nothrow) uint8_t[y_sz + y_sz / 2];
     if (!buf) return false;
 
     if (y_stride == w)
@@ -377,7 +379,7 @@ bool HorizonVideoDecoder::decode_vp(const uint8_t* data, int size, DecodedFrame&
 
     int w = src_width_, h = src_height_;
     int y_sz = w * h;
-    uint8_t* buf = static_cast<uint8_t*>(malloc(y_sz + y_sz / 2));
+    uint8_t* buf = new (std::nothrow) uint8_t[y_sz + y_sz / 2];
     if (!buf) return false;
     memcpy(buf, sp_out_.data(), y_sz + y_sz / 2);   // sp 输出为紧凑 NV12
 

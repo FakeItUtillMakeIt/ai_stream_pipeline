@@ -54,6 +54,10 @@ private:
 
     std::vector<uint8_t> extradata_;  // AVCC（长度前缀）格式序列头
 
+    // 输出数据暂存：MPP packet 缓冲在 p_pkt_deinit 后即失效，
+    // 需拷贝到本成员，保证 EncodedPacket.data 在下次 encode() 前有效
+    std::vector<std::vector<uint8_t>> packet_staging_;
+
     bool opened_ = false;
     std::mutex mutex_;
 };

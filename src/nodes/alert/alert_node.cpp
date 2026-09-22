@@ -91,9 +91,16 @@ void AlertNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
         return;
     }
 
-    if (packet->type != core::PacketType::META_DATA) return;
+    if (packet->type != core::PacketType::META_DATA) {
+        broadcast(packet);
+        return;
+    }
 
     auto infer_packet = std::dynamic_pointer_cast<core::InferenceResultPacket>(packet);
+    if (!infer_packet) {
+        broadcast(packet);
+        return;
+    }
     auto all_alert_results = enable_parallel_.load()
         ? process_all_alerts_parallel(infer_packet)
         : process_all_alerts_sequence(infer_packet);

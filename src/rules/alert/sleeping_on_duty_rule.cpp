@@ -212,6 +212,11 @@ namespace ai_stream
                         sleeping_on_duty_count++;
                     }
                 }
+                else
+                {
+                    // 人员清醒，重置睡岗计数（否则计数器闩锁，防抖只生效一次）
+                    sleeping_on_duty_counter_map_[station_id] = 0;
+                }
             }
             if (sleeping_on_duty_count <= 0)
             {
@@ -237,6 +242,6 @@ namespace ai_stream
 
             return RuleStatus::RULE_STATUS_OK;
         }
-        REGISTER_ALERT_RULE("absence", SleepingOnDutyRule)
+        REGISTER_ALERT_RULE("sleep_on_duty", SleepingOnDutyRule)
     }
 }

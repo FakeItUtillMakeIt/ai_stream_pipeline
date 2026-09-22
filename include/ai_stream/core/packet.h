@@ -301,6 +301,12 @@ struct BasePacket {
     uint64_t cost_ms = 0;
     std::map<std::string,uint64_t> cost_time_map;
 
+    // 分叉广播时的独立副本：默认复制元数据；具体包类型可覆盖以共享大块负载
+    // （图像/张量等）并深拷贝可变的容器，避免多下游并发修改同一包。
+    virtual std::shared_ptr<BasePacket> cloneForBranch() const {
+        return std::make_shared<BasePacket>(*this);
+    }
+
     virtual ~BasePacket() = default;
 };
 
@@ -318,6 +324,10 @@ struct RawVideoPacket : public BasePacket {
     std::vector<uint8_t> extradata;     // 编码器 extradata (SPS/PPS/VPS)
     int width = 0;                      // 视频分辨率（用于硬件解码器初始化）
     int height = 0;
+
+    std::shared_ptr<BasePacket> cloneForBranch() const override {
+        return std::make_shared<RawVideoPacket>(*this);
+    }
 };
 
 /**
@@ -371,7 +381,12 @@ struct VideoFramePacket : public BasePacket {
     bool letterbox_used = false;  // 是否使用了 letterbox resize
     float letter_scale = 1.0f;    // letterbox 缩放比例 (letter_w / source_w)
     int letter_pad_x = 0;         // 水平 padding
-    int letter_pad_y = 0;         // 垂直 padding
+    int letter_pad_y = 0;          // 垂直 padding
+
+    // 共享 mat/nv12/GPU owner（不拷贝图像），仅复制元数据与标量
+    std::shared_ptr<BasePacket> cloneForBranch() const override {
+        return std::make_shared<VideoFramePacket>(*this);
+    }
 };
 
 /**
@@ -440,6 +455,11 @@ struct InferenceResultPacket : public BasePacket {
     std::vector<ActionResult> action_results;           // 动作识别结果
     std::shared_ptr<VideoFramePacket> source_frame;     // 关联的原始帧，用于后续画框等操作
     std::vector<rules::AlertResult> alert_result;
+
+    // 深拷贝结果容器，source_frame 共享（不拷贝图像）
+    std::shared_ptr<BasePacket> cloneForBranch() const override {
+        return std::make_shared<InferenceResultPacket>(*this);
+    }
 };
 
 } // namespace core

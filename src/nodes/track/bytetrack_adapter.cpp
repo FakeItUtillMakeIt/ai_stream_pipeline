@@ -53,10 +53,11 @@ std::vector<UnifiedTrackResult> ByteTrackAdapter::update(
         if (det.confidence < impl_->config.track_thresh) continue;
         
         ai::cvUtil::PoseBox box;
-        box.left = det.x - det.w / 2;
-        box.right = det.x + det.w / 2;
-        box.top = det.y - det.h / 2;
-        box.bottom = det.y + det.h / 2;
+        // det.x/y 为左上角坐标（与检测节点输出约定一致）
+        box.left = det.x;
+        box.right = det.x + det.w;
+        box.top = det.y;
+        box.bottom = det.y + det.h;
         box.confidence = det.confidence;
         box.class_label = det.class_id;
         objects.push_back(box);
@@ -77,10 +78,11 @@ std::vector<UnifiedTrackResult> ByteTrackAdapter::update(
             tr.confidence = track.score;
             tr.age = track.tracklet_len;
             tr.active = track.is_activated;
-            tr.smooth_x = track.mean[0];
-            tr.smooth_y = track.mean[1];
-            tr.smooth_w = track.mean[2];
-            tr.smooth_h = track.mean[3];
+            // track.mean 为 xyah 状态向量（非 tlwh），平滑框直接用 tlwh 保持一致
+            tr.smooth_x = track.tlwh[0];
+            tr.smooth_y = track.tlwh[1];
+            tr.smooth_w = track.tlwh[2];
+            tr.smooth_h = track.tlwh[3];
             results.push_back(tr);
         }
     }

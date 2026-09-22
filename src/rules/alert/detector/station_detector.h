@@ -120,11 +120,12 @@ private:
         int id;
         std::deque<Rect2f> history;    // 边界框历史
         long long stay_start_time;      // 开始停留时间
+        long long last_seen_time;       // 最近一次出现时间（用于回收）
         PixelPoint last_position;       // 上一帧位置
         bool has_station;               // 是否已有岗位区域
         StationRegion station;          // 岗位区域
         
-        PersonTrack() : id(-1), stay_start_time(0), has_station(false) {
+        PersonTrack() : id(-1), stay_start_time(0), last_seen_time(0), has_station(false) {
             last_position.x = last_position.y = 0;
         }
     };

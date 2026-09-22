@@ -90,6 +90,36 @@ namespace ai_stream
             std::lock_guard<std::mutex> lock(mutex_);
             if (!packet)
                 return RuleStatus::RULE_STATUS_FAIL;
+
+            // 每帧只运行一次检测器/模型判定（多 zone 时不得重复推进状态机）
+            last_is_climbing_ = false;
+            last_climb_track_ids_.clear();
+            {
+                std::vector<ai_stream::core::InferenceResultPacket::BBox> person_boxes;
+                for (const auto &detection : packet->detections)
+                {
+                    if (detection.class_name == "person")
+                        person_boxes.push_back(detection);
+                }
+                if (!person_boxes.empty())
+                {
+                    if (action_recognition_mode_ == ActionRecongnitionType::ACTION_RECOGNITION_MODEL)
+                    {
+                        for (const auto &action_result : packet->action_results)
+                        {
+                            if (action_result.action_label == alertTypeMap[AlertType::CLIMBING])
+                                last_is_climbing_ = true;
+                        }
+                    }
+                    else if (action_recognition_mode_ == ActionRecongnitionType::ACTION_RECOGNITION_POSE)
+                    {
+                        auto climb_result = climbing_detector_.process(person_boxes);
+                        last_is_climbing_ = climb_result.is_climbing;
+                        last_climb_track_ids_ = climb_result.active_track_ids;
+                    }
+                }
+            }
+
             if (valid_intrusion_zones_.empty())
             {
                 rule_logic(packet, global_zone_no_, {});
@@ -165,42 +195,11 @@ namespace ai_stream
             const std::shared_ptr<core::InferenceResultPacket> packet,
             uint8_t zone_no, ZonePoints zone_points)
         {
-            LOG_INFO_FMT("ClimbingRule::rule_logic()");
-            std::vector<ai_stream::core::InferenceResultPacket::BBox> person_boxes;
-            std::vector<int> person_track_ids;
-            for (const auto &detection : packet->detections)
-            {
-                if (detection.class_name == "person")
-                {
-                    person_boxes.push_back(detection);
-                }
-            }
-            if (person_boxes.empty())
+            // 检测结果已在本帧 process() 中计算一次，这里只做 zone 归属聚合
+            if (!last_is_climbing_)
             {
                 return RuleStatus::RULE_STATUS_OK;
             }
-            bool is_climbing = false;
-            if (action_recognition_mode_==ActionRecongnitionType::ACTION_RECOGNITION_MODEL)
-            {
-                LOG_INFO_FMT("ClimbingRule::rule_logic() using action recognition model:{}", packet->action_results.size());
-                if (packet->action_results.empty())
-                    return RuleStatus::RULE_STATUS_OK;
-                for (const auto &action_result : packet->action_results)
-                {
-                    LOG_INFO_FMT("ClimbingRule::rule_logic() action_result: track_id={}, action_label={}, confidence={}", action_result.track_id, action_result.action_label, action_result.confidence);
-                    if (action_result.action_label != alertTypeMap[AlertType::CLIMBING])
-                        continue;
-                    is_climbing = true;
-                }
-            }
-            if (action_recognition_mode_ == ActionRecongnitionType::ACTION_RECOGNITION_POSE)
-            {// 调用打架检测器
-                auto climb_result = climbing_detector_.process(person_boxes);
-                is_climbing = climb_result.is_climbing;
-                person_track_ids = climb_result.active_track_ids;
-            }
-            
-            if(is_climbing)
             {
                 auto it = zone_alert_map_.find(zone_no);
                 if (it == zone_alert_map_.end())
@@ -210,7 +209,7 @@ namespace ai_stream
                     alert_target.zone_no = zone_no;
                     alert_target.non_update_count = 0;
                     alert_target.duration_ms = 0;
-                    alert_target.object_ids = person_track_ids;
+                    alert_target.object_ids = last_climb_track_ids_;
                     zone_alert_map_.insert(std::make_pair(zone_no, alert_target));
                 }
                 else
@@ -218,7 +217,7 @@ namespace ai_stream
                     auto &alert_target = it->second;
                     alert_target.non_update_count = 0;
                     alert_target.duration_ms = packet->timestamp_ms - alert_target.detect_ms;
-                    alert_target.object_ids = person_track_ids;
+                    alert_target.object_ids = last_climb_track_ids_;
                 }
             }
             return RuleStatus::RULE_STATUS_OK;

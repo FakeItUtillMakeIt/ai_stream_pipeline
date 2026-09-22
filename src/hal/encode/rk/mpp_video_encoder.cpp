@@ -271,6 +271,7 @@ bool MppVideoEncoder::encode(const uint8_t* yuv420p, size_t size, int64_t pts,
     }
 
     // 拷入专用编码缓冲（同步 encode 接口下安全）
+    packet_staging_.clear();
     uint8_t* dst = static_cast<uint8_t*>(p_buf_ptr(frame_buf_, __FUNCTION__));
     if (!dst) return false;
     memcpy(dst, yuv420p, frame_size_);
@@ -286,8 +287,11 @@ bool MppVideoEncoder::encode(const uint8_t* yuv420p, size_t size, int64_t pts,
     const void* data = p_pkt_data(pkt);
     const size_t len = p_pkt_len(pkt);
     if (data && len > 0 && !p_pkt_eos(pkt)) {
+        // 拷贝到暂存，避免 p_pkt_deinit 后 EncodedPacket.data 悬垂
+        packet_staging_.emplace_back(static_cast<const uint8_t*>(data),
+                                     static_cast<const uint8_t*>(data) + len);
         EncodedPacket out;
-        out.data = static_cast<const uint8_t*>(data);
+        out.data = packet_staging_.back().data();
         out.size = len;
         out.pts = pts;
         out.dts = pts;

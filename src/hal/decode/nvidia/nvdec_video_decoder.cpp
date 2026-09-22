@@ -231,9 +231,10 @@ bool NvdecVideoDecoder::decode(const uint8_t* packet_data, int packet_size,
     }
 
     // 硬件帧留在显存，暴露 GPU 平面指针供 GPU 预处理零拷贝消费。
-    // 帧内容在下次 decode() 前有效，消费方（decode 节点）需在本调用内
-    // 复制到池化缓冲（D2D），否则后续帧会复用同一批 NVDEC 显存。
-    if (frame_->format == AV_PIX_FMT_CUDA) {
+    // d_data/d_data_uv 仅在本调用内有效（下次 decode() 时 frame_ 被复用），
+    // 消费方需在本调用内复制到池化缓冲（D2D）。
+    const bool is_cuda = (frame_->format == AV_PIX_FMT_CUDA);
+    if (is_cuda) {
         frame.is_gpu = true;
         frame.d_data = frame_->data[0];
         frame.d_pitch = frame_->linesize[0];
@@ -243,28 +244,31 @@ bool NvdecVideoDecoder::decode(const uint8_t* packet_data, int packet_size,
         frame.is_gpu = false;
     }
 
-    // 如果帧在 GPU 内存中，转移到系统内存（供 sws 生成 source_mat 等 CPU 消费）
-    if (frame_->format == AV_PIX_FMT_CUDA && hw_device_ctx_) {
+    // 额外把 GPU 帧拷贝到系统内存供 CPU 消费。
+    // 关键：不再 av_frame_unref(frame_) 后 move_ref，否则上面暴露的 d_data 会悬垂；
+    // 保持 CUDA frame_ 存活，CPU 数据放在 hw_frame_，两者在本调用内均有效。
+    AVFrame* cpu_frame = frame_;
+    if (is_cuda && hw_device_ctx_) {
+        av_frame_unref(hw_frame_);
         ret = av_hwframe_transfer_data(hw_frame_, frame_, 0);
         if (ret < 0) {
             LOG_ERROR_FMT("[NvdecVideoDecoder] av_hwframe_transfer_data failed: {}", ret);
             return false;
         }
-        av_frame_unref(frame_);
-        av_frame_move_ref(frame_, hw_frame_);
+        cpu_frame = hw_frame_;
     }
 
-    frame.data = frame_->data[0];
-    frame.width = frame_->width;
-    frame.height = frame_->height;
-    frame.pitch = frame_->linesize[0];
-    frame.format = frame_->format;
+    frame.data = cpu_frame->data[0];
+    frame.width = cpu_frame->width;
+    frame.height = cpu_frame->height;
+    frame.pitch = cpu_frame->linesize[0];
+    frame.format = cpu_frame->format;
     frame.owns_data = false;
 
     // 设置 UV 平面（NV12 等格式）
-    if (frame_->data[1]) {
-        frame.data_uv = frame_->data[1];
-        frame.pitch_uv = frame_->linesize[1];
+    if (cpu_frame->data[1]) {
+        frame.data_uv = cpu_frame->data[1];
+        frame.pitch_uv = cpu_frame->linesize[1];
     }
 
     LOG_DEBUG_FMT("[NvdecVideoDecoder] Frame decoded: {}x{}, format={}, pitch={}",

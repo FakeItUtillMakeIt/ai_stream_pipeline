@@ -212,6 +212,11 @@ namespace ai_stream
                         person_not_in_station_count++;
                     }
                 }
+                else
+                {
+                    // 人员回到岗位，重置离岗计数（否则计数器闩锁，防抖只生效一次）
+                    m_absent_counter_map_[station_id] = 0;
+                }
             }
             if (person_not_in_station_count <= 0)
             {

@@ -306,6 +306,8 @@ bool ResizeNormalizeNode::processCpuFrame(const std::shared_ptr<core::VideoFrame
     new_packet->d_bgr_pitch = frame->d_bgr_pitch;
     new_packet->d_bgr_width = frame->d_bgr_width;
     new_packet->d_bgr_height = frame->d_bgr_height;
+    // 一并传递所有权，避免源包释放后该 GPU 缓冲被池复用（悬垂）
+    new_packet->d_bgr_owner = frame->d_bgr_owner;
 
     if (keep_aspect_ratio_) {
         new_packet->letterbox_used = true;

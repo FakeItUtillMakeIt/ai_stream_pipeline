@@ -1,6 +1,8 @@
 // tests/unit/core/test_packet.cpp
 #include <gtest/gtest.h>
 #include "ai_stream/core/packet.h"
+#include "ai_stream/core/node.h"
+#include <memory>
 
 using namespace ai_stream;
 using namespace ai_stream::core;
@@ -116,4 +118,80 @@ TEST(AlertTypeMapTest, AllAlertTypesHaveMappings) {
         EXPECT_EQ(rules::alertTypeChMap.count(t), 1u) << "missing in alertTypeChMap";
         EXPECT_EQ(rules::alertItemTypeMap.count(t), 1u) << "missing in alertItemTypeMap";
     }
+}
+
+// ===== broadcast 分叉隔离（cloneForBranch）=====
+namespace {
+
+class CollectNode : public Node {
+public:
+    explicit CollectNode(const std::string& n) : Node(n) {}
+    bool start() override { running_ = true; return true; }
+    void stop() override { running_ = false; }
+    void pushData(std::shared_ptr<BasePacket> p) override { last = std::move(p); }
+    std::shared_ptr<BasePacket> last;
+};
+
+class BroadcasterNode : public Node {
+public:
+    BroadcasterNode() : Node("broadcaster") {}
+    bool start() override { running_ = true; return true; }
+    void stop() override { running_ = false; }
+    void pushData(std::shared_ptr<BasePacket>) override {}
+    void emit(std::shared_ptr<BasePacket> p) { broadcast(std::move(p)); }
+};
+
+InferenceResultPacket::BBox makeBox(int track_id) {
+    InferenceResultPacket::BBox b;
+    b.x = 1; b.y = 2; b.w = 3; b.h = 4;
+    b.track_id = track_id;
+    return b;
+}
+
+} // namespace
+
+TEST(BroadcastTest, SingleDownstreamSharesOriginal) {
+    auto b = std::make_shared<BroadcasterNode>();
+    auto c1 = std::make_shared<CollectNode>("c1");
+    b->addDownstream(c1);
+
+    auto pkt = std::make_shared<InferenceResultPacket>();
+    pkt->detections.push_back(makeBox(-1));
+    b->emit(pkt);
+
+    ASSERT_TRUE(c1->last != nullptr);
+    EXPECT_EQ(c1->last.get(), pkt.get());
+}
+
+TEST(BroadcastTest, FanoutGivesIndependentPackets) {
+    auto b = std::make_shared<BroadcasterNode>();
+    auto c1 = std::make_shared<CollectNode>("c1");
+    auto c2 = std::make_shared<CollectNode>("c2");
+    b->addDownstream(c1);
+    b->addDownstream(c2);
+
+    auto pkt = std::make_shared<InferenceResultPacket>();
+    pkt->detections.push_back(makeBox(-1));
+    b->emit(pkt);
+
+    ASSERT_TRUE(c1->last != nullptr);
+    ASSERT_TRUE(c2->last != nullptr);
+    // 两个下游拿到不同对象，互不影响
+    EXPECT_NE(c1->last.get(), c2->last.get());
+
+    auto i1 = std::static_pointer_cast<InferenceResultPacket>(c1->last);
+    auto i2 = std::static_pointer_cast<InferenceResultPacket>(c2->last);
+    ASSERT_FALSE(i1->detections.empty());
+    ASSERT_FALSE(i2->detections.empty());
+    i1->detections[0].track_id = 999;
+    EXPECT_EQ(i2->detections[0].track_id, -1);
+}
+
+TEST(BroadcastTest, CloneSharesSourceFrame) {
+    auto pkt = std::make_shared<InferenceResultPacket>();
+    pkt->source_frame = std::make_shared<VideoFramePacket>();
+    auto clone = std::dynamic_pointer_cast<InferenceResultPacket>(pkt->cloneForBranch());
+    ASSERT_TRUE(clone != nullptr);
+    EXPECT_NE(clone.get(), pkt.get());
+    EXPECT_EQ(clone->source_frame.get(), pkt->source_frame.get());
 }

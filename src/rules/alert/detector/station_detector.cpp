@@ -59,6 +59,7 @@ void StationDetector::update(int track_id, const Rect2f& bbox, long long timesta
     
     // 获取或创建轨迹
     auto& track = m_tracks[track_id];
+    track.last_seen_time = timestamp;
     if (track.id == -1) {
         track.id = track_id;
         track.last_position = current_pos;
@@ -293,11 +294,12 @@ long long StationDetector::getCurrentTime() {
 }
 
 void StationDetector::cleanExpiredTracks(long long current_time) {
+    // 按“最近出现时间”回收轨迹及对应岗位区域，避免陈旧岗位永久驻留导致误报/内存增长
     auto it = m_tracks.begin();
     while (it != m_tracks.end()) {
-        // 如果超过10秒没有更新且没有岗位区域，则移除
-        if (!it->second.has_station && 
-            it->second.history.empty()) {
+        if (it->second.last_seen_time > 0 &&
+            current_time - it->second.last_seen_time > m_track_expire_time) {
+            m_stations.erase(it->first);
             it = m_tracks.erase(it);
         } else {
             ++it;
