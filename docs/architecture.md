@@ -59,6 +59,9 @@ ai_stream_pipeline 是一个模块化的视频流 AI 处理框架：以 **节点
 - `pushData()` 只入队立即返回，专属 worker 线程串行执行 `processPacket()`，
   避免重处理阻塞上游
 - 原 `start()/stop()` 逻辑迁移到 `onStartup()/onShutdown()` 钩子
+- `onIdle()` 在队列空闲（pop 超时）时回调，用于周期性任务（fusion 超时合并、
+  推理节点的批次超时 flush）；派生类可用 `setPollTimeout()` / `setQueueCapacity()`
+  调整空闲轮询间隔与队列容量
 - 满队列策略（JSON `"queue"` 字段配置）：
 
 ```json
@@ -117,19 +120,18 @@ ai_stream_pipeline 是一个模块化的视频流 AI 处理框架：以 **节点
 | FileSourceNode | `file_source` | 自持读文件线程（loop/realtime 可选） |
 | FFmpegDecodeNode | `ffmpeg_decode` | QueuedNode |
 | ResizeNormalizeNode | `resize_normalize` | QueuedNode，通过 HAL 图像加速器选择 CPU/RGA/DVPP/NPP 路径 |
-| DetectionInferNode | `detection_infer` | 自持 BoundedQueue + 推理线程（动态 batch） |
-| PoseInferNode | `pose_infer` | 自持队列 + worker（推理走 HAL `IPoseEstimationEngine`，CPU/CUDA/RKNN 后端） |
+| DetectionInferNode | `detection_infer` | QueuedNode（worker 内批次收集，`onIdle` 超时 flush；动态 batch + CUDA Graph） |
+| PoseInferNode | `pose_infer` | QueuedNode（推理走 HAL `IPoseEstimationEngine`，CPU/CUDA/RKNN 后端） |
 | ActionRecognitionVideoMAENode | `action_recognition_videomae` | QueuedNode |
 | DetectionPostProcessNode | `detection_post` | QueuedNode，NMS 通过 HAL 图像加速器执行 |
 | TrackerNode（OCSort/ByteTrack） | `tracker` | QueuedNode |
-| AlertNode | `alert` | QueuedNode（规则可并行 std::async） |
+| AlertNode | `alert` | QueuedNode（规则经常驻线程池并行执行，`process_type: parallel\|sequence`） |
 | FusionNodeImpl | `fusion` | QueuedNode（双模式见下） |
 | OSDDrawNode | `osd_draw` | QueuedNode（矩形框经 HAL drawBoxes 路由，GPU 数据自动走 NPP；文字/关键点/面板 CPU 绘制，中文需 OpenCV freetype，缺失时英文回退 `cv::putText`） |
 | EvidenceNode | `evidence` | QueuedNode（双输入：告警触发 + 画框帧；内部 FrameBuffer/VideoRecorder/FtpUploader 各自带队列） |
 | RTMPSinkNode / MP4SaveNode | `rtmp_sink` / `mp4_save` | QueuedNode（编码在 worker 线程串行执行；队列满默认丢最旧） |
 
-> 检测/姿态推理节点（`detection_infer` / `pose_infer`）与源节点（`rtsp_source` / `file_source`）
-> 自持队列与专属线程，属于历史实现，未改为 QueuedNode。
+> 源节点（`rtsp_source` / `file_source`）是生产者、自持读流线程，不使用 QueuedNode。
 > 原生 RKNN 检测节点已并入 `detection_infer`（经 HAL `IDetectionInferenceEngine` 选择 RKNN 后端）。
 
 > 跟踪匹配说明：TrackerNode 将检测框关联到轨迹时，优先按轨迹绑定的 `class_name`
@@ -144,6 +146,10 @@ ai_stream_pipeline 是一个模块化的视频流 AI 处理框架：以 **节点
 FusionNode 支持两种模式（`params.mode`）：
 
 **`action`（默认，原有行为）**：缓存动作识别结果，按时间戳阈值附加到检测包。
+
+**`object_level`**：在 `action` 基础上，动作只附加到含匹配 `track_id` 的目标帧（`ActionResult.track_id`）；
+无匹配目标的动作不附加（等待匹配帧）。动作结果被**一次性消费**，避免同一次动作重复附加到多帧。
+`action_source` 可指定唯一动作来源节点（`producer_id`），非该来源的动作包原样透传、不进入缓存。
 
 **`detection_merge`**：同一视频流喂给多个推理节点时，按 `(stream_id, frame_id)`
 配对合并多路检测框：
@@ -177,6 +183,10 @@ FusionNode 支持两种模式（`params.mode`）：
 - 告警事件 `AlertEvent` 带状态机（occur/last/end），`toJson()` 可序列化上报
 - 具体规则 20+ 种（人员入侵、安全帽、吸烟、攀爬、打架、火焰/烟雾/结晶等场景识别），
   位于 `src/rules/alert/`，复杂检测器在 `src/rules/alert/detector/`
+- 规则统一继承 `AlertRuleBase`（`src/rules/alert/alert_rule_base.h`）：基类实现 `process()`
+  模板（加锁 → `onPreProcess()` 每帧钩子 → 逐 zone 调 `rule_logic()` → 事件聚合/状态机衰减）
+  以及 `parseZones()` / `updateZoneEvent()`；派生类只需实现 `rule_logic()`（特征判定）与
+  `initialize()`；有状态检测器在 `onPreProcess()` 中**每帧仅运行一次**，避免多区域下重复推进状态机
 
 ### 5.1 跌倒相关规则（`fall_down` vs `falling`）
 

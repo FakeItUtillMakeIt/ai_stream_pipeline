@@ -44,6 +44,9 @@ private:
     // 注册所有路由处理函数
     void setupRoutes();
 
+    // 解析请求体 JSON；失败时置 400 并返回 false（区分解析错误与内部错误）
+    bool parseJsonBody(const httplib::Request& req, httplib::Response& res, nlohmann::json& out);
+
     // 管道管理接口（按模式分发）
     void handlePipelineBuild(const httplib::Request& req, httplib::Response& res);
     void handlePipelineStart(const httplib::Request& req, httplib::Response& res);
@@ -89,6 +92,9 @@ private:
 
     std::thread server_thread_;
     std::atomic<bool> running_{false};
+
+    // 可选 bearer token 鉴权（环境变量 AI_STREAM_API_TOKEN，未设置则不启用）
+    std::string api_token_;
 };
 
 } // namespace http

@@ -81,101 +81,35 @@ namespace ai_stream
             return true;
         }
 
-        RuleStatus ClimbingRule::process(
-            std::shared_ptr<core::InferenceResultPacket> packet,
-            AlertResult &alert_result,
-            int64_t current_time_ms)
+        void ClimbingRule::onPreProcess(const std::shared_ptr<core::InferenceResultPacket> &packet)
         {
-            LOG_INFO_FMT("ClimbingRule::process()");
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (!packet)
-                return RuleStatus::RULE_STATUS_FAIL;
-
             // 每帧只运行一次检测器/模型判定（多 zone 时不得重复推进状态机）
             last_is_climbing_ = false;
             last_climb_track_ids_.clear();
+            std::vector<ai_stream::core::InferenceResultPacket::BBox> person_boxes;
+            for (const auto &detection : packet->detections)
             {
-                std::vector<ai_stream::core::InferenceResultPacket::BBox> person_boxes;
-                for (const auto &detection : packet->detections)
+                if (detection.class_name == "person")
+                    person_boxes.push_back(detection);
+            }
+            if (person_boxes.empty())
+            {
+                return;
+            }
+            if (action_recognition_mode_ == ActionRecongnitionType::ACTION_RECOGNITION_MODEL)
+            {
+                for (const auto &action_result : packet->action_results)
                 {
-                    if (detection.class_name == "person")
-                        person_boxes.push_back(detection);
-                }
-                if (!person_boxes.empty())
-                {
-                    if (action_recognition_mode_ == ActionRecongnitionType::ACTION_RECOGNITION_MODEL)
-                    {
-                        for (const auto &action_result : packet->action_results)
-                        {
-                            if (action_result.action_label == alertTypeMap[AlertType::CLIMBING])
-                                last_is_climbing_ = true;
-                        }
-                    }
-                    else if (action_recognition_mode_ == ActionRecongnitionType::ACTION_RECOGNITION_POSE)
-                    {
-                        auto climb_result = climbing_detector_.process(person_boxes);
-                        last_is_climbing_ = climb_result.is_climbing;
-                        last_climb_track_ids_ = climb_result.active_track_ids;
-                    }
+                    if (action_result.action_label == alertTypeMap[AlertType::CLIMBING])
+                        last_is_climbing_ = true;
                 }
             }
-
-            if (valid_intrusion_zones_.empty())
+            else if (action_recognition_mode_ == ActionRecongnitionType::ACTION_RECOGNITION_POSE)
             {
-                rule_logic(packet, global_zone_no_, {});
+                auto climb_result = climbing_detector_.process(person_boxes);
+                last_is_climbing_ = climb_result.is_climbing;
+                last_climb_track_ids_ = climb_result.active_track_ids;
             }
-            else
-            {
-                for (const auto &zone : valid_intrusion_zones_)
-                {
-                    rule_logic(packet, zone.first, zone.second);
-                }
-            }
-            // 更新告警结果
-            for (auto it = zone_alert_map_.begin(); it != zone_alert_map_.end(); it++)
-            {
-                if (it->second.status != AlertStatus::ALERT_STATUS_OCCUR && it->second.status != AlertStatus::ALERT_STATUS_LAST && it->second.status != AlertStatus::ALERT_STATUS_END)
-                {
-                    continue;
-                }
-                alert_result.alert_events.push_back(it->second);
-                alert_result.alert_count++;
-            }
-
-            // 更新map
-            for (auto it = zone_alert_map_.begin(); it != zone_alert_map_.end();)
-            {
-                it->second.non_update_count++;
-                if (it->second.non_update_count > max_disappear_count_)
-                {
-                    it = zone_alert_map_.erase(it);
-                    continue;
-                }
-                if (it->second.status == AlertStatus::ALERT_STATUS_OCCUR)
-                {
-                    it->second.status = AlertStatus::ALERT_STATUS_LAST;
-                }
-                if (it->second.status == AlertStatus::ALERT_STATUS_END)
-                {
-                    it->second.status = AlertStatus::ALERT_STATUS_DEFAULT;
-                }
-                if (it->second.duration_ms > alert_duration_ms_ && it->second.status == AlertStatus::ALERT_STATUS_DEFAULT)
-                {
-                    // 生成一个告警id
-                    it->second.status = AlertStatus::ALERT_STATUS_OCCUR;
-                    it->second.alert_name = getName();
-                    it->second.alert_type = getType();
-                    it->second.alert_item_type = getAlertItemType();
-                }
-                if (it->second.status != AlertStatus::ALERT_STATUS_DEFAULT && it->second.non_update_count == max_disappear_count_)
-                {
-                    it->second.status = AlertStatus::ALERT_STATUS_END;
-                }
-                it->second.description = getName() + alert_status_map[it->second.status];
-                LOG_INFO_FMT("ClimbingRule::process() zone {} alert status: {}, non_update_count: {}, duration_ms: {}", int(it->first), alert_status_map[it->second.status], int(it->second.non_update_count), int(it->second.duration_ms));
-                it++;
-            }
-            return RuleStatus::RULE_STATUS_OK;
         }
 
         void ClimbingRule::reset()

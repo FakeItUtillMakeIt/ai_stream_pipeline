@@ -22,7 +22,8 @@ target_include_directories(http_server
         ${PROJECT_SOURCE_DIR}
 )
 
-# 如果节点库使用了 whole-archive，这里要关闭
+# --no-as-needed：ai_stream_nodes 靠静态 REGISTER_NODE 注册节点，无直接符号引用，
+# 否则会被链接器裁掉导致节点工厂为空、无法创建任何节点
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_link_options(http_server PRIVATE -Wl,--no-whole-archive)
+    target_link_options(http_server PRIVATE -Wl,--no-as-needed -Wl,--no-whole-archive)
 endif()

@@ -2,26 +2,25 @@
 #pragma once
 
 #include "detector/moving_phonecall_detector.h"
-#include "ai_stream/rules/i_alert_rule.h"
+#include "alert_rule_base.h"
 #include <unordered_map>
 #include <mutex>
 
 namespace ai_stream { 
 namespace rules {
-    class MovingPhoneCallRule : public IAlertRule {
+    class MovingPhoneCallRule : public AlertRuleBase {
     public:
         MovingPhoneCallRule() ;
         
         bool initialize(const nlohmann::json& config) override;
-        RuleStatus process(
-            std::shared_ptr<core::InferenceResultPacket> packet,
-            AlertResult& alert_result,
-            int64_t current_time_ms) override;
         void reset() override;
 
         AlertType getType() const override{ return AlertType::PHONE_CALL; };
         AlertItemType getAlertItemType() const override { return AlertItemType::ITEM_PERSON_BEHAVIOR; };
         nlohmann::json getStatistics() const override;
+
+    protected:
+        void onPreProcess(const std::shared_ptr<core::InferenceResultPacket> &packet) override;
 
     private:
         RuleStatus rule_logic(

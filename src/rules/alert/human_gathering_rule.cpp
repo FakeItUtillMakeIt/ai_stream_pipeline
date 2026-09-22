@@ -18,21 +18,18 @@ namespace ai_stream
             LOG_INFO_FMT("HumanGatheringRule::initialize()");
             try
             {
-                LOG_INFO_FMT("HumanGatheringRule::initialize() config: {}", config.dump().c_str());
                 if (config.contains("name") && config["name"].is_string())
                 {
                     setName(config.value("name", ""));
                 }
-                if (config.contains("rule_zones") && config["rule_zones"].is_array())
+                if (config.contains("gathering_thresh") && config["gathering_thresh"].is_array())
                 {
-                    for (size_t i = 0; i < config["rule_zones"].size(); i++)
+                    for (size_t i = 0; i < config["gathering_thresh"].size(); i++)
                     {
-                        for (size_t k = 0; k < config["rule_zones"][i].size(); k++)
+                        if (config["gathering_thresh"][i].is_number_integer())
                         {
-                            LOG_INFO_FMT("Rule zone {} add point {}: [{}, {}]", int(i + 1), int(k + 1), config["rule_zones"][i][k][0].get<float>(), config["rule_zones"][i][k][1].get<float>());
-                            intrusion_zones_[uint8_t(i + 1)].push_back(PixelPoint(config["rule_zones"][i][k][0].get<float>(), config["rule_zones"][i][k][1].get<float>()));
+                            gathering_thresh_map_[uint8_t(i + 1)] = config["gathering_thresh"][i].get<int>();
                         }
-                        gathering_thresh_map_[uint8_t(i + 1)] = config.contains("gathering_thresh") && config["gathering_thresh"].is_array() && config["gathering_thresh"].size() > i ? config["gathering_thresh"][i].get<int>() : 2;
                     }
                 }
             }
@@ -41,98 +38,23 @@ namespace ai_stream
                 LOG_WARN_FMT("HumanGatheringRule::initialize() exception: {}", e.what());
                 return false;
             }
-            LOG_INFO_FMT("HumanGatheringRule::initialize() success");
-
-            // 判断区域是否有效/配置
-            uint8_t invaild_zone_count = 0;
-            int min_gathering_thresh = std::numeric_limits<int>::max();
-            for (const auto &det_zone : intrusion_zones_)
+            if (!parseZones(config))
             {
-                bool zone_is_valid = ZoneValidator::zoneIsValid(det_zone.second);
-                if (!zone_is_valid)
-                {
-                    LOG_INFO_FMT("HumanGatheringRule::initialize() zone {} is invalid", det_zone.first);
-                    invaild_zone_count++;
-                    continue;
-                }
-                valid_intrusion_zones_[det_zone.first] = det_zone.second;
-                min_gathering_thresh = std::min(min_gathering_thresh, gathering_thresh_map_[det_zone.first]);
+                return false;
             }
-            // 如果所有区域都无效，则全域监测(不进行区域过滤)
+            // 全域回退：聚集阈值取所有已配置区域阈值的最小值（默认 2）
             if (valid_intrusion_zones_.empty())
             {
-                LOG_INFO("HumanGatheringRule::initialize() all zones are invalid, global monitoring");
-                // 聚集人数阈值配置为所有区域中最小的一个
-                gathering_thresh_map_[global_zone_no_] = min_gathering_thresh;
+                int min_thresh = 2;
+                bool any = false;
+                for (const auto &kv : gathering_thresh_map_)
+                {
+                    min_thresh = any ? std::min(min_thresh, kv.second) : kv.second;
+                    any = true;
+                }
+                gathering_thresh_map_[global_zone_no_] = min_thresh;
             }
-
             return true;
-        }
-
-        RuleStatus HumanGatheringRule::process(
-            std::shared_ptr<core::InferenceResultPacket> packet,
-            AlertResult &alert_result,
-            int64_t current_time_ms)
-        {
-            LOG_INFO_FMT("HumanGatheringRule::process()");
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (!packet)
-                return RuleStatus::RULE_STATUS_FAIL;
-            if (valid_intrusion_zones_.empty())
-            {
-                rule_logic(packet, global_zone_no_, {});
-            }
-            else
-            {
-                for (const auto &zone : valid_intrusion_zones_)
-                {
-                    rule_logic(packet, zone.first, zone.second);
-                }
-            }
-            // 更新告警结果
-            for (auto it = zone_alert_map_.begin(); it != zone_alert_map_.end(); it++)
-            {
-                if (it->second.status != AlertStatus::ALERT_STATUS_OCCUR && it->second.status != AlertStatus::ALERT_STATUS_LAST && it->second.status != AlertStatus::ALERT_STATUS_END)
-                {
-                    continue;
-                }
-                alert_result.alert_events.push_back(it->second);
-                alert_result.alert_count++;
-            }
-
-            // 更新map
-            for (auto it = zone_alert_map_.begin(); it != zone_alert_map_.end();)
-            {
-                it->second.non_update_count++;
-                if (it->second.non_update_count > max_disappear_count_)
-                {
-                    it = zone_alert_map_.erase(it);
-                    continue;
-                }
-                if (it->second.status == AlertStatus::ALERT_STATUS_OCCUR)
-                {
-                    it->second.status = AlertStatus::ALERT_STATUS_LAST;
-                }
-                if (it->second.status == AlertStatus::ALERT_STATUS_END)
-                {
-                    it->second.status = AlertStatus::ALERT_STATUS_DEFAULT;
-                }
-                if (it->second.duration_ms > alert_duration_ms_ && it->second.status == AlertStatus::ALERT_STATUS_DEFAULT)
-                {
-                    // 生成一个告警id
-                    it->second.status = AlertStatus::ALERT_STATUS_OCCUR;
-                    it->second.alert_name = getName();
-                    it->second.alert_type = getType();
-                    it->second.alert_item_type = getAlertItemType();
-                }
-                if (it->second.status != AlertStatus::ALERT_STATUS_DEFAULT && it->second.non_update_count == max_disappear_count_)
-                {
-                    it->second.status = AlertStatus::ALERT_STATUS_END;
-                }
-                it->second.description = getName() + alert_status_map[it->second.status];
-                it++;
-            }
-            return RuleStatus::RULE_STATUS_OK;
         }
 
         void HumanGatheringRule::reset()
@@ -168,27 +90,11 @@ namespace ai_stream
                     person_track_ids.push_back(detection.track_id);
                 }
             }
-            // 更新zone_alert_map_
-            if (person_count < gathering_thresh_map_[zone_no])
+            // 更新zone_alert_map_（未配置阈值的区域默认 2 人）
+            const int thresh = gathering_thresh_map_.count(zone_no) ? gathering_thresh_map_.at(zone_no) : 2;
+            if (person_count < thresh)
                 return RuleStatus::RULE_STATUS_OK;
-            auto it = zone_alert_map_.find(zone_no);
-            if (it == zone_alert_map_.end())
-            {
-                auto alert_target = AlertEvent();
-                alert_target.detect_ms = packet->timestamp_ms;
-                alert_target.zone_no = zone_no;
-                alert_target.non_update_count = 0;
-                alert_target.duration_ms = 0;
-                alert_target.object_ids = person_track_ids;
-                zone_alert_map_.insert(std::make_pair(zone_no, alert_target));
-            }
-            else
-            {
-                auto &alert_target = it->second;
-                alert_target.non_update_count = 0;
-                alert_target.duration_ms = packet->timestamp_ms - alert_target.detect_ms;
-                alert_target.object_ids = person_track_ids;
-            }
+            updateZoneEvent(zone_no, packet, person_track_ids);
 
             return RuleStatus::RULE_STATUS_OK;
         }

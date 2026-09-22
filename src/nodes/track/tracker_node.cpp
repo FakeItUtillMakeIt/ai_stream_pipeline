@@ -111,8 +111,9 @@ void TrackerNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
         broadcast(packet);
         return;
     }
-    // 过滤不是当前追踪器绑定流的包
+    // 过滤不是当前追踪器绑定流的包（非本流透传，避免多路分支下静默丢包）
     if (!sub_stream_id_.empty() && infer_result->source_id != sub_stream_id_) {
+        broadcast(packet);
         return;
     }
     LOG_DEBUG_FMT("[TrackerNode] {} Processing packet from stream {},expected: {}", tracker_id_, infer_result->source_id, sub_stream_id_);
@@ -143,25 +144,37 @@ void TrackerNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
         }
     }
 
-    // 为新轨迹绑定 class_name，同时完成检测框匹配（单次遍历）
-    // 使用 IoU 矩阵避免重复计算
+    // 为新轨迹绑定 class_name，同时完成检测框匹配
     for (auto& det : infer_result->detections) {
         det.track_id = -1;
         det.track_age = 0;
         det.track_active = false;
     }
 
-    for (const auto& track : tracks) {
+    const int num_dets = static_cast<int>(infer_result->detections.size());
+    const int num_tracks = static_cast<int>(tracks.size());
+
+    // 预计算 IoU 矩阵 [det][track]，供类别绑定与匹配复用，避免 O(D×T) 重复计算
+    std::vector<std::vector<float>> iou_mat(num_dets, std::vector<float>(num_tracks, 0.0f));
+    for (int d = 0; d < num_dets; ++d) {
+        for (int t = 0; t < num_tracks; ++t) {
+            iou_mat[d][t] = computeIoU(infer_result->detections[d], tracks[t]);
+        }
+    }
+
+    for (int t = 0; t < num_tracks; ++t) {
+        const auto& track = tracks[t];
+
         // 找与当前轨迹 IoU 最大的检测框（不限类别），用于类别绑定/跃迁判断
         float best_iou = 0.0f;
-        const core::InferenceResultPacket::BBox* best_det = nullptr;
-        for (const auto& det : infer_result->detections) {
-            float iou = computeIoU(det, track);
-            if (iou > best_iou) {
-                best_iou = iou;
-                best_det = &det;
+        int best_d = -1;
+        for (int d = 0; d < num_dets; ++d) {
+            if (iou_mat[d][t] > best_iou) {
+                best_iou = iou_mat[d][t];
+                best_d = d;
             }
         }
+        const auto* best_det = best_d >= 0 ? &infer_result->detections[best_d] : nullptr;
 
         auto name_it = track_class_names_.find(track.track_id);
         if (name_it == track_class_names_.end()) {
@@ -181,11 +194,11 @@ void TrackerNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
         }
 
         // 检测框匹配（使用 track_class_names_ 进行类别匹配）
-        for (auto& det : infer_result->detections) {
+        for (int d = 0; d < num_dets; ++d) {
+            auto& det = infer_result->detections[d];
             if (det.track_id != -1) continue; // 已匹配
 
-            float iou = computeIoU(det, track);
-            if (iou <= 0.5f) continue;
+            if (iou_mat[d][t] <= 0.5f) continue;
 
             // 类别匹配
             bool class_match;

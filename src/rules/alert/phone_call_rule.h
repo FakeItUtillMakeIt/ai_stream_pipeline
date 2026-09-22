@@ -1,21 +1,17 @@
 // src/rules/alert/phone_call_rule.h
 #pragma once
 
-#include "ai_stream/rules/i_alert_rule.h"
+#include "alert_rule_base.h"
 #include <unordered_map>
 #include <mutex>
 
 namespace ai_stream { 
 namespace rules {
-    class PhoneCallRule : public IAlertRule {
+    class PhoneCallRule : public AlertRuleBase {
     public:
         PhoneCallRule() ;
         
         bool initialize(const nlohmann::json& config) override;
-        RuleStatus process(
-            std::shared_ptr<core::InferenceResultPacket> packet,
-            AlertResult& alert_result,
-            int64_t current_time_ms) override;
         void reset() override;
 
         AlertType getType() const override{ return AlertType::PHONE_CALL; };

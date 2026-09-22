@@ -1,7 +1,7 @@
 // src/rules/alert/fire_lane_occupancy_rule.h
 #pragma once
 
-#include "ai_stream/rules/i_alert_rule.h"
+#include "alert_rule_base.h"
 #include "detector/feature_extractor.h"
 #include <unordered_map>
 #include <mutex>
@@ -12,16 +12,12 @@ namespace ai_stream
     namespace rules
     {
 
-        class FireLaneOccupancyRule : public IAlertRule
+        class FireLaneOccupancyRule : public AlertRuleBase
         {
         public:
             FireLaneOccupancyRule();
 
             bool initialize(const nlohmann::json &config) override;
-            RuleStatus process(
-                std::shared_ptr<core::InferenceResultPacket> packet,
-                AlertResult &alert_result,
-                int64_t current_time_ms = 0) override;
 
             AlertType getType() const override { return AlertType::FIRE_LANE_OCCUPANCY; }
             AlertItemType getAlertItemType() const override { return AlertItemType::ITEM_SCENE_RECOGNITION; }

@@ -48,9 +48,10 @@ public:
 protected:
     void processPacket(std::shared_ptr<BasePacket> packet) override {
         if (packet->type == PacketType::STREAM_END) {
+            // 先转发再自停，避免测试在 stop() 与 broadcast() 之间观察到未转发的中间态
             stream_end_count++;
-            stop();
             broadcast(packet);
+            stop();
             return;
         }
         if (delay_ms_ > 0) {

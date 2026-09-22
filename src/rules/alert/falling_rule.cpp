@@ -124,81 +124,13 @@ namespace ai_stream
             return true;
         }
 
-        RuleStatus FallingRule::process(
-            std::shared_ptr<core::InferenceResultPacket> packet,
-            AlertResult &alert_result,
-            int64_t current_time_ms)
+        void FallingRule::onPreProcess(const std::shared_ptr<core::InferenceResultPacket> &packet)
         {
-            LOG_INFO_FMT("FallingRule::process()");
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (!packet)
-                return RuleStatus::RULE_STATUS_FAIL;
-
-            int64_t now_ms = current_time_ms > 0 ? current_time_ms : packet->timestamp_ms;
-
             // 更新轨迹类别转移状态（每帧仅一次）
+            const int64_t now_ms = packet->timestamp_ms;
             confirmed_falls_.clear();
             updateTrackStates(packet, now_ms);
             cleanupStaleTracks(now_ms);
-
-            if (valid_intrusion_zones_.empty())
-            {
-                rule_logic(packet, global_zone_no_, {});
-            }
-            else
-            {
-                for (const auto &zone : valid_intrusion_zones_)
-                {
-                    rule_logic(packet, zone.first, zone.second);
-                }
-            }
-
-            // 更新告警结果
-            uint8_t alert_count = alert_result.alert_events.size();
-            for (auto it = zone_alert_map_.begin(); it != zone_alert_map_.end(); it++)
-            {
-                if (it->second.status != AlertStatus::ALERT_STATUS_OCCUR && it->second.status != AlertStatus::ALERT_STATUS_LAST && it->second.status != AlertStatus::ALERT_STATUS_END)
-                {
-                    continue;
-                }
-                alert_result.alert_events.push_back(it->second);
-                alert_result.alert_count++;
-                alert_count++;
-            }
-
-            // 更新map
-            for (auto it = zone_alert_map_.begin(); it != zone_alert_map_.end();)
-            {
-                it->second.non_update_count++;
-                if (it->second.non_update_count > max_disappear_count_)
-                {
-                    it = zone_alert_map_.erase(it);
-                    continue;
-                }
-                if (it->second.status == AlertStatus::ALERT_STATUS_OCCUR)
-                {
-                    it->second.status = AlertStatus::ALERT_STATUS_LAST;
-                }
-                if (it->second.status == AlertStatus::ALERT_STATUS_END)
-                {
-                    it->second.status = AlertStatus::ALERT_STATUS_DEFAULT;
-                }
-                if (it->second.duration_ms > alert_duration_ms_ && it->second.status == AlertStatus::ALERT_STATUS_DEFAULT)
-                {
-                    // 生成一个告警id
-                    it->second.status = AlertStatus::ALERT_STATUS_OCCUR;
-                    it->second.alert_name = getName();
-                    it->second.alert_type = getType();
-                    it->second.alert_item_type = getAlertItemType();
-                }
-                if (it->second.status != AlertStatus::ALERT_STATUS_DEFAULT && it->second.non_update_count == max_disappear_count_)
-                {
-                    it->second.status = AlertStatus::ALERT_STATUS_END;
-                }
-                it->second.description = getName() + alert_status_map[it->second.status];
-                it++;
-            }
-            return RuleStatus::RULE_STATUS_OK;
         }
 
         void FallingRule::updateTrackStates(
@@ -314,24 +246,7 @@ namespace ai_stream
                 return RuleStatus::RULE_STATUS_OK;
             }
 
-            auto it = zone_alert_map_.find(zone_no);
-            if (it == zone_alert_map_.end())
-            {
-                auto alert_target = AlertEvent();
-                alert_target.detect_ms = packet->timestamp_ms;
-                alert_target.zone_no = zone_no;
-                alert_target.non_update_count = 0;
-                alert_target.duration_ms = 0;
-                alert_target.object_ids = fall_track_ids;
-                zone_alert_map_.insert(std::make_pair(zone_no, alert_target));
-            }
-            else
-            {
-                auto &alert_target = it->second;
-                alert_target.non_update_count = 0;
-                alert_target.duration_ms = packet->timestamp_ms - alert_target.detect_ms;
-                alert_target.object_ids = fall_track_ids;
-            }
+            updateZoneEvent(zone_no, packet, fall_track_ids);
             return RuleStatus::RULE_STATUS_OK;
         }
 

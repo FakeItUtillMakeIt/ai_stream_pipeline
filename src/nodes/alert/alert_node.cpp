@@ -23,6 +23,8 @@
 #include "3rd_party/log_mgr/log_mgr.h"
 #include <opencv2/opencv.hpp>
 #include <future>
+#include <thread>
+#include <algorithm>
 
 namespace ai_stream {
 namespace nodes {
@@ -37,18 +39,43 @@ AlertNode::~AlertNode() {
 }
 
 bool AlertNode::onStartup() {
-    std::lock_guard<std::mutex> lock(mutex_);
+    size_t rule_count = 0;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        rule_count = rules_.size();
+    }
     if (!snapshot_dir_.empty()) {
         std::filesystem::create_directories(snapshot_dir_);
     }
-    LOG_INFO_FMT("[AlertNode] Started with {} rules", rules_.size());
+    startPool();
+    LOG_INFO_FMT("[AlertNode] Started with {} rules", rule_count);
     return true;
 }
 
 void AlertNode::onShutdown() {
+    stopPool();
     std::lock_guard<std::mutex> lock(mutex_);
     for (auto& r : rules_) r->reset();
     LOG_INFO("[AlertNode] Stopped");
+}
+
+void AlertNode::startPool() {
+    size_t rule_count = 0;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        rule_count = rules_.size();
+    }
+    size_t hw = std::thread::hardware_concurrency();
+    if (hw == 0) hw = 4;
+    size_t threads = std::max<size_t>(1, std::min(rule_count, std::min<size_t>(hw, 8)));
+    pool_ = std::make_unique<ThreadPool>(threads);
+    LOG_INFO_FMT("[AlertNode] Thread pool started with {} threads", threads);
+}
+
+void AlertNode::stopPool() {
+    if (pool_) {
+        pool_.reset();  // 析构会置 stop 并 join，且处理完已提交任务
+    }
 }
 
 bool AlertNode::configureImpl(const std::string& node_id, const nlohmann::json& params) {
@@ -132,36 +159,36 @@ void AlertNode::setSnapshotDir(const std::string& dir) {
 std::vector<rules::AlertResult> AlertNode::process_all_alerts_parallel(std::shared_ptr<core::InferenceResultPacket> packet)
 {
     std::vector<rules::AlertResult> all_alert_results;
-    
+
     std::vector<rules::AlertRulePtr> rules_snapshot;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         rules_snapshot = rules_;
     }
-    
+
     all_alert_results.reserve(rules_snapshot.size());
+    if (rules_snapshot.empty()) {
+        return all_alert_results;
+    }
+    // 线程池未就绪时回退串行，保证不丢结果
+    if (!pool_) {
+        return process_all_alerts_sequence(packet);
+    }
+
     std::vector<std::future<rules::AlertResult>> futures;
     futures.reserve(rules_snapshot.size());
-    
-    size_t task_count =0;
     for (auto& rule : rules_snapshot)
     {
         auto rule_copy = rule;
-        auto future = std::async(std::launch::async, [this, rule_copy, packet]() {
+        futures.push_back(pool_->enqueue([this, rule_copy, packet]() {
             return process_single_alert(rule_copy, packet);
-        });
-        futures.push_back(std::move(future));
-        task_count++;
+        }));
     }
-    
-    LOG_INFO_FMT("[AlertNode] Submitted {} tasks to future", task_count);
-    
-    size_t task_done = 0;
-    for (auto& future : futures) { 
+
+    for (auto& future : futures) {
         try
         {
             all_alert_results.push_back(future.get());
-            task_done++;
         }
         catch(const std::exception& e)
         {
@@ -172,10 +199,8 @@ std::vector<rules::AlertResult> AlertNode::process_all_alerts_parallel(std::shar
             failed_result.alert_type = rules::AlertType::ALERT_UNKNOWN;
             failed_result.error_message= e.what();
             all_alert_results.push_back(failed_result);
-            task_done++;
         }
     }
-    LOG_INFO_FMT("[AlertNode] Completed {} tasks", task_done);
     return all_alert_results;
 }
 

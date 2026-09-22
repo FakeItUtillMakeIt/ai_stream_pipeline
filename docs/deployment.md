@@ -47,6 +47,9 @@ cd <工作目录>   # 需包含 config/，且对 logs/ 有写权限
 ./build/src/http/http_server 0.0.0.0 8080 --async
 ```
 
+> 生产环境建议：绑定内网/回环地址，并通过环境变量 `AI_STREAM_API_TOKEN=<token>` 开启
+> Bearer 鉴权（未设置则不鉴权）。请求限制/错误码详见 [api_reference.md](api_reference.md)。
+
 接口详见 [api_reference.md](api_reference.md)。
 
 ### 运行时配置

@@ -3,10 +3,12 @@
 
 #include "ai_stream/core/queued_node.h"
 #include "ai_stream/rules/i_alert_rule.h"
+#include "3rd_party/thread_pool/thread_pool.hpp"
 #include <vector>
 #include <functional>
 #include <mutex>
 #include <atomic>
+#include <memory>
 #include <filesystem>
 
 namespace ai_stream {
@@ -40,12 +42,18 @@ private:
     void saveSnapshot(std::shared_ptr<core::InferenceResultPacket> packet,
                       const rules::AlertEvent& event);
 
+    // 常驻规则执行线程池（替代每帧每规则 std::async，避免线程爆炸）
+    void startPool();
+    void stopPool();
+
 private:
     std::atomic<bool> enable_parallel_{true};
     std::vector<rules::AlertRulePtr> rules_;
     AlertCallback callback_;
     mutable std::mutex mutex_;
     std::string snapshot_dir_ = "./alerts";
+
+    std::unique_ptr<ThreadPool> pool_;
 };
 
 } // namespace nodes

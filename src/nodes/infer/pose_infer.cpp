@@ -20,11 +20,12 @@ namespace nodes {
 // person 框收集、CPU crop+letterbox 预处理、关键点解码。
 // ============================================================
 
-PoseInferNode::PoseInferNode() : IInferNode("PoseInfer") {
+PoseInferNode::PoseInferNode() : core::QueuedNode<IInferNode>("PoseInfer") {
     LOG_INFO_FMT("[PoseInfer] Constructor");
 }
 
 PoseInferNode::~PoseInferNode() {
+    // 先停止并 join worker（基类 stop 幂等），再释放引擎，避免与 worker 并发
     stop();
     engine_.reset();
     LOG_INFO_FMT("[PoseInfer] Destructor");
@@ -69,9 +70,8 @@ void PoseInferNode::setPrecision(const std::string& precision) {
 
 void PoseInferNode::setBatchSize(int batch_size) {
     batch_size_ = batch_size;
-    queue_.setMaxSize(batch_size_ * 4);
-    LOG_INFO_FMT("[PoseInfer] Set max persons per frame: {}, queue size: {}",
-                  batch_size, queue_.getMaxSize());
+    setQueueCapacity(static_cast<size_t>(batch_size > 0 ? batch_size * 4 : 64));
+    LOG_INFO_FMT("[PoseInfer] Set max persons per frame: {}", batch_size);
 }
 
 std::pair<int, int> PoseInferNode::getInputSize() const {
@@ -83,84 +83,52 @@ std::vector<std::string> PoseInferNode::getClassNames() const {
     return class_names_;
 }
 
-bool PoseInferNode::start() {
+bool PoseInferNode::onStartup() {
     if (!engine_) {
         LOG_WARN_FMT("[PoseInfer] No model loaded, will use mock inference");
     }
-    // 如果之前的 worker 线程还未 join，先 join 它（自停后线程可能还在运行）
-    if (worker_.joinable()) {
-        worker_.join();
-    }
-    queue_.reset();
-    running_ = true;
-    worker_ = std::thread(&PoseInferNode::inferLoop, this);
     LOG_INFO_FMT("[PoseInfer] Started with max_persons={}", batch_size_);
     return true;
 }
 
-void PoseInferNode::stop() {
-    running_ = false;
-    queue_.stop();
-    if (worker_.joinable()) {
-        worker_.join();
-    }
+void PoseInferNode::onShutdown() {
     LOG_INFO_FMT("[PoseInfer] Stopped");
 }
 
-void PoseInferNode::pushData(std::shared_ptr<core::BasePacket> packet) {
-    if (!packet || !running_) return;
+void PoseInferNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
+    if (!packet) return;
+
     if (packet->type == core::PacketType::STREAM_END) {
-        // 控制包强制入队，worker 处理完前序帧后再广播、退出
-        while (!queue_.tryPush(packet)) {
-            std::shared_ptr<core::BasePacket> discarded;
-            if (!queue_.tryPop(discarded)) return;
-        }
+        // 基类在该包处理完后统一 stop()
+        LOG_INFO_FMT("[PoseInfer] Stream end");
+        broadcast(packet);
         return;
     }
-    if (packet->type != core::PacketType::META_DATA) return;
-    if (!std::dynamic_pointer_cast<core::InferenceResultPacket>(packet)) return;
-    queue_.push(packet, std::chrono::milliseconds(10));
-}
-
-// ============================================================
-// 推理主循环：来一帧处理一帧
-// ============================================================
-void PoseInferNode::inferLoop() {
-    while (running_) {
-        in_time_ms_ = utils::TimeUtil::currentTimeMs();
-
-        std::shared_ptr<core::BasePacket> pkt;
-        if (!queue_.pop(pkt, std::chrono::milliseconds(100))) {
-            continue;
-        }
-
-        if (pkt->type == core::PacketType::STREAM_END) {
-            LOG_INFO_FMT("[PoseInfer] Stream end received in worker thread");
-            running_ = false;
-            broadcast(pkt);
-            break;
-        }
-
-        auto packet = std::static_pointer_cast<core::InferenceResultPacket>(pkt);
-
-        auto t0 = std::chrono::high_resolution_clock::now();
-        processFrame(packet);
-        auto t1 = std::chrono::high_resolution_clock::now();
-
-        float infer_ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
-        LOG_INFO_FMT("[PoseInfer] Frame processed: {} persons, total={:.2f}ms",
-                     packet->pose_results.size(), infer_ms);
-
-        // 耗时统计
-        packet->cost_ms = utils::TimeUtil::currentTimeMs() - in_time_ms_;
-        if (packet->source_frame) {
-            packet->cost_time_map = packet->source_frame->cost_time_map;
-        }
-        packet->cost_time_map.insert({name_, packet->cost_ms});
-
-        // 广播结果
+    if (packet->type != core::PacketType::META_DATA) {
         broadcast(packet);
+        return;
     }
+    auto packet_infer = std::dynamic_pointer_cast<core::InferenceResultPacket>(packet);
+    if (!packet_infer) {
+        broadcast(packet);
+        return;
+    }
+
+    auto t0 = std::chrono::high_resolution_clock::now();
+    processFrame(packet_infer);
+    auto t1 = std::chrono::high_resolution_clock::now();
+
+    float infer_ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
+    LOG_INFO_FMT("[PoseInfer] Frame processed: {} persons, total={:.2f}ms",
+                 packet_infer->pose_results.size(), infer_ms);
+
+    packet_infer->cost_ms = utils::TimeUtil::currentTimeMs() - in_time_ms_;
+    if (packet_infer->source_frame) {
+        packet_infer->cost_time_map = packet_infer->source_frame->cost_time_map;
+    }
+    packet_infer->cost_time_map.insert({name_, packet_infer->cost_ms});
+
+    broadcast(packet_infer);
 }
 
 // ============================================================

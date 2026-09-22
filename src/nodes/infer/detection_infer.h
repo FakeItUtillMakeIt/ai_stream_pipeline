@@ -4,7 +4,7 @@
 #pragma once
 
 #include "ai_stream/nodes/i_infer_node.h"
-#include "ai_stream/core/bounded_queue.h"
+#include "ai_stream/core/queued_node.h"
 #include "ai_stream/hal/i_detection_inference_engine.h"
 #include "ai_stream/hal/detection_inference_engine_factory.h"
 
@@ -59,16 +59,23 @@ cudaError_t cudaMallocHost(T** ptr, size_t size) {
 #include <string>
 #include <memory>
 #include <deque>
+#include <chrono>
 
 namespace ai_stream {
 namespace nodes {
 
-class DetectionInferNode : public IInferNode {
+class DetectionInferNode : public core::QueuedNode<IInferNode> {
 public:
     DetectionInferNode();
     ~DetectionInferNode() override;
 
     bool acceptsGpuFrame() const override { return true; }
+
+    // QueuedNode 钩子（批次收集在 worker 线程串行执行，无需额外锁）
+    bool onStartup() override;
+    void onShutdown() override;
+    void processPacket(std::shared_ptr<core::BasePacket> packet) override;
+    void onIdle() override;
 
     bool loadModel(const std::string& model_path) override;
     void setPrecision(const std::string& precision) override;
@@ -103,13 +110,8 @@ public:
     // 设置推理后端类型
     void setInferenceBackend(hal::DetectionBackend backend) { backend_type_ = backend; }
 
-    bool start() override;
-    void stop() override;
-    bool isRunning() const override { return running_.load(); }
-    void pushData(std::shared_ptr<core::BasePacket> packet) override;
-
 private:
-    void inferLoop();
+    void flushBatch();
     bool initEngine(const std::string& engine_path);
 
     std::vector<std::shared_ptr<core::InferenceResultPacket>> processBatch(
@@ -125,7 +127,12 @@ private:
         const float letter_scale[] = nullptr,
         const int letter_pad_x[] = nullptr,
         const int letter_pad_y[] = nullptr,
-        const int letterbox_used[] = nullptr);
+        const int letterbox_used[] = nullptr,
+        // 可选：直接指向 D2H 结果（pinned 等），为空则回退成员 h_* 缓冲
+        const float* boxes = nullptr,
+        const float* scores = nullptr,
+        const int64_t* classes = nullptr,
+        const int64_t* batch_ids = nullptr);
 
     // CUDA Graph 相关（TensorRT 特有优化）
     bool captureCudaGraph(int batch_size);
@@ -218,10 +225,11 @@ private:
         "safety_belt", "sleeping", "toy", "pad", "camera", "ring_light"
     };
 
-    // 数据队列和线程（BasePacket：需承载 STREAM_END 控制包）
-    core::BoundedQueue<std::shared_ptr<core::BasePacket>> queue_{64};
-    std::thread worker_;
-    std::atomic<bool> running_{false};
+    // 批次收集（仅在 worker 线程内访问，无需锁）
+    std::vector<std::shared_ptr<core::VideoFramePacket>> batch_frames_;
+    std::chrono::steady_clock::time_point batch_start_tp_;
+    uint64_t batch_start_ms_ = 0;
+    bool batch_active_ = false;
 
     std::chrono::milliseconds batch_timeout_ms_{20};
     std::atomic<int> max_batch_size_{1};

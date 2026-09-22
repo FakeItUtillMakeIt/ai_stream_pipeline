@@ -116,8 +116,8 @@ void Node::recordMetricsImpl(uint64_t latency_ms, bool dropped) {
     if (dropped) {
         mc.recordDropped(pid, name_);
     } else {
-        mc.recordLatency(pid, name_, latency_ms);
-        mc.recordProcessed(pid, name_);
+        // 一次加锁完成 latency + processed，降低热路径锁争用
+        mc.record(pid, name_, latency_ms);
     }
 }
 

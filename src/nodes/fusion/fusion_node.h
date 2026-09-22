@@ -64,8 +64,6 @@ namespace nodes {
         };
         std::map<std::pair<uint32_t, int64_t>, PendingFrame> pending_;
         static constexpr size_t MAX_PENDING_FRAMES = 1000;
-
-        mutable std::mutex mutex_;
     };
 
 } // namespace nodes

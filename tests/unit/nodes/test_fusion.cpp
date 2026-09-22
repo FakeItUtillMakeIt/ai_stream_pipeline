@@ -246,6 +246,78 @@ TEST(FusionConfigTest, MissingSourcesFails) {
     EXPECT_FALSE(fusion->configure("fusion1", {{"mode", "detection_merge"}}));
 }
 
+// OBJECT_LEVEL：动作只附加到 track_id 匹配的目标帧
+TEST_F(FusionFixture, ObjectLevelFiltersByTrackId) {
+    setup({{"mode", "object_level"}, {"timestamp_threshold_ms", 1000}});
+
+    auto action = std::make_shared<InferenceResultPacket>();
+    action->producer_id = "action1";
+    action->timestamp_ms = 2000;
+    InferenceResultPacket::ActionResult ar;
+    ar.action_label = "climbing";
+    ar.confidence = 0.8f;
+    ar.track_id = 42;
+    action->action_results.push_back(ar);
+    fusion->pushData(action);
+
+    // 不匹配的 track_id -> 不附加
+    auto det = makeDetResult("tracker1", 1, 1, {{0, "person"}});
+    det->timestamp_ms = 2050;
+    det->detections[0].track_id = 99;
+    fusion->pushData(det);
+    ASSERT_TRUE(waitUntil([&] { return sink->count() >= 1; }));
+    {
+        auto got = std::dynamic_pointer_cast<InferenceResultPacket>(sink->received()[0]);
+        ASSERT_NE(got, nullptr);
+        EXPECT_EQ(got->action_results.size(), 0u);
+    }
+    sink->clear();
+
+    // 匹配的 track_id -> 附加
+    auto det2 = makeDetResult("tracker1", 1, 2, {{0, "person"}});
+    det2->timestamp_ms = 2100;
+    det2->detections[0].track_id = 42;
+    fusion->pushData(det2);
+    ASSERT_TRUE(waitUntil([&] { return sink->count() >= 1; }));
+    auto got2 = std::dynamic_pointer_cast<InferenceResultPacket>(sink->received()[0]);
+    ASSERT_NE(got2, nullptr);
+    ASSERT_EQ(got2->action_results.size(), 1u);
+    EXPECT_EQ(got2->action_results[0].action_label, "climbing");
+}
+
+// 动作缓存一次性消费：同一次动作只附加到一帧
+TEST_F(FusionFixture, ActionConsumedOnce) {
+    setup({{"mode", "action"}, {"timestamp_threshold_ms", 1000}});
+
+    auto action = std::make_shared<InferenceResultPacket>();
+    action->producer_id = "action1";
+    action->timestamp_ms = 2000;
+    InferenceResultPacket::ActionResult ar;
+    ar.action_label = "fighting";
+    action->action_results.push_back(ar);
+    fusion->pushData(action);
+
+    auto det1 = makeDetResult("tracker1", 1, 1, {{0, "person"}});
+    det1->timestamp_ms = 2100;
+    fusion->pushData(det1);
+    ASSERT_TRUE(waitUntil([&] { return sink->count() >= 1; }));
+    {
+        auto got = std::dynamic_pointer_cast<InferenceResultPacket>(sink->received()[0]);
+        ASSERT_NE(got, nullptr);
+        EXPECT_EQ(got->action_results.size(), 1u);
+    }
+    sink->clear();
+
+    // 第二次检测在阈值内，但动作已被消费 -> 不附加
+    auto det2 = makeDetResult("tracker1", 1, 2, {{0, "person"}});
+    det2->timestamp_ms = 2200;
+    fusion->pushData(det2);
+    ASSERT_TRUE(waitUntil([&] { return sink->count() >= 1; }));
+    auto got2 = std::dynamic_pointer_cast<InferenceResultPacket>(sink->received()[0]);
+    ASSERT_NE(got2, nullptr);
+    EXPECT_EQ(got2->action_results.size(), 0u);
+}
+
 // 跨源 NMS：同名类别高 IoU 框去重
 TEST_F(FusionFixture, CrossNmsDedup) {
     setup({

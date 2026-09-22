@@ -45,19 +45,6 @@ namespace ai_stream
                     update_frames_ = config["update_frames"].get<int>();
                 }
 
-                if (config.contains("rule_zones") && config["rule_zones"].is_array())
-                {
-                    for (size_t i = 0; i < config["rule_zones"].size(); i++)
-                    {
-                        for (size_t k = 0; k < config["rule_zones"][i].size(); k++)
-                        {
-                            float x = config["rule_zones"][i][k][0].get<float>();
-                            float y = config["rule_zones"][i][k][1].get<float>();
-                            intrusion_zones_[uint8_t(i + 1)].push_back(PixelPoint(x, y));
-                        }
-                    }
-                }
-
                 if (config.contains("reference_image") && config["reference_image"].is_string())
                 {
                     std::string img_path = config["reference_image"].get<std::string>();
@@ -77,20 +64,9 @@ namespace ai_stream
                 return false;
             }
 
-            for (const auto &det_zone : intrusion_zones_)
+            if (!parseZones(config))
             {
-                bool zone_is_valid = ZoneValidator::zoneIsValid(det_zone.second);
-                if (!zone_is_valid)
-                {
-                    LOG_INFO_FMT("FireLaneOccupancyRule::initialize() zone {} is invalid", det_zone.first);
-                    continue;
-                }
-                valid_intrusion_zones_[det_zone.first] = det_zone.second;
-            }
-
-            if (valid_intrusion_zones_.empty())
-            {
-                LOG_INFO("FireLaneOccupancyRule::initialize() all zones are invalid, global monitoring");
+                return false;
             }
 
             LOG_INFO_FMT("FireLaneOccupancyRule::initialize() success (threshold={}, confirm={}, init={}, update={}, has_ref_img={})",
@@ -108,80 +84,6 @@ namespace ai_stream
             }
             has_reference_image_ = true;
             return true;
-        }
-
-        RuleStatus FireLaneOccupancyRule::process(
-            std::shared_ptr<core::InferenceResultPacket> packet,
-            AlertResult &alert_result,
-            int64_t current_time_ms)
-        {
-            LOG_INFO_FMT("FireLaneOccupancyRule::process()");
-            std::lock_guard<std::mutex> lock(mutex_);
-
-            if (!packet || !packet->source_frame || !packet->source_frame->mat)
-            {
-                return RuleStatus::RULE_STATUS_FAIL;
-            }
-
-            if (valid_intrusion_zones_.empty())
-            {
-                rule_logic(packet, global_zone_no_, {});
-            }
-            else
-            {
-                for (const auto &zone : valid_intrusion_zones_)
-                {
-                    rule_logic(packet, zone.first, zone.second);
-                }
-            }
-
-            uint8_t alert_count = 0;
-            for (auto it = zone_alert_map_.begin(); it != zone_alert_map_.end(); it++)
-            {
-                if (it->second.status != AlertStatus::ALERT_STATUS_OCCUR &&
-                    it->second.status != AlertStatus::ALERT_STATUS_LAST &&
-                    it->second.status != AlertStatus::ALERT_STATUS_END)
-                {
-                    continue;
-                }
-                alert_result.alert_events.push_back(it->second);
-                alert_result.alert_count++;
-                alert_count++;
-            }
-
-            for (auto it = zone_alert_map_.begin(); it != zone_alert_map_.end();)
-            {
-                it->second.non_update_count++;
-                if (it->second.non_update_count > max_disappear_count_)
-                {
-                    it = zone_alert_map_.erase(it);
-                    continue;
-                }
-                if (it->second.status == AlertStatus::ALERT_STATUS_OCCUR)
-                {
-                    it->second.status = AlertStatus::ALERT_STATUS_LAST;
-                }
-                if (it->second.status == AlertStatus::ALERT_STATUS_END)
-                {
-                    it->second.status = AlertStatus::ALERT_STATUS_DEFAULT;
-                }
-                if (it->second.duration_ms > alert_duration_ms_ && it->second.status == AlertStatus::ALERT_STATUS_DEFAULT)
-                {
-                    it->second.status = AlertStatus::ALERT_STATUS_OCCUR;
-                    it->second.alert_name = getName();
-                    it->second.alert_type = getType();
-                    it->second.alert_item_type = getAlertItemType();
-                }
-                if (it->second.status != AlertStatus::ALERT_STATUS_DEFAULT &&
-                    it->second.non_update_count == max_disappear_count_)
-                {
-                    it->second.status = AlertStatus::ALERT_STATUS_END;
-                }
-                it->second.description = getName() + alert_status_map[it->second.status];
-                it++;
-            }
-
-            return RuleStatus::RULE_STATUS_OK;
         }
 
         void FireLaneOccupancyRule::reset()
@@ -206,6 +108,10 @@ namespace ai_stream
             uint8_t zone_no, ZonePoints zone_points)
         {
 
+            if (!packet->source_frame || !packet->source_frame->mat)
+            {
+                return RuleStatus::RULE_STATUS_OK;
+            }
             const cv::Mat &frame = *packet->source_frame->mat;
 
             FeatureVector cur_feature = FeatureExtractor::extract(frame, zone_points);
@@ -240,21 +146,7 @@ namespace ai_stream
 
                     if (occupy_counts_[zone_no] >= confirm_frames_)
                     {
-                        auto alert_it = zone_alert_map_.find(zone_no);
-                        if (alert_it == zone_alert_map_.end())
-                        {
-                            AlertEvent event;
-                            event.detect_ms = packet->timestamp_ms;
-                            event.zone_no = zone_no;
-                            event.non_update_count = 0;
-                            event.duration_ms = 0;
-                            zone_alert_map_[zone_no] = event;
-                        }
-                        else
-                        {
-                            alert_it->second.non_update_count = 0;
-                            alert_it->second.duration_ms = packet->timestamp_ms - alert_it->second.detect_ms;
-                        }
+                        updateZoneEvent(zone_no, packet, {});
                     }
                 }
                 return RuleStatus::RULE_STATUS_OK;

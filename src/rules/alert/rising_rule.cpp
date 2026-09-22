@@ -67,82 +67,16 @@ namespace ai_stream
             return true;
         }
 
-        RuleStatus RisingRule::process(
-            std::shared_ptr<core::InferenceResultPacket> packet,
-            AlertResult &alert_result,
-            int64_t current_time_ms)
+        void RisingRule::onPreProcess(const std::shared_ptr<core::InferenceResultPacket> &packet)
         {
-            LOG_INFO_FMT("RisingRule::process()");
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (!packet)
-                return RuleStatus::RULE_STATUS_FAIL;
-
             // 每帧只运行一次检测器（多 zone 时不得重复推进状态机）
+            std::vector<core::InferenceResultPacket::BBox> person_boxes;
+            for (const auto &detection : packet->detections)
             {
-                std::vector<core::InferenceResultPacket::BBox> person_boxes;
-                for (const auto &detection : packet->detections)
-                {
-                    if (detection.class_name == "person")
-                        person_boxes.push_back(detection);
-                }
-                last_rising_result_ = rising_detector_.process(person_boxes, packet->frame_id);
+                if (detection.class_name == "person")
+                    person_boxes.push_back(detection);
             }
-
-            if (valid_intrusion_zones_.empty())
-            {
-                rule_logic(packet, global_zone_no_, {});
-            }
-            else
-            {
-                for (const auto &zone : valid_intrusion_zones_)
-                {
-                    rule_logic(packet, zone.first, zone.second);
-                }
-            }
-            // 更新告警结果
-            for (auto it = zone_alert_map_.begin(); it != zone_alert_map_.end(); it++)
-            {
-                if (it->second.status != AlertStatus::ALERT_STATUS_OCCUR && it->second.status != AlertStatus::ALERT_STATUS_LAST && it->second.status != AlertStatus::ALERT_STATUS_END)
-                {
-                    continue;
-                }
-                alert_result.alert_events.push_back(it->second);
-                alert_result.alert_count++;
-            }
-
-            // 更新map
-            for (auto it = zone_alert_map_.begin(); it != zone_alert_map_.end();)
-            {
-                it->second.non_update_count++;
-                if (it->second.non_update_count > max_disappear_count_)
-                {
-                    it = zone_alert_map_.erase(it);
-                    continue;
-                }
-                if (it->second.status == AlertStatus::ALERT_STATUS_OCCUR)
-                {
-                    it->second.status = AlertStatus::ALERT_STATUS_LAST;
-                }
-                if (it->second.status == AlertStatus::ALERT_STATUS_END)
-                {
-                    it->second.status = AlertStatus::ALERT_STATUS_DEFAULT;
-                }
-                if (it->second.duration_ms > alert_duration_ms_ && it->second.status == AlertStatus::ALERT_STATUS_DEFAULT)
-                {
-                    // 生成一个告警id
-                    it->second.status = AlertStatus::ALERT_STATUS_OCCUR;
-                    it->second.alert_name = getName();
-                    it->second.alert_type = getType();
-                    it->second.alert_item_type = getAlertItemType();
-                }
-                if (it->second.status != AlertStatus::ALERT_STATUS_DEFAULT && it->second.non_update_count == max_disappear_count_)
-                {
-                    it->second.status = AlertStatus::ALERT_STATUS_END;
-                }
-                it->second.description = getName() + alert_status_map[it->second.status];
-                it++;
-            }
-            return RuleStatus::RULE_STATUS_OK;
+            last_rising_result_ = rising_detector_.process(person_boxes, packet->frame_id);
         }
 
         void RisingRule::reset()

@@ -1,7 +1,7 @@
 // src/rules/alert/human_gathering.h
 #pragma once
 
-#include "ai_stream/rules/i_alert_rule.h"
+#include "alert_rule_base.h"
 #include <unordered_map>
 #include <mutex>
 
@@ -10,16 +10,12 @@ namespace ai_stream
     namespace rules
     {
 
-        class HumanGatheringRule : public IAlertRule
+        class HumanGatheringRule : public AlertRuleBase
         {
         public:
             HumanGatheringRule();
 
             bool initialize(const nlohmann::json &config) override;
-            RuleStatus process(
-                std::shared_ptr<core::InferenceResultPacket> packet,
-                AlertResult &alert_result,
-                int64_t current_time_ms) override;
 
             AlertType getType() const override { return AlertType::HUMAN_GATHERING; }
             AlertItemType getAlertItemType() const override { return AlertItemType::ITEM_PERSON_BEHAVIOR; }

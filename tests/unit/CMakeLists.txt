@@ -6,6 +6,7 @@ add_executable(test_core
     core/test_queued_node.cpp
     core/test_pipeline.cpp
     core/test_packet.cpp
+    core/test_metrics.cpp
 )
 
 target_include_directories(test_core PRIVATE
@@ -27,6 +28,7 @@ add_executable(test_nodes
     nodes/test_fusion.cpp
     nodes/test_tracker_match.cpp
     nodes/test_falling_rule.cpp
+    nodes/test_alert_node.cpp
     nodes/test_source_lifecycle.cpp
 )
 

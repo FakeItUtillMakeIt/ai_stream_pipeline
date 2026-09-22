@@ -129,8 +129,18 @@ protected:
     // 派生类的实际处理逻辑，在 worker 线程中串行执行（原 pushData 逻辑迁移至此）
     virtual void processPacket(std::shared_ptr<BasePacket> packet) = 0;
 
-    // 队列空闲（pop 超时）时回调，用于周期性维护任务（如 fusion 的超时合并）
+    // 队列空闲（pop 超时）时回调，用于周期性维护任务（如 fusion 的超时合并、
+    // 推理节点的批次超时 flush）
     virtual void onIdle() {}
+
+    // 调整空闲轮询间隔（影响 onIdle 的调用频率与批次 flush 时延）
+    void setPollTimeout(std::chrono::milliseconds timeout) { poll_timeout_ = timeout; }
+
+    // 运行时调整队列容量（需在 start 前调用）
+    void setQueueCapacity(size_t capacity) {
+        queue_capacity_ = capacity;
+        queue_.setMaxSize(capacity);
+    }
 
     // 生命周期钩子：资源初始化/释放（对应原 start/stop 中的非线程逻辑）
     virtual bool onStartup() { return true; }
@@ -145,7 +155,7 @@ private:
     void workerLoop() {
         while (this->running_.load()) {
             std::shared_ptr<BasePacket> packet;
-            if (!queue_.pop(packet, std::chrono::milliseconds(100))) {
+            if (!queue_.pop(packet, poll_timeout_)) {
                 onIdle();
                 continue;
             }
@@ -167,6 +177,7 @@ private:
     size_t queue_capacity_ = 64;
     DropPolicy drop_policy_ = DropPolicy::DROP_NEWEST;
     int push_timeout_ms_ = 10;
+    std::chrono::milliseconds poll_timeout_{100};
 };
 
 } // namespace core

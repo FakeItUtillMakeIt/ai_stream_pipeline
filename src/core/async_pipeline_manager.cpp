@@ -322,6 +322,8 @@ void AsyncPipelineManager::processTask(PipelineTask& task) {
                     if (pipeline->isRunning()) {
                         pipeline->stop();
                     }
+                    // 清理该管道的指标，避免 metrics_ 随反复创建/销毁无界增长
+                    MetricsCollector::instance().reset(task.pipeline_id);
                     LOG_INFO_FMT("[AsyncPipelineManager] Pipeline removed: {}", task.pipeline_id);
                 } else {
                     LOG_ERROR_FMT("[AsyncPipelineManager] Pipeline not found: {}", task.pipeline_id);

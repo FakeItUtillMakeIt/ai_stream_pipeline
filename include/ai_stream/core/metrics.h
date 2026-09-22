@@ -5,6 +5,8 @@
 #include <chrono>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
+#include <limits>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -20,7 +22,7 @@ struct NodeMetrics {
     uint64_t total_packets = 0;
     uint64_t dropped_packets = 0;
     uint64_t total_latency_ms = 0;
-    uint64_t min_latency_ms = 0;
+    uint64_t min_latency_ms = std::numeric_limits<uint64_t>::max();
     uint64_t max_latency_ms = 0;
     uint64_t last_latency_ms = 0;
     double fps = 0.0;
@@ -37,6 +39,9 @@ struct NodeMetrics {
 class MetricsCollector {
 public:
     static MetricsCollector& instance();
+
+    // 热路径合并接口：一次加锁完成 latency + processed 统计（减少锁争用）
+    void record(const std::string& pipeline_id, const std::string& node_name, uint64_t latency_ms);
 
     void recordLatency(const std::string& pipeline_id, const std::string& node_name, uint64_t latency_ms);
     void recordProcessed(const std::string& pipeline_id, const std::string& node_name);
@@ -86,7 +91,7 @@ private:
         return {pipeline_id, node_name};
     }
 
-    mutable std::mutex mutex_;
+    mutable std::shared_mutex mutex_;
     std::unordered_map<NodeKey, NodeMetrics, NodeKeyHash> metrics_;
 
     std::atomic<int> gpu_memory_mb_{0};

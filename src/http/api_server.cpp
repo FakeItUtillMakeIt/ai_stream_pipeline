@@ -5,11 +5,22 @@
 #include "3rd_party/log_mgr/log_mgr.h"
 #include <nlohmann/json.hpp>
 #include <chrono>
+#include <cstdlib>
 
 using json = nlohmann::json;
 
 namespace ai_stream {
 namespace http {
+
+namespace {
+// 安全提取 id：缺失/非字符串均返回空串，避免 json::type_error 变成 500
+std::string idOf(const json& body) {
+    if (body.is_object() && body.contains("id") && body["id"].is_string()) {
+        return body["id"].get<std::string>();
+    }
+    return "";
+}
+} // namespace
 
 ApiServer::ApiServer(bool async_mode) : async_mode_(async_mode) {
     if (async_mode_) {
@@ -18,8 +29,26 @@ ApiServer::ApiServer(bool async_mode) : async_mode_(async_mode) {
     } else {
         LOG_INFO_FMT("ApiServer pipeline management mode: SYNC");
     }
+    if (const char* token = std::getenv("AI_STREAM_API_TOKEN")) {
+        api_token_ = token;
+        if (!api_token_.empty()) {
+            LOG_WARN("ApiServer API token auth enabled (AI_STREAM_API_TOKEN)");
+        }
+    }
     hal::logAvailableBackends();
     setupRoutes();
+}
+
+bool ApiServer::parseJsonBody(const httplib::Request& req, httplib::Response& res, json& out) {
+    try {
+        out = json::parse(req.body);
+        return true;
+    } catch (const json::parse_error& e) {
+        res.status = 400;
+        res.set_content(json{{"error", std::string("Invalid JSON: ") + e.what()}}.dump(),
+                        "application/json");
+        return false;
+    }
 }
 
 ApiServer::~ApiServer() {
@@ -27,14 +56,27 @@ ApiServer::~ApiServer() {
 }
 
 void ApiServer::setupRoutes() {
-    // CORS 支持（开发环境）
-    server_.set_pre_routing_handler([](const httplib::Request& req, httplib::Response& res) {
+    // 请求体上限与读写超时（防超大 body / 慢连接拖垮服务）
+    server_.set_payload_max_length(16 * 1024 * 1024);  // 16 MB
+    server_.set_read_timeout(10, 0);
+    server_.set_write_timeout(60, 0);
+
+    // CORS 支持（开发环境）+ 可选 token 鉴权
+    server_.set_pre_routing_handler([this](const httplib::Request& req, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
         res.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-        res.set_header("Access-Control-Allow-Headers", "Content-Type");
+        res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization");
         if (req.method == "OPTIONS") {
             res.status = 204;
             return httplib::Server::HandlerResponse::Handled;
+        }
+        // 仅保护 /api/ 业务接口；/health、/metrics 放行
+        if (!api_token_.empty() && req.path.rfind("/api/", 0) == 0) {
+            if (req.get_header_value("Authorization") != ("Bearer " + api_token_)) {
+                res.status = 401;
+                res.set_content(R"({"error":"Unauthorized"})", "application/json");
+                return httplib::Server::HandlerResponse::Handled;
+            }
         }
         return httplib::Server::HandlerResponse::Unhandled;
     });
@@ -165,37 +207,47 @@ void ApiServer::handlePipelineStatus(const httplib::Request& req, httplib::Respo
 // ==============================================================================
 
 void ApiServer::handlePipelineBuildSync(const httplib::Request& req, httplib::Response& res) {
+    json body;
+    if (!parseJsonBody(req, res, body)) return;
     try {
-        json body = json::parse(req.body);
-        LOG_INFO_FMT("Received pipeline request:{}", body.dump());
-        std::string pipeline_id = body.value("id", "");
+        std::string pipeline_id = idOf(body);
         if (pipeline_id.empty()) {
             res.status = 400;
             res.set_content(R"({"error":"Missing pipeline id"})", "application/json");
             return;
         }
-
-        std::lock_guard<std::mutex> lock(pipelines_mutex_);
-        if (pipelines_.find(pipeline_id) != pipelines_.end()) {
-            res.status = 409;
-            res.set_content(R"({"error":"Pipeline id already exists"})", "application/json");
-            return;
-        }
-
-        auto pipeline = std::make_shared<core::Pipeline>(pipeline_id);
         if (!body.contains("graph")) {
             res.status = 400;
             res.set_content(R"({"error":"Missing graph configuration"})", "application/json");
             return;
         }
 
+        {
+            std::lock_guard<std::mutex> lock(pipelines_mutex_);
+            if (pipelines_.find(pipeline_id) != pipelines_.end()) {
+                res.status = 409;
+                res.set_content(R"({"error":"Pipeline id already exists"})", "application/json");
+                return;
+            }
+        }
+
+        // 构建（含模型加载，可能耗时）放在全局锁外，避免阻塞其它请求
+        auto pipeline = std::make_shared<core::Pipeline>(pipeline_id);
         if (!pipeline->buildFromJson(body["graph"])) {
             res.status = 400;
             res.set_content(R"({"error":"Invalid pipeline configuration"})", "application/json");
             return;
         }
 
-        pipelines_[pipeline_id] = pipeline;
+        {
+            std::lock_guard<std::mutex> lock(pipelines_mutex_);
+            if (pipelines_.find(pipeline_id) != pipelines_.end()) {
+                res.status = 409;
+                res.set_content(R"({"error":"Pipeline id already exists"})", "application/json");
+                return;
+            }
+            pipelines_[pipeline_id] = pipeline;
+        }
 
         json response = {
             {"status", "ok"},
@@ -212,19 +264,25 @@ void ApiServer::handlePipelineBuildSync(const httplib::Request& req, httplib::Re
 }
 
 void ApiServer::handlePipelineStartSync(const httplib::Request& req, httplib::Response& res) {
+    json body;
+    if (!parseJsonBody(req, res, body)) return;
     try {
-        json body = json::parse(req.body);
-        std::string pipeline_id = body.value("id", "");
+        std::string pipeline_id = idOf(body);
 
-        std::lock_guard<std::mutex> lock(pipelines_mutex_);
-        auto it = pipelines_.find(pipeline_id);
-        if (it == pipelines_.end()) {
-            res.status = 404;
-            res.set_content(R"({"error":"Pipeline not found"})", "application/json");
-            return;
+        std::shared_ptr<core::Pipeline> pipeline;
+        {
+            std::lock_guard<std::mutex> lock(pipelines_mutex_);
+            auto it = pipelines_.find(pipeline_id);
+            if (it == pipelines_.end()) {
+                res.status = 404;
+                res.set_content(R"({"error":"Pipeline not found"})", "application/json");
+                return;
+            }
+            pipeline = it->second;
         }
 
-        if (!it->second->start()) {
+        // 启动（可能涉及线程/资源）放在锁外
+        if (!pipeline->start()) {
             res.status = 500;
             res.set_content(R"({"error":"Failed to start pipeline"})", "application/json");
             return;
@@ -241,19 +299,24 @@ void ApiServer::handlePipelineStartSync(const httplib::Request& req, httplib::Re
 }
 
 void ApiServer::handlePipelineStopSync(const httplib::Request& req, httplib::Response& res) {
+    json body;
+    if (!parseJsonBody(req, res, body)) return;
     try {
-        json body = json::parse(req.body);
-        std::string pipeline_id = body.value("id", "");
+        std::string pipeline_id = idOf(body);
 
-        std::lock_guard<std::mutex> lock(pipelines_mutex_);
-        auto it = pipelines_.find(pipeline_id);
-        if (it == pipelines_.end()) {
-            res.status = 404;
-            res.set_content(R"({"error":"Pipeline not found"})", "application/json");
-            return;
+        std::shared_ptr<core::Pipeline> pipeline;
+        {
+            std::lock_guard<std::mutex> lock(pipelines_mutex_);
+            auto it = pipelines_.find(pipeline_id);
+            if (it == pipelines_.end()) {
+                res.status = 404;
+                res.set_content(R"({"error":"Pipeline not found"})", "application/json");
+                return;
+            }
+            pipeline = it->second;
         }
 
-        it->second->stop();
+        pipeline->stop();
         json response = {{"status", "ok"}, {"id", pipeline_id}, {"running", false}};
         res.set_content(response.dump(), "application/json");
         LOG_INFO_FMT("Pipeline '{}' stopped via API", pipeline_id);
@@ -265,20 +328,27 @@ void ApiServer::handlePipelineStopSync(const httplib::Request& req, httplib::Res
 }
 
 void ApiServer::handlePipelineDestroySync(const httplib::Request& req, httplib::Response& res) {
+    json body;
+    if (!parseJsonBody(req, res, body)) return;
     try {
-        json body = json::parse(req.body);
-        std::string pipeline_id = body.value("id", "");
+        std::string pipeline_id = idOf(body);
 
-        std::lock_guard<std::mutex> lock(pipelines_mutex_);
-        auto it = pipelines_.find(pipeline_id);
-        if (it == pipelines_.end()) {
-            res.status = 404;
-            res.set_content(R"({"error":"Pipeline not found"})", "application/json");
-            return;
+        std::shared_ptr<core::Pipeline> pipeline;
+        {
+            std::lock_guard<std::mutex> lock(pipelines_mutex_);
+            auto it = pipelines_.find(pipeline_id);
+            if (it == pipelines_.end()) {
+                res.status = 404;
+                res.set_content(R"({"error":"Pipeline not found"})", "application/json");
+                return;
+            }
+            pipeline = it->second;
+            pipelines_.erase(it);
         }
 
-        it->second->stop();
-        pipelines_.erase(it);
+        if (pipeline) pipeline->stop();
+        // 清理该管道的指标，避免 metrics_ 无界增长
+        core::MetricsCollector::instance().reset(pipeline_id);
 
         json response = {{"status", "ok"}, {"id", pipeline_id}, {"message", "Pipeline destroyed"}};
         res.set_content(response.dump(), "application/json");
@@ -310,9 +380,10 @@ void ApiServer::handlePipelineListSync(const httplib::Request& /*req*/, httplib:
 }
 
 void ApiServer::handlePipelineStatusSync(const httplib::Request& req, httplib::Response& res) {
+    json body;
+    if (!parseJsonBody(req, res, body)) return;
     try {
-        json body = json::parse(req.body);
-        std::string pipeline_id = body.value("id", "");
+        std::string pipeline_id = idOf(body);
 
         std::lock_guard<std::mutex> lock(pipelines_mutex_);
         auto it = pipelines_.find(pipeline_id);
@@ -340,14 +411,15 @@ void ApiServer::handlePipelineStatusSync(const httplib::Request& req, httplib::R
 // ==============================================================================
 
 void ApiServer::handlePipelineBuildAsync(const httplib::Request& req, httplib::Response& res) {
+    json body;
+    if (!parseJsonBody(req, res, body)) return;
     try {
-        json body = json::parse(req.body);
-        LOG_INFO_FMT("Received async pipeline build request: {}", body.value("id", ""));
+        LOG_INFO_FMT("Received async pipeline build request: {}", idOf(body));
 
         std::string pipeline_id = manager_->loadPipelineFromJsonAsync(body);
         if (pipeline_id.empty()) {
-            res.status = manager_->hasPipeline(body.value("id", "")) ? 409 : 400;
-            json err = {{"error", manager_->hasPipeline(body.value("id", ""))
+            res.status = manager_->hasPipeline(idOf(body)) ? 409 : 400;
+            json err = {{"error", manager_->hasPipeline(idOf(body))
                                      ? "Pipeline id already exists"
                                      : "Invalid pipeline configuration (missing id)"}};
             res.set_content(err.dump(), "application/json");
@@ -371,9 +443,10 @@ void ApiServer::handlePipelineBuildAsync(const httplib::Request& req, httplib::R
 }
 
 void ApiServer::handlePipelineStartAsync(const httplib::Request& req, httplib::Response& res) {
+    json body;
+    if (!parseJsonBody(req, res, body)) return;
     try {
-        json body = json::parse(req.body);
-        std::string pipeline_id = body.value("id", "");
+        std::string pipeline_id = idOf(body);
 
         if (!manager_->startPipelineAsync(pipeline_id)) {
             res.status = 404;
@@ -393,9 +466,10 @@ void ApiServer::handlePipelineStartAsync(const httplib::Request& req, httplib::R
 }
 
 void ApiServer::handlePipelineStopAsync(const httplib::Request& req, httplib::Response& res) {
+    json body;
+    if (!parseJsonBody(req, res, body)) return;
     try {
-        json body = json::parse(req.body);
-        std::string pipeline_id = body.value("id", "");
+        std::string pipeline_id = idOf(body);
 
         if (!manager_->stopPipelineAsync(pipeline_id)) {
             res.status = 404;
@@ -415,9 +489,10 @@ void ApiServer::handlePipelineStopAsync(const httplib::Request& req, httplib::Re
 }
 
 void ApiServer::handlePipelineDestroyAsync(const httplib::Request& req, httplib::Response& res) {
+    json body;
+    if (!parseJsonBody(req, res, body)) return;
     try {
-        json body = json::parse(req.body);
-        std::string pipeline_id = body.value("id", "");
+        std::string pipeline_id = idOf(body);
 
         if (!manager_->removePipeline(pipeline_id)) {
             res.status = 404;
@@ -457,9 +532,10 @@ void ApiServer::handlePipelineListAsync(const httplib::Request& /*req*/, httplib
 }
 
 void ApiServer::handlePipelineStatusAsync(const httplib::Request& req, httplib::Response& res) {
+    json body;
+    if (!parseJsonBody(req, res, body)) return;
     try {
-        json body = json::parse(req.body);
-        std::string pipeline_id = body.value("id", "");
+        std::string pipeline_id = idOf(body);
 
         auto state = manager_->getPipelineLifecycleState(pipeline_id);
         if (state == core::AsyncPipelineManager::PipelineState::UNKNOWN) {
@@ -536,9 +612,10 @@ void ApiServer::handleMetricsJson(const httplib::Request& /*req*/, httplib::Resp
 }
 
 void ApiServer::handleMetricsPipeline(const httplib::Request& req, httplib::Response& res) {
+    json body;
+    if (!parseJsonBody(req, res, body)) return;
     try{
-        json body = json::parse(req.body);
-        std::string pipeline_id = body.value("id", "");
+        std::string pipeline_id = idOf(body);
 
         auto& mc = core::MetricsCollector::instance();
         auto nodes = mc.getPipelineMetrics(pipeline_id);

@@ -14,31 +14,23 @@ target_link_libraries(ai_stream_server
 
 # 子项目构建
 if(TARGET ai_stream_core)
-    if(WITH_CUDA)
-        target_link_libraries(ai_stream_server
-            PRIVATE
-                nlohmann_json::nlohmann_json
-                spdlog::spdlog
-                ${OpenCV_LIBS}
-                -Wl,--no-as-needed
-                ai_stream_nodes
-                ai_stream_core
-                $<TARGET_OBJECTS:alert_rules>
-                -Wl,--as-needed
-        )
+    # alert_rules 为可选对象库（WITH_ALERT=OFF 时不存在）
+    if(TARGET alert_rules)
+        set(ALERT_RULE_OBJECTS $<TARGET_OBJECTS:alert_rules>)
     else()
-        target_link_libraries(ai_stream_server
-            PRIVATE
-                nlohmann_json::nlohmann_json
-                spdlog::spdlog
-                ${OpenCV_LIBS}
-                -Wl,--no-as-needed
-                ai_stream_nodes
-                ai_stream_core
-                $<TARGET_OBJECTS:alert_rules>
-                -Wl,--as-needed
-        )
+        set(ALERT_RULE_OBJECTS "")
     endif()
+    target_link_libraries(ai_stream_server
+        PRIVATE
+            nlohmann_json::nlohmann_json
+            spdlog::spdlog
+            ${OpenCV_LIBS}
+            -Wl,--no-as-needed
+            ai_stream_nodes
+            ai_stream_core
+            ${ALERT_RULE_OBJECTS}
+            -Wl,--as-needed
+    )
 else()
     # 独立项目
     find_package(ai_stream_pipeline REQUIRED)

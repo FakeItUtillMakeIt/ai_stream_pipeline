@@ -91,6 +91,7 @@ ai_stream_pipeline/
 │
 ├── 3rd_party/                     # 第三方依赖
 │   ├── tracker/                   # OCSort / ByteTrack（独立库）
+│   ├── thread_pool/               # 轻量线程池（AlertNode 规则并行执行）
 │   ├── log_mgr/                   # 日志管理（spdlog 封装）
 │   └── Eigen/  nlohmann/          # 头文件库
 │

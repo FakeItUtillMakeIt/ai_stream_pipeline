@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include "ai_stream/rules/i_alert_rule.h"
+#include "alert_rule_base.h"
 #include <unordered_map>
 
 namespace ai_stream
@@ -10,16 +10,12 @@ namespace ai_stream
     namespace rules
     {
 
-        class DiscoverSmokeRule : public IAlertRule
+        class DiscoverSmokeRule : public AlertRuleBase
         {
         public:
             DiscoverSmokeRule();
 
             bool initialize(const nlohmann::json &config) override;
-            RuleStatus process(
-                std::shared_ptr<core::InferenceResultPacket> packet,
-                AlertResult &alert_result,
-                int64_t current_time_ms) override;
 
             AlertType getType() const override { return AlertType::DISCOVER_SMOKE; }
             AlertItemType getAlertItemType() const override { return alertItemTypeMap.at(getType()); }

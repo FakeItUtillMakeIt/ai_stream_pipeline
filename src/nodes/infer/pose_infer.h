@@ -2,7 +2,7 @@
 #pragma once
 
 #include "ai_stream/nodes/i_infer_node.h"
-#include "ai_stream/core/bounded_queue.h"
+#include "ai_stream/core/queued_node.h"
 #include "ai_stream/hal/i_pose_estimation.h"
 #include "ai_stream/hal/pose_estimation_factory.h"
 
@@ -16,7 +16,7 @@
 namespace ai_stream {
 namespace nodes {
 
-class PoseInferNode : public IInferNode {
+class PoseInferNode : public core::QueuedNode<IInferNode> {
 public:
     PoseInferNode();
     ~PoseInferNode() override;
@@ -33,18 +33,16 @@ public:
     void setDetectorType(DetectorType type) override { detector_type_ = type; }
     DetectorType getDetectorType() const override { return detector_type_; }
 
-    bool start() override;
-    void stop() override;
-    bool isRunning() const override{return running_.load();}
-    void pushData(std::shared_ptr<core::BasePacket> packet) override;
+    // QueuedNode 钩子
+    bool onStartup() override;
+    void onShutdown() override;
+    void processPacket(std::shared_ptr<core::BasePacket> packet) override;
 
     // 消费 InferenceResultPacket 时需要保住 source_frame 的设备端 BGR
     // （d_bgr_ptr），供 inferFromDeviceImage GPU 路径使用。
     bool acceptsGpuFrame() const override { return true; }
 
 private:
-    void inferLoop();
-
     // 处理单帧 InferenceResultPacket
     void processFrame(std::shared_ptr<core::InferenceResultPacket> packet);
 
@@ -86,14 +84,6 @@ private:
     std::vector<std::string> class_names_ = {
         "person"
     };
-
-    // 数据队列和线程
-    core::BoundedQueue<std::shared_ptr<core::BasePacket>> queue_{64};
-    std::thread worker_;
-    std::atomic<bool> running_{false};
-
-    // 耗时统计
-    uint64_t in_time_ms_ = 0;
 };
 
 } // namespace nodes

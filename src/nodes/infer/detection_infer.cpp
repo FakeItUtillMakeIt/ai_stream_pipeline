@@ -25,7 +25,7 @@ namespace nodes {
 // DetectionInferNode - HAL 加速优化版
 // ============================================================
 
-DetectionInferNode::DetectionInferNode() : IInferNode("DetectionInfer") {
+DetectionInferNode::DetectionInferNode() : core::QueuedNode<IInferNode>("DetectionInfer") {
     LOG_DEBUG_FMT("[DetectionInfer] Constructor");
 }
 
@@ -78,8 +78,8 @@ void DetectionInferNode::setPrecision(const std::string& precision) {
 void DetectionInferNode::setBatchSize(int batch_size) {
     batch_size_ = batch_size;
     max_batch_size_ = batch_size;
-    queue_.setMaxSize(batch_size_ * 4);
-    LOG_INFO_FMT("[DetectionInfer] Set batch size: {}, queue size: {}", batch_size, queue_.getMaxSize());
+    setQueueCapacity(static_cast<size_t>(batch_size > 0 ? batch_size * 4 : 64));
+    LOG_INFO_FMT("[DetectionInfer] Set batch size: {}", batch_size);
 }
 
 std::pair<int, int> DetectionInferNode::getInputSize() const {
@@ -93,17 +93,12 @@ std::vector<std::string> DetectionInferNode::getClassNames() const {
     return class_names_;
 }
 
-bool DetectionInferNode::start() {
+bool DetectionInferNode::onStartup() {
     if (!engine_) {
         LOG_WARN_FMT("[DetectionInfer] No model loaded, will use mock inference");
     }
-    // 如果之前的 worker 线程还未 join，先 join 它（自停后线程可能还在运行）
-    if (worker_.joinable()) {
-        worker_.join();
-    }
-    queue_.reset();
-    running_ = true;
-    worker_ = std::thread(&DetectionInferNode::inferLoop, this);
+    // 批次超时 flush 依赖 onIdle，把空闲轮询间隔设为批次窗口
+    setPollTimeout(batch_timeout_ms_);
     LOG_INFO_FMT("[DetectionInfer] Started with max_batch={}, backend={}, cuda_graph={}, pinned_memory={}",
                  max_batch_size_.load(),
                  engine_ ? engine_->getBackendName() : "none",
@@ -112,99 +107,76 @@ bool DetectionInferNode::start() {
     return true;
 }
 
-void DetectionInferNode::stop() {
-    running_ = false;
-    queue_.stop();
-    if (worker_.joinable()) {
-        worker_.join();
-    }
+void DetectionInferNode::onShutdown() {
     LOG_INFO_FMT("[DetectionInfer] Stopped");
 }
 
-void DetectionInferNode::pushData(std::shared_ptr<core::BasePacket> packet) {
-    if (!packet || !running_) return;
+void DetectionInferNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
+    if (!packet) return;
+
     if (packet->type == core::PacketType::STREAM_END) {
-        // 控制包强制入队（必要时挤掉最旧帧），保证在途帧先处理，
-        // 由 worker 处理完前序帧后再广播 STREAM_END 并退出，避免下游提前停机
-        while (!queue_.tryPush(packet)) {
-            std::shared_ptr<core::BasePacket> discarded;
-            if (!queue_.tryPop(discarded)) return;
-        }
+        // 先处理完在途批次，再转发 STREAM_END（基类随后统一 stop）
+        flushBatch();
+        LOG_INFO_FMT("[DetectionInfer] Stream end");
+        broadcast(packet);
         return;
     }
-    if (packet->type != core::PacketType::DECODED_FRAME) return;
-    queue_.push(packet, std::chrono::milliseconds(10));
+    if (packet->type != core::PacketType::DECODED_FRAME) {
+        return;
+    }
+
+    auto frame = std::static_pointer_cast<core::VideoFramePacket>(packet);
+    if (!batch_active_) {
+        batch_active_ = true;
+        batch_start_tp_ = std::chrono::steady_clock::now();
+        batch_start_ms_ = utils::TimeUtil::currentTimeMs();
+    }
+    batch_frames_.push_back(std::move(frame));
+    if (static_cast<int>(batch_frames_.size()) >= max_batch_size_.load()) {
+        flushBatch();
+    }
+}
+
+void DetectionInferNode::onIdle() {
+    if (!batch_active_) return;
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - batch_start_tp_).count();
+    if (elapsed >= batch_timeout_ms_.count()) {
+        flushBatch();
+    }
 }
 
 // ============================================================
-// 推理主循环 - 支持 CUDA Graph 快速路径
+// 批次处理 - 支持 CUDA Graph 快速路径
 // ============================================================
-void DetectionInferNode::inferLoop() {
-    while (running_) {
-        in_time_ms_ = utils::TimeUtil::currentTimeMs();
-        std::vector<std::shared_ptr<core::VideoFramePacket>> batch_frames;
-        batch_frames.reserve(max_batch_size_);
+void DetectionInferNode::flushBatch() {
+    if (batch_frames_.empty()) {
+        batch_active_ = false;
+        return;
+    }
+    auto batch_frames = std::move(batch_frames_);
+    batch_frames_.clear();
+    batch_active_ = false;
 
-        std::shared_ptr<core::BasePacket> first;
-        if (!queue_.pop(first, std::chrono::milliseconds(batch_timeout_ms_))) {
-            continue;
-        }
+    int actual_batch = static_cast<int>(batch_frames.size());
+    LOG_DEBUG_FMT("[DetectionInfer] Batch collected: {}/{}", actual_batch, max_batch_size_.load());
 
-        // 流结束（顺序在队列末尾，此前帧已处理）
-        if (first->type == core::PacketType::STREAM_END) {
-            LOG_INFO_FMT("[DetectionInfer] Stream end received in worker thread");
-            running_ = false;
-            broadcast(first);
-            break;
-        }
+    auto t0 = std::chrono::high_resolution_clock::now();
+    auto results = processBatch(batch_frames);
+    auto t1 = std::chrono::high_resolution_clock::now();
 
-        batch_frames.push_back(std::static_pointer_cast<core::VideoFramePacket>(first));
+    float batch_infer_ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
+    LOG_INFO_FMT("[DetectionInfer] Batch inference: {} frames, total={:.2f}ms, avg={:.2f}ms/frame",
+                 actual_batch, batch_infer_ms, batch_infer_ms / actual_batch);
 
-        auto batch_start_time = std::chrono::high_resolution_clock::now();
-        std::shared_ptr<core::BasePacket> stream_end_pkt;
-
-        while (static_cast<int>(batch_frames.size()) < max_batch_size_) {
-            std::shared_ptr<core::BasePacket> pkt;
-            auto elapsed = std::chrono::high_resolution_clock::now() - batch_start_time;
-            auto remaining = batch_timeout_ms_ - std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
-            if (remaining.count() <= 0) break;
-
-            if (queue_.pop(pkt, remaining)) {
-                if (pkt->type == core::PacketType::STREAM_END) {
-                    stream_end_pkt = pkt;   // 停止收集，先处理当前批次
-                    break;
-                }
-                batch_frames.push_back(std::static_pointer_cast<core::VideoFramePacket>(pkt));
-            } else {
-                break;
-            }
-        }
-
-        int actual_batch = static_cast<int>(batch_frames.size());
-        LOG_DEBUG_FMT("[DetectionInfer] Batch collected: {}/{}", actual_batch, max_batch_size_.load());
-
-        auto t0 = std::chrono::high_resolution_clock::now();
-        auto results = processBatch(batch_frames);
-        auto t1 = std::chrono::high_resolution_clock::now();
-
-        float batch_infer_ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
-        LOG_INFO_FMT("[DetectionInfer] Batch inference: {} frames, total={:.2f}ms, avg={:.2f}ms/frame",
-                     actual_batch, batch_infer_ms, batch_infer_ms / actual_batch);
-
-        const auto& frame_cost_map = batch_frames.front()->cost_time_map;
-        for (auto& result : results) {
-            if (result) {
-                result->cost_ms = utils::TimeUtil::currentTimeMs() - in_time_ms_;
-                result->cost_time_map = frame_cost_map;
-                result->cost_time_map.insert({name_, result->cost_ms});
-                broadcast(result);
-            }
-        }
-
-        if (stream_end_pkt) {
-            running_ = false;
-            broadcast(stream_end_pkt);
-            break;
+    const auto& frame_cost_map = batch_frames.front()->cost_time_map;
+    uint64_t now_ms = utils::TimeUtil::currentTimeMs();
+    for (auto& result : results) {
+        if (result) {
+            result->cost_ms = now_ms - batch_start_ms_;
+            result->cost_time_map = frame_cost_map;
+            result->cost_time_map.insert({name_, result->cost_ms});
+            broadcast(result);
         }
     }
 }
@@ -442,12 +414,7 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
         cudaMemcpyAsync(batch_ids_ptr, d_batch_ids_, actual_batch_ids, cudaMemcpyDeviceToHost, transfer_stream_);
         cudaStreamSynchronize(transfer_stream_);
 
-        if (h_pinned_boxes_) {
-            h_boxes_.assign(boxes_ptr, boxes_ptr + total_dets * 4);
-            h_scores_.assign(scores_ptr, scores_ptr + total_dets);
-            h_classes_.assign(classes_ptr, classes_ptr + total_dets);
-            h_batch_ids_.assign(batch_ids_ptr, batch_ids_ptr + total_dets);
-        }
+        // 直接把 D2H 结果指针传给 postprocessBatch，省去 pinned -> h_* 向量的二次拷贝
 
         // 构建 scale 数组
         std::vector<float> valid_scale_x(valid_batch);
@@ -482,7 +449,8 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
                                                 valid_letter_scale.data(),
                                                 valid_letter_pad_x.data(),
                                                 valid_letter_pad_y.data(),
-                                                valid_letterbox_used.data());
+                                                valid_letterbox_used.data(),
+                                                boxes_ptr, scores_ptr, classes_ptr, batch_ids_ptr);
 
         // 映射回原始帧索引
         idx = 0;
@@ -656,24 +624,34 @@ std::vector<std::vector<core::InferenceResultPacket::BBox>> DetectionInferNode::
     const float letter_scale[],
     const int letter_pad_x[],
     const int letter_pad_y[],
-    const int letterbox_used[]) {
+    const int letterbox_used[],
+    const float* boxes,
+    const float* scores,
+    const int64_t* classes,
+    const int64_t* batch_ids) {
+
+    // 优先使用调用方直接给出的 D2H 结果（如 pinned 缓冲），避免经成员向量二次拷贝
+    const float* boxes_p = boxes ? boxes : h_boxes_.data();
+    const float* scores_p = scores ? scores : h_scores_.data();
+    const int64_t* classes_p = classes ? classes : h_classes_.data();
+    const int64_t* batch_ids_p = batch_ids ? batch_ids : h_batch_ids_.data();
 
     std::vector<std::vector<core::InferenceResultPacket::BBox>> all_detections(batch_size);
 
     for (int i = 0; i < total_dets; ++i) {
-        float score = h_scores_[i];
+        float score = scores_p[i];
         if (score < conf_thresh) continue;
 
-        int batch_id = static_cast<int>(h_batch_ids_[i]);
+        int batch_id = static_cast<int>(batch_ids_p[i]);
         if (batch_id < 0 || batch_id >= batch_size) {
             LOG_WARN_FMT("[DetectionInfer] Invalid batch_id {} at det {}, max={}", batch_id, i, batch_size);
             continue;
         }
 
-        float cx = h_boxes_[i * 4 + 0];
-        float cy = h_boxes_[i * 4 + 1];
-        float w  = h_boxes_[i * 4 + 2];
-        float h  = h_boxes_[i * 4 + 3];
+        float cx = boxes_p[i * 4 + 0];
+        float cy = boxes_p[i * 4 + 1];
+        float w  = boxes_p[i * 4 + 2];
+        float h  = boxes_p[i * 4 + 3];
 
         core::InferenceResultPacket::BBox box;
 
@@ -700,7 +678,7 @@ std::vector<std::vector<core::InferenceResultPacket::BBox>> DetectionInferNode::
         }
 
         box.confidence = score;
-        box.class_id = static_cast<int>(h_classes_[i]);
+        box.class_id = static_cast<int>(classes_p[i]);
 
         if (box.class_id >= 0 && box.class_id < static_cast<int>(class_names_.size())) {
             box.class_name = class_names_[box.class_id];
@@ -794,7 +772,10 @@ bool DetectionInferNode::captureCudaGraph(int batch_size) {
         // 执行推理（会被捕获到 graph 中）
         if (!raw_context->enqueueV3(compute_stream_)) {
             LOG_ERROR_FMT("[DetectionInfer] CUDA Graph capture: enqueueV3 failed");
-            cudaStreamEndCapture(compute_stream_, &cuda_graph_);
+            // 必须先结束捕获使流恢复，再销毁已捕获的 graph
+            cudaGraph_t partial = nullptr;
+            cudaStreamEndCapture(compute_stream_, &partial);
+            if (partial) cudaGraphDestroy(partial);
             if (d_workspace) cudaFree(d_workspace);
             return false;
         }
@@ -803,6 +784,10 @@ bool DetectionInferNode::captureCudaGraph(int batch_size) {
         cudaError_t err = cudaStreamEndCapture(compute_stream_, &cuda_graph_);
         if (err != cudaSuccess || !cuda_graph_) {
             LOG_ERROR_FMT("[DetectionInfer] CUDA Graph capture failed: {}", cudaGetErrorString(err));
+            if (cuda_graph_) {
+                cudaGraphDestroy(cuda_graph_);
+                cuda_graph_ = nullptr;
+            }
             if (d_workspace) cudaFree(d_workspace);
             return false;
         }
@@ -811,6 +796,10 @@ bool DetectionInferNode::captureCudaGraph(int batch_size) {
         err = cudaGraphInstantiate(&cuda_graph_exec_, cuda_graph_, nullptr, nullptr, 0);
         if (err != cudaSuccess) {
             LOG_ERROR_FMT("[DetectionInfer] CUDA Graph instantiate failed: {}", cudaGetErrorString(err));
+            if (cuda_graph_) {
+                cudaGraphDestroy(cuda_graph_);
+                cuda_graph_ = nullptr;
+            }
             if (d_workspace) cudaFree(d_workspace);
             return false;
         }

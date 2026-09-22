@@ -126,7 +126,6 @@ namespace ai_stream
         void FusionNodeImpl::onIdle()
         {
             // 无新包到达时也按超时刷出待合并帧（部分合并）
-            std::lock_guard<std::mutex> lock(mutex_);
             if (!pending_.empty())
             {
                 flushExpiredPending(utils::TimeUtil::currentTimeMs());
@@ -144,14 +143,11 @@ namespace ai_stream
             if (packet->type == core::PacketType::STREAM_END)
             {
                 LOG_INFO_FMT("[Fusion] Received stream end");
+                while (!pending_.empty())
                 {
-                    std::lock_guard<std::mutex> lock(mutex_);
-                    while (!pending_.empty())
-                    {
-                        mergeAndBroadcast(pending_.begin()->first);
-                    }
-                    has_cached_action_ = false;
+                    mergeAndBroadcast(pending_.begin()->first);
                 }
+                has_cached_action_ = false;
                 // 不在此处调用 stop()，避免从 worker 线程调用导致自连接死锁
                 // running_ 会在 workerLoop 中检查，worker 线程会自然退出
                 broadcast(packet);
@@ -166,12 +162,18 @@ namespace ai_stream
                 return;
             }
 
-            std::lock_guard<std::mutex> lock(mutex_);
-
-            // 动作识别结果：任何模式下都更新缓存（兼容原动作融合）
+            // 动作识别结果：仅缓存指定动作源（未配置 action_source 时接受任意来源）
             if (!result->action_results.empty())
             {
-                handleActionResult(result);
+                if (action_source_.empty() || result->producer_id == action_source_)
+                {
+                    handleActionResult(result);
+                }
+                else
+                {
+                    // 非指定动作源：透传而非静默丢弃
+                    broadcast(result);
+                }
                 return;
             }
 
@@ -259,8 +261,30 @@ namespace ai_stream
                 return;
             }
 
-            // 融合：将动作结果附加到检测结果
+            // OBJECT_LEVEL：动作只附加到与其 track_id 匹配的目标帧；无匹配目标的动作不附加
+            if (fusion_mode_ == FusionMode::OBJECT_LEVEL && cached_action_.track_id >= 0)
+            {
+                bool matched = false;
+                for (const auto& det : result->detections)
+                {
+                    if (det.track_id == cached_action_.track_id)
+                    {
+                        matched = true;
+                        break;
+                    }
+                }
+                if (!matched)
+                {
+                    LOG_DEBUG_FMT("[Fusion] OBJECT_LEVEL: action track {} not in frame, passthrough",
+                                  cached_action_.track_id);
+                    broadcast(result);
+                    return;
+                }
+            }
+
+            // 融合：将动作结果附加到检测结果（一次性消费，避免同一次动作附加到多帧）
             result->action_results.push_back(cached_action_);
+            has_cached_action_ = false;
 
             LOG_DEBUG_FMT("[Fusion] Fused detection with action: {} (time_diff: {}ms)",
                           cached_action_.action_label, time_diff);
@@ -412,13 +436,14 @@ namespace ai_stream
                 applyCrossNms(merged->detections, nms_iou_threshold_);
             }
 
-            // 兼容动作融合：附加时间戳匹配的动作识别缓存
+            // 兼容动作融合：附加时间戳匹配的动作识别缓存（一次性消费）
             if (has_cached_action_)
             {
                 int64_t time_diff = std::abs(merged->timestamp_ms - cached_action_timestamp_);
                 if (time_diff <= timestamp_threshold_ms_)
                 {
                     merged->action_results.push_back(cached_action_);
+                    has_cached_action_ = false;
                 }
             }
 

@@ -1,3 +1,5 @@
+#pragma once
+
 #include <vector>
 #include <future>
 #include <atomic>
@@ -6,6 +8,7 @@
 #include <thread>
 #include <condition_variable>
 #include <functional>
+#include "3rd_party/log_mgr/log_mgr.h"
 
 class ThreadPool
 {
