@@ -60,7 +60,7 @@ target_link_libraries(bytetrack
         opencv_imgproc
 )
 
-target_compile_features(bytetrack PRIVATE cxx_std_14)
+target_compile_features(bytetrack PRIVATE cxx_std_17)
 
 # 设置动态库属性
 set_target_properties(bytetrack PROPERTIES

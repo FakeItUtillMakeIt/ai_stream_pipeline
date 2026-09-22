@@ -472,12 +472,6 @@ void EncoderBase::flush() {
     LOG_INFO("[EncoderBase] Flush complete");
 }
 
-void EncoderBase::writeTrailer() {
-    if (fmt_ctx_) {
-        av_write_trailer(fmt_ctx_);
-    }
-}
-
 void EncoderBase::close() {
     if (closed_.exchange(true)) return;
 

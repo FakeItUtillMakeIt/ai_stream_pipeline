@@ -78,8 +78,7 @@ include/ai_stream/hal/                        抽象接口 + 共享工具
 
 **NV12 直通路径**：`ffmpeg_decode` 的 `output_nv12` + `detection_infer` 的 `input_nv12`
 + 引擎 NV12 双输入（自动解析动态 stride），跳过 `resize_normalize` 的 float 预处理，
-直接喂解码得到的 NV12（管线上 `decode → infer` 直连）。对应管线示例
-`config/pipelines/fusion_pipeline_nv12.json`。
+直接喂解码得到的 NV12（管线上 `decode → infer` 直连，`decode` 设 `output_nv12`、`infer` 设 `input_nv12`）。
 
 ## 待实现（roadmap）
 

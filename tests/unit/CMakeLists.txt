@@ -20,7 +20,6 @@ target_link_libraries(test_core PRIVATE
     GTest::gtest_main
 )
 
-include(GoogleTest)
 gtest_discover_tests(test_core)
 
 # 节点层测试（链接 ai_stream_nodes，含 fusion/tracker 等逻辑）
@@ -35,6 +34,11 @@ add_executable(test_nodes
 target_compile_definitions(test_nodes PRIVATE
     TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data"
 )
+
+# 测试数据缺失时提前告警（file-source 相关用例会失败）
+if(NOT EXISTS "${PROJECT_SOURCE_DIR}/tests/data/sample_5s.mp4")
+    message(WARNING "Test data tests/data/sample_5s.mp4 not found; file-source tests may fail")
+endif()
 
 target_include_directories(test_nodes PRIVATE
     ${PROJECT_SOURCE_DIR}

@@ -69,6 +69,7 @@ private:
     int target_height_ = 640;
     std::vector<float> mean_{0.0f, 0.0f, 0.0f};
     std::vector<float> std_{1.0f, 1.0f, 1.0f};
+    // 接口要求的配置项；当前实现固定 bilinear / float32，仅记录以便未来扩展
     std::string interpolation_method_ = "bilinear";
     bool keep_aspect_ratio_ = false;
     std::string output_dtype_ = "float32";

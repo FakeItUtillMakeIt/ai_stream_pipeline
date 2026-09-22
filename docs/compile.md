@@ -105,7 +105,7 @@ ctest --test-dir build --output-on-failure
 | HTTP 服务 | `build/src/http/http_server` |
 | 示例服务 | `build/examples/http_server/ai_stream_server` |
 | 核心库 | `build/src/core/libai_stream_core.so` |
-| HAL 库 | `build/src/hal/libai_stream_hal.a` |
+| HAL 库 | `build/src/hal/libai_stream_hal.so` |
 | 节点库 | `build/src/nodes/libai_stream_nodes.so` |
 | 基准工具 | `build/tools/benchmark/bench` |
 | 测试 | `build/tests/unit/test_core`、`test_nodes` |

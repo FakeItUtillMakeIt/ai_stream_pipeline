@@ -256,45 +256,6 @@ rules::AlertResult AlertNode::process_single_alert(rules::AlertRulePtr rule,
     return alert_result;
 }
 
-void AlertNode::handleEvents(const std::vector<rules::AlertEvent>& events) {
-    for (const auto& e : events) {
-        // 日志
-        auto level_str = [](rules::AlertLevel l) {
-            switch (l) {
-                case rules::AlertLevel::INFO: return "INFO";
-                case rules::AlertLevel::WARNING: return "WARN";
-                case rules::AlertLevel::ERROR: return "ERROR";
-                case rules::AlertLevel::CRITICAL: return "CRIT";
-            }
-            return "UNKNOWN";
-        };
-        LOG_INFO_FMT("[AlertNode] {}: {}", e.alert_name, e.description);
-
-        // 回调
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (callback_) callback_(e);
-    }
-}
-
-void AlertNode::saveSnapshot(std::shared_ptr<core::InferenceResultPacket> packet,
-                              const rules::AlertEvent& event) {
-    if (!packet || !packet->source_frame || !packet->source_frame->mat) return;
-
-    try {
-        auto now = std::chrono::system_clock::now();
-        auto tt = std::chrono::system_clock::to_time_t(now);
-        std::tm tm = utils::TimeUtil::safeLocaltime(tt);
-        char buf[64];
-        strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", &tm);
-
-        std::string path = fmt::format("{}/{}_{}.jpg",
-            snapshot_dir_, event.alert_name, buf);
-        cv::imwrite(path, *packet->source_frame->mat);
-    } catch (...) {
-        LOG_ERROR("[AlertNode] Failed to save snapshot");
-    }
-}
-
 nlohmann::json AlertNode::getStatistics() const {
     std::lock_guard<std::mutex> lock(mutex_);
     nlohmann::json stats;

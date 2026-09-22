@@ -51,7 +51,6 @@ protected:
     bool addVideoStream(int width, int height, int bitrate, const std::string& encoder_name);
     bool openVideoCodec();
     bool writeHeader();
-    void writeTrailer();
 
     // 编码实现路径
     bool encodeViaHal(const uint8_t* data, int width, int height, int step, int64_t pts);

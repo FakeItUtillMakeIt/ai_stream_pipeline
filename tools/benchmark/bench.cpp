@@ -10,6 +10,7 @@
 #include <iostream>
 #include <atomic>
 #include <thread>
+#include <cstdlib>
 
 namespace {
 std::atomic<bool> g_running{true};
@@ -23,7 +24,16 @@ int main(int argc, char* argv[]) {
     }
 
     std::string config_path = argv[1];
-    int duration_sec = argc > 2 ? std::atoi(argv[2]) : 30;
+    int duration_sec = 30;
+    if (argc > 2) {
+        char* end = nullptr;
+        long v = std::strtol(argv[2], &end, 10);
+        if (end == argv[2] || *end != '\0' || v <= 0) {
+            std::cerr << "Invalid duration '" << argv[2] << "', using default 30s\n";
+        } else {
+            duration_sec = static_cast<int>(v);
+        }
+    }
 
     LogManager::Config log_config;
     log_config.log_dir = "./logs";

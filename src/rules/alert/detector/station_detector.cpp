@@ -26,7 +26,7 @@ std::vector<StationRegion> StationDetector::getAllStations(std::vector<ai_stream
     std::vector<StationRegion> stations;
     for(const auto& each_det : all_detections)
     {
-        if(each_det.class_id == 0) // 只考虑人员检测结果
+        if(each_det.class_name == "person") // 只考虑人员检测结果
         {
             // 将Detection转换为Rect2f
             Rect2f bbox(each_det.x, each_det.y, each_det.w, each_det.h);

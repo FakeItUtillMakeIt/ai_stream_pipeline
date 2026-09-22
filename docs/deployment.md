@@ -128,5 +128,6 @@ ctest --test-dir build --output-on-failure    # 或 ./build/tests/unit/test_core
      ./build_horizon/examples/simple_detection/simple_detection config/pipelines/fusion_pipeline_v2.json
    ```
    - `fusion_pipeline_v2.json`：RGB int8 路径
-   - `fusion_pipeline_nv12.json`：NV12 直通路径（模型为 NV12 双输入时用，`decode → infer` 直连）
+   - NV12 直通路径：模型为 NV12 双输入时，配置 `decode.output_nv12` + `infer.input_nv12` 并
+     让 `decode → infer` 直连（`decode` 设 `output_nv12`、`infer` 设 `input_nv12`）
    - 编码由 `"hw_encoder": true` 自动使用 VPU 硬编

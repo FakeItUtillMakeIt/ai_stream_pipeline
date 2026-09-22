@@ -20,7 +20,7 @@ ai_stream_pipeline 是一个模块化的视频流 AI 处理框架：以 **节点
 | 库 | 内容 |
 |---|---|
 | `ai_stream_core` | Node/Packet/Pipeline 核心抽象、QueuedNode、BoundedQueue、Metrics、AsyncPipelineManager |
-| `ai_stream_hal` | 硬件抽象层：推理引擎/图像加速/编解码接口 + 各平台后端实现（静态库） |
+| `ai_stream_hal` | 硬件抽象层：推理引擎/图像加速/编解码接口 + 各平台后端实现（动态库 SHARED） |
 | `ai_stream_nodes` | 全部具体节点实现 + 节点工厂注册 |
 | `alert_rules` / `alert_node` | 告警规则与告警节点（对象库，并入 ai_stream_nodes） |
 | `http_server` | REST API 服务可执行文件 |

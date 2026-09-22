@@ -68,8 +68,7 @@ ai_stream_pipeline/
 │   │   │                         # NPP+CUDA / RGA / DVPP / OpenCV / OpenCV
 │   │   └── *_factory.cpp          # 工厂：运行时按编译选项选择后端（dlopen 惰性加载）
 │   ├── http/                      # REST API 服务
-│   │   ├── api_server.h/.cpp      # 同步/异步双模式 handler
-│   │   ├── handlers/              # 具体路由 handler
+│   │   ├── api_server.h/.cpp      # 同步/异步双模式 handler（路由与处理）
 │   │   └── main.cpp               # 入口（--async 开关、logging.json 加载、信号处理）
 │   ├── nodes/
 │   │   ├── registry/              # 节点工厂（REGISTER_NODE 宏）
@@ -115,7 +114,6 @@ ai_stream_pipeline/
 │   ├── model_converter/           # ONNX/TRT 转换与量化工具（Python）
 │   │   └── horizon/               # 地平线 ONNX→HBM 转换（convert.sh / 校准集 / 验证脚本）
 │   ├── videomae_train/            # 动作识别训练脚本
-│   └── train_climbing_svm.py
 │
 ├── utils/                         # header-only 工具（随公开头文件安装）
 │   ├── time_util.h  string_helper.h  zone_utils.h  cuda_check.h

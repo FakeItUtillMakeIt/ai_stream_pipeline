@@ -38,10 +38,6 @@ private:
     rules::AlertResult process_single_alert(rules::AlertRulePtr rule,
                                     std::shared_ptr<core::InferenceResultPacket> packet);
     
-    void handleEvents(const std::vector<rules::AlertEvent>& events);
-    void saveSnapshot(std::shared_ptr<core::InferenceResultPacket> packet,
-                      const rules::AlertEvent& event);
-
     // 常驻规则执行线程池（替代每帧每规则 std::async，避免线程爆炸）
     void startPool();
     void stopPool();
