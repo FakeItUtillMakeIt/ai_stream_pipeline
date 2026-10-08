@@ -98,6 +98,9 @@ def wrap_e2e(raw_path: str, classes, imgsz: int, out_path: str) -> None:
     # 必须按真实维度做 Reshape，用 4+nc(=7) 去 reshape 38 维张量会形状不兼容。
     dims = [d.dim_value for d in src.type.tensor_type.shape.dim]
     actual_c = dims[-1] if dims and dims[-1] > 0 else 0
+    max_det = dims[1] if len(dims) >= 2 and dims[1] > 0 else 0
+    if max_det == 0:
+        raise RuntimeError(f"output0 形状 {dims} 里拿不到静态的 max_det，无法固定 reshape")
     if actual_c and actual_c < 4 + nc:
         raise RuntimeError(
             f"output0 最后一维 {actual_c} 小于 4+{nc}，与类数不符，检查导出参数"
@@ -108,17 +111,18 @@ def wrap_e2e(raw_path: str, classes, imgsz: int, out_path: str) -> None:
 
     total = 4 + nc
 
+    # N 是"真实检出数"，逐帧变化。动态维必须用 dim_param，不能写 dim_value。
     boxes = helper.make_tensor_value_info(
-        f"{OUT_BOXES}", TensorProto.FLOAT, ["N", 4]
+        f"{OUT_BOXES}", TensorProto.FLOAT, ["num_dets", 4]
     )
     scores = helper.make_tensor_value_info(
-        f"{OUT_SCORES}", TensorProto.FLOAT, ["N"]
+        f"{OUT_SCORES}", TensorProto.FLOAT, ["num_dets"]
     )
     classes_out = helper.make_tensor_value_info(
-        f"{OUT_CLASSES}", TensorProto.INT64, ["N", 1]
+        f"{OUT_CLASSES}", TensorProto.INT64, ["num_dets", 1]
     )
     batch_ids = helper.make_tensor_value_info(
-        f"{OUT_BATCH_IDS}", TensorProto.INT64, ["N", 1]
+        f"{OUT_BATCH_IDS}", TensorProto.INT64, ["num_dets", 1]
     )
     num_dets = helper.make_tensor_value_info(f"{OUT_NUM_DETS}", TensorProto.INT64, [])
 
@@ -129,25 +133,23 @@ def wrap_e2e(raw_path: str, classes, imgsz: int, out_path: str) -> None:
         )
 
     consts = [
-        const("one_i64", np.array(1, np.int64)),
-        const("axis1_i", np.array([1], np.int64)),
         const("zero_i64", np.array(0, np.int64)),   # 0-D 标量，Range 要求
         const("neg_one_1", np.array([-1, 1], np.int64)),
-        const("neg_total", np.array([-1, actual_c or (4 + nc)], np.int64)),
+        # [1, max_det, C] -> [max_det, C]。batch 维恒为 1，直接写死 max_det，
+        # 不用 -1：reshape 后的第一维必须正好是 max_det，否则 Gather(axis=0)
+        # 之后 boxes 会残留 batch 维变成 (N,1,4)，引擎按 (N,4) 读就错位。
+        const("to_2d", np.array([max_det, actual_c], np.int64)),
         # Split 的 sizes 必须加和等于该维长度，所以要显式切出 mask 系数段
         # 再丢掉（引擎只要 box/scores/classes，不做分割）。
         const("split_sizes", np.array([4, nc, actual_c - 4 - nc], np.int64)),
-        const("neg1", np.array([-1], np.int64)),
         const("axis0_i", np.array([0], np.int64)),
+        const("unsq_axis1", np.array([1], np.int64)),
+        # Clamp 上界：NonZero 在空图上给空张量，夹到最后一行的合法下标
     ]
 
     nodes = consts + [
-        helper.make_node("Shape", ["output0"], ["e2e_shape"]),
-        # 取 shape[1]（max_det）为 0-D 标量：Gather 后再 Squeeze
-        helper.make_node("Gather", ["e2e_shape", "axis1_i"], ["md_1d"], axis=0),
-        helper.make_node("Reshape", ["md_1d", "neg1"], ["max_det_i64"]),
         # (B, max_det, C) -> (B*max_det, C)
-        helper.make_node("Reshape", ["output0", "neg_total"], ["e2e_flat"]),
+        helper.make_node("Reshape", ["output0", "to_2d"], ["e2e_flat"]),
         # 最后一维切成 [box(4) | cls(nc) | mask]，mask 段丢弃
         helper.make_node("Split", ["e2e_flat", "split_sizes"],
                          [OUT_BOXES, "scores_flat", "_mask_dropped"], axis=1),
@@ -161,16 +163,29 @@ def wrap_e2e(raw_path: str, classes, imgsz: int, out_path: str) -> None:
         helper.make_node("ArgMax", ["scores_flat"], ["cls_idx"], axis=1, keepdims=0),
         helper.make_node("Cast", ["cls_idx"], ["cls_flat"], to=TensorProto.INT64),
         helper.make_node("Reshape", ["cls_flat", "neg_one_1"], [OUT_CLASSES]),
-        # batch_ids 与 det_boxes 逐行对齐；Range 三个输入都必须是 0-D
-        # Reshape 到 [-1] 得到 (1,)，Range 要的是 0-D，必须再 Squeeze 一次
-        helper.make_node("Reshape", ["max_det_i64", "neg1"], ["max_det_1d"]),
-        helper.make_node("Squeeze", ["max_det_1d", "axis0_i"], ["max_det_0d"]),
-        helper.make_node("Reshape", ["one_i64", "neg1"], ["one_1d"]),
-        helper.make_node("Squeeze", ["one_1d", "axis0_i"], ["one_0d"]),
-        helper.make_node("Range", ["zero_i64", "max_det_0d", "one_0d"], ["row_idx"]),
-        helper.make_node("Cast", ["row_idx"], ["row_idx_i64"], to=TensorProto.INT64),
-        helper.make_node("Reshape", ["row_idx_i64", "neg_one_1"], [OUT_BATCH_IDS]),
-        helper.make_node("Identity", ["max_det_0d"], [OUT_NUM_DETS]),
+        # ---- padding 行不压缩，交给引擎按分数过滤 ----
+        #
+        # 曾经试过 NonZero/Compress 把分数为 0 的行剔掉，但两种写法都过不去：
+        #   Compress —— TensorRT 直接 "Failed to parse onnx file"（不支持该算子）
+        #   NonZero —— 全 0 图上返回空 (0,2)，后续 Gather 越界
+        #             ("idx=0 must be within the inclusive range [0,-1]")
+        #
+        # 其实不需要压缩。引擎按 det_num_dets 逐行读，再由
+        # postprocessBatch 按 confidence_threshold 过滤（padding 行分数为 0，
+        # 必然被阈值滤掉）。所以只要 batch_ids 合法、num_dets 真实即可。
+        #
+        # batch_ids 的语义是"这一行属于第几张图"，**不是行号**。
+        # 之前误用 Range(0, max_det) 生成，运行期直接报
+        # "Invalid batch_id 1 at det 1, max=1"。单 batch 图这里恒为 0。
+        # batch_ids 全 0：整张图只有一个 batch。行数与 det_boxes 对齐。
+        helper.make_node("Shape", [OUT_BOXES], ["nb_shape"]),
+        helper.make_node("Gather", ["nb_shape", "axis0_i"], ["nb_1d"], axis=0),
+        helper.make_node("Mul", ["nb_1d", "zero_i64"], ["batch_ids_row"]),
+        # (N,) -> (N,1)：在第 1 维插入，不能用 axis=0
+        helper.make_node("Unsqueeze", ["batch_ids_row", "unsq_axis1"], [OUT_BATCH_IDS]),
+        # num_dets = det_boxes 的行数。padding 行也计数，交给引擎按分数过滤；
+        # 少了这一项引擎会认为"没有输出"，或者读到不匹配的 buffer。
+        helper.make_node("Identity", ["nb_1d"], [OUT_NUM_DETS]),
     ]
 
     graph.node.extend(nodes)
@@ -213,7 +228,8 @@ def verify(out_path: str, imgsz: int, nc: int) -> None:
     print(f"  输出: {[(n, out[n].shape, out[n].dtype.name) for n in expected]}")
     if out[OUT_NUM_DETS].size and int(out[OUT_NUM_DETS]) > 0:
         n = int(np.ravel(out[OUT_NUM_DETS])[0])
-        assert out[OUT_CLASSES].max(initial=0) < nc, "class id 越界"
+        if out[OUT_CLASSES].size:
+            assert int(out[OUT_CLASSES].max()) < nc, "class id 越界"
         print(f"  检出 {n} 个目标，首个 box(xyxy)={out[OUT_BOXES][0].round(1)}")
     print("  metadata names:", {p.key: p.value for p in
                                 onnx.load(out_path, load_external_data=False)
