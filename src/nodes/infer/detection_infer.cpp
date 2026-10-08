@@ -773,7 +773,11 @@ bool DetectionInferNode::captureCudaGraph(int batch_size) {
 
         // 执行推理（会被捕获到 graph 中）
         if (!raw_context->enqueueV3(compute_stream_)) {
-            LOG_ERROR_FMT("[DetectionInfer] CUDA Graph capture: enqueueV3 failed");
+            // 动态输出形状（如 det_boxes 的 N 逐帧变化）的 engine 无法被
+            // Graph 捕获——捕获要求地址与形状固定。这里正确降级为普通
+            // enqueue，不是故障，所以降为 warn 并说明原因。
+            LOG_WARN("[DetectionInfer] CUDA Graph capture failed (engine has dynamic "
+                     "output shapes); falling back to regular enqueue");
             // 必须先结束捕获使流恢复，再销毁已捕获的 graph
             cudaGraph_t partial = nullptr;
             cudaStreamEndCapture(compute_stream_, &partial);

@@ -311,6 +311,18 @@ void RelationRecognitionNode::processPacket(std::shared_ptr<core::BasePacket> pa
     in->cost_time_map["relation_infer"] = last_infer_ms_;
     LOG_DEBUG_FMT("[Relation] frame {} boxes={} relations={} cost={}ms",
                   in->timestamp_ms, meta.boxes.size(), in->relations.size(), last_infer_ms_);
+    // 有关系时才打 INFO：每帧都打会刷屏，而"一直没关系"正是需要排查的情况。
+    if (!in->relations.empty()) {
+        std::string s;
+        for (const auto& r : in->relations) {
+            s += fmt::format("{}(t{})->{}(t{}) {}={:.3f}; ",
+                             r.subject_class.c_str(), r.subject_track_id,
+                             r.object_class.c_str(), r.object_track_id,
+                             r.predicate.c_str(), r.confidence);
+        }
+        LOG_INFO_FMT("[Relation] frame {} boxes={} -> {} relations: {}",
+                     in->timestamp_ms, meta.boxes.size(), in->relations.size(), s);
+    }
     broadcast(packet);
 }
 

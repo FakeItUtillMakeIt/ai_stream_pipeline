@@ -97,17 +97,30 @@ namespace ai_stream
                     continue;
                 if (rel.confidence < relation_threshold_)
                     continue;
+                // track_id 可能是 -1（tracker 没匹配上）。这类命中必须保留，
+                // 否则整条规则在检测抖动时会永远不触发。-1 只用于"这一帧有命中"，
+                // 不参与告警里的目标标识。
                 frame_hits_.push_back(Hit{rel.subject_track_id, rel.predicate, rel.confidence});
             }
 
             // 同一帧多个谓词命中同一儿童时，只留分数最高的，避免一个人被算多次
             std::stable_sort(frame_hits_.begin(), frame_hits_.end(),
                              [](const Hit &a, const Hit &b) { return a.score > b.score; });
-            frame_hits_.erase(std::unique(frame_hits_.begin(), frame_hits_.end(),
-                                          [](const Hit &a, const Hit &b) {
-                                              return a.track_id == b.track_id;
-                                          }),
-                              frame_hits_.end());
+            // 只对已跟踪的目标去重。track_id == -1 表示"某个儿童（本帧未跟踪）"，
+            // 它们之间无法用 id 区分，若也按 id 去重会把多个儿童合并成一次命中。
+            std::vector<Hit> dedup;
+            dedup.reserve(frame_hits_.size());
+            for (const auto& h : frame_hits_) {
+                if (h.track_id >= 0) {
+                    auto same = std::find_if(dedup.begin(), dedup.end(),
+                                             [&h](const Hit& x) {
+                                                 return x.track_id == h.track_id;
+                                             });
+                    if (same != dedup.end()) continue;   // 已保留分数更高的
+                }
+                dedup.push_back(h);
+            }
+            frame_hits_ = std::move(dedup);
         }
 
         RuleStatus ChildNearBoundaryRule::rule_logic(
@@ -146,12 +159,15 @@ namespace ai_stream
                     best_predicate = hit.predicate;
                 }
             }
+            // 未跟踪的命中也要放行：track_id 只影响告警里能否点名具体目标，
+            // 不该决定"要不要报"。要求 track_ids 非空会让规则在检测抖动时完全静默。
             if (track_ids.empty())
-                return RuleStatus::RULE_STATUS_OK;
+                LOG_DEBUG("[ChildNearBoundaryRule] hit without track_id; alerting without target id");
 
             updateZoneEvent(zone_no, packet, track_ids);
-            LOG_DEBUG_FMT("ChildNearBoundaryRule: {} near {} score={:.3f} predicate={}",
-                          child_class_, boundary_classes_.front(), best, best_predicate);
+            LOG_INFO_FMT("[ChildNearBoundaryRule] {} near {} score={:.3f} predicate={} tracks={}",
+                         child_class_, boundary_classes_.front(), best, best_predicate,
+                         track_ids.size());
             return RuleStatus::RULE_STATUS_OK;
         }
 
