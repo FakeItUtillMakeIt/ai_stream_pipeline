@@ -55,6 +55,7 @@ namespace rules
         DISCOVER_VISIBLE_FIRE = 17,
         DISCOVER_SMOKE = 18,
         DISCOVER_HOSE_CUTOFF = 19,
+        CHILD_NEAR_BOUNDARY = 20,      // 儿童靠近边界
         ACTION_RECOGNITION = 100
     };
 
@@ -79,6 +80,7 @@ namespace rules
         {AlertType::DISCOVER_VISIBLE_FIRE, "discover_visible_fire"},
         {AlertType::DISCOVER_SMOKE, "discover_smoke"},
         {AlertType::DISCOVER_HOSE_CUTOFF, "discover_hose_cutoff"},
+        {AlertType::CHILD_NEAR_BOUNDARY, "child_near_boundary"},
         {AlertType::ACTION_RECOGNITION, "action_recognition"}
     };
 
@@ -103,6 +105,7 @@ namespace rules
         {AlertType::DISCOVER_VISIBLE_FIRE, "发现火焰"},
         {AlertType::DISCOVER_SMOKE, "发现烟雾"},
         {AlertType::DISCOVER_HOSE_CUTOFF, "发现软管断流"},
+        {AlertType::CHILD_NEAR_BOUNDARY, "儿童靠近边界"},
         {AlertType::ACTION_RECOGNITION, "动作识别"}
     };
 
@@ -118,7 +121,8 @@ namespace rules
         ITEM_MASTER_UNKNOWN = 0,
         ITEM_PERSON_BEHAVIOR = 1,
         ITEM_SAFETY_ITEM = 2,
-        ITEM_SCENE_RECOGNITION = 3
+        ITEM_SCENE_RECOGNITION = 3,
+        ITEM_RELATION_RECOGNITION = 4,
     };
 
     inline std::map<AlertType, AlertItemType> alertItemTypeMap = {
@@ -142,6 +146,7 @@ namespace rules
         {AlertType::DISCOVER_VISIBLE_FIRE, AlertItemType::ITEM_SCENE_RECOGNITION},
         {AlertType::DISCOVER_SMOKE, AlertItemType::ITEM_SCENE_RECOGNITION},
         {AlertType::DISCOVER_HOSE_CUTOFF, AlertItemType::ITEM_SCENE_RECOGNITION},
+        {AlertType::CHILD_NEAR_BOUNDARY, AlertItemType::ITEM_RELATION_RECOGNITION},
         {AlertType::ACTION_RECOGNITION, AlertItemType::ITEM_PERSON_BEHAVIOR}
     };
 
@@ -450,9 +455,27 @@ struct InferenceResultPacket : public BasePacket {
         std::vector<float> action_scores;     // 所有类别的分数
     };
 
+    /**
+     * @brief 视觉关系结果（RelateAnything 场景图模型）
+     *
+     * 一次前向对全部候选框打分，关系是有向的：subject/predicate/object 各自
+     * 独立可查，因此这里同时带上主体和客体的 track_id，规则侧必须显式判方向，
+     * 只看 predicate 会把「墙靠着小孩」误当成「小孩靠近墙」。
+     */
+    struct RelationResult {
+        int subject_track_id = -1;      // 主体 track_id，未跟踪时为 -1
+        int object_track_id = -1;       // 客体 track_id
+        std::string subject_class;      // 主体类别名，如 child
+        std::string predicate;          // 谓词，如 beside / in front of
+        std::string object_class;       // 客体类别名，如 wall / gate
+        float confidence = 0.0f;        // 标定后的关系分
+        int64_t timestamp_ms = 0;
+    };
+
     std::vector<BBox> detections;                       // 检测结果列表
     std::vector<PoseResult> pose_results;
     std::vector<ActionResult> action_results;           // 动作识别结果
+    std::vector<RelationResult> relations;              // 视觉关系结果
     std::shared_ptr<VideoFramePacket> source_frame;     // 关联的原始帧，用于后续画框等操作
     std::vector<rules::AlertResult> alert_result;
 

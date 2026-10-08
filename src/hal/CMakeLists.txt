@@ -9,6 +9,7 @@ set(HAL_SOURCES
     image_accelerator_factory.cpp
     video_decoder_factory.cpp
     action_recognition_factory.cpp
+    relation_factory.cpp
     backend_diagnostics.cpp
 )
 
@@ -18,6 +19,8 @@ list(APPEND HAL_SOURCES
     infer/cpu/cpu_inference_engine.cpp
     decode/cpu/ffmpeg_video_decoder.cpp
     pose_estimation_factory.cpp
+    # 关系解码：与后端无关，CPU 兜底也要用，所以无条件编译
+    infer/common/relation_decode.cpp
 )
 
 # TensorRT 后端
@@ -28,6 +31,7 @@ if(WITH_TENSORRT)
         infer/nvidia/tensorrt_inference_engine.cpp
         infer/nvidia/tensorrt_detection_engine.cpp
         infer/nvidia/tensorrt_action_recognition.cpp
+        infer/nvidia/tensorrt_relation.cpp
         infer/nvidia/tensorrt_pose_estimation.cpp
     )
     # 姿态估计 GPU 预处理 kernel（需 CUDA 语言）

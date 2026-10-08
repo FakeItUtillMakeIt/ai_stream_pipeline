@@ -36,6 +36,8 @@ endif()
 list(APPEND NODES_SOURCES
     infer/pose_infer.cpp
     infer/action_recognition_videomae.cpp
+    # 视觉关系节点：模型经 HAL 加载，没有关系后端时靠 factory 报错，不会静默降级
+    infer/relation_recognition.cpp
 )
 # INT8 校准仅 TensorRT 需要
 if(WITH_TENSORRT)
