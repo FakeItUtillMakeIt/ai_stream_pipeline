@@ -78,13 +78,22 @@ struct RelationThresholdConfig {
  */
 void decodeRelations(const std::vector<float>& pred_logits,
                      const std::vector<float>& pair_logits,
-                     const std::vector<int32_t>& sub_idx,
-                     const std::vector<int32_t>& obj_idx,
+                     const std::vector<int64_t>& sub_idx,   // ONNX elem_type=int64
+                     const std::vector<int64_t>& obj_idx,
                      const std::vector<uint8_t>& valid_mask,
                      const std::vector<std::string>& predicates,
                      const RelationThresholdConfig& cfg,
                      const std::vector<float>& box_scores,
-                     std::vector<DecodedRelation>& out);
+                     std::vector<DecodedRelation>& out,
+                     /**
+                      * 只输出这些谓词。空表示不过滤。
+                      *
+                      * 图按**整张谓词表**导出（num_predicates 是静态维），所以
+                      * pred_logits 永远有全部列；实际激活的只是一个子集。
+                      * 没有这个过滤，解码会把未激活谓词（那些行 W/alpha 被填 0）
+                      * 也当作结果吐出来，规则侧就会匹配到没启用过的谓词。
+                      */
+                     const std::vector<std::string>& only_predicates = {});
 
 } // namespace hal
 } // namespace ai_stream

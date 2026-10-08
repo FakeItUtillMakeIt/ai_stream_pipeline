@@ -196,3 +196,23 @@ python deploy/export_tensorrt.py --onnx relateanything.onnx --engine relateanyth
 
 `packet.h` 新增：`AlertType::CHILD_NEAR_BOUNDARY = 20`、
 `InferenceResultPacket::RelationResult` 与 `relations` 字段。
+
+---
+
+## 模型文件位置
+
+资产已就位，engine 需在目标机生成：
+
+| 目录 | 内容 |
+|---|---|
+| `models/yoloe/` | `yoloe_v8s_child_wall_gate.onnx` + `.names.json` |
+| `models/relation/` | `relateanything.onnx`、`predicate_bank.json`、`relateanything.json`、`calibration.json`、`thresholds.json` |
+
+详见 `models/README.md`，其中记录了：
+
+- YOLOE 为什么需要 `tools/export_yoloe_e2e.py` 包装（引擎按 tensor 名取 5 个输出，
+  ultralytics 给的是打包张量）
+- 类别顺序 = 通道顺序，engine 不可改类别
+- 关系 ONNX 的 `num_boxes` 是动态维，`trtexec` 必须给 profile 区间，
+  否则运行期 shape 不匹配
+- `near` 的实测分数与为何不用 bank 的逐谓词阈值

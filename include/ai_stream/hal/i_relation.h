@@ -79,7 +79,13 @@ struct RelationInput {
         int class_id = -1;
         int track_id = -1;
     };
-    std::vector<Box> boxes;           // xyxy，像素坐标，已在 letterbox 空间
+    /**
+     * 框：**xyxy，像素坐标，已在 letterbox 空间**。
+     *
+     * 后端内部会转成图要的归一化 cxcywh（0..1），调用方只需给 letterbox 后的
+     * 像素坐标。不要在这里提前归一化，也不要传 cxcywh——两种都会被静默算错。
+     */
+    std::vector<Box> boxes;
     std::vector<std::string> class_names; // 与 class_id 对齐；可空，只按 id 用
 };
 

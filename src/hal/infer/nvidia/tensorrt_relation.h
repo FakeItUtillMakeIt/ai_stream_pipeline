@@ -38,8 +38,19 @@ struct PredicateBank {
     int img_size = 448;
     int text_dim = 512;
 
-    size_t dim() const { return embed_alpha.empty() ? 0 : embed_alpha.size(); }
-    bool empty() const { return names.empty() || embed_alpha.empty(); }
+    /**
+     * 谓词嵌入维度，**必须从 W 和 alpha 的长度比推出来**，不能用 alpha 的长度：
+     * alpha 是每个谓词一个标量（243 个），而嵌入维度是 text_dim（512）。
+     * 两者混用会让 W 的行算错，读出完全错位的谓词向量，且不报错。
+     */
+    size_t dim() const
+    {
+        if (embed_alpha.empty() || embed_W.empty())
+            return 0;
+        return embed_W.size() / embed_alpha.size();
+    }
+
+    bool empty() const { return names.empty() || embed_alpha.empty() || embed_W.empty(); }
 };
 
 class TensorrtRelation : public IRelationEngine {
@@ -71,6 +82,8 @@ private:
     bool uploadImage(const RelationInput& input);
     bool runGraph();
     void copyOutputsToHost();
+    void bindOutputAddresses();
+    void allocOutput(const char* name, size_t bytes);
     /** 设置形状、搬框与谓词、推理并解码；infer 与 inferPreprocessed 共用 */
     bool runBoxes(const RelationInput& input, std::vector<RelationTriplet>& out);
 
@@ -85,12 +98,13 @@ private:
     // 引擎按固定 N 建，运行时形状与之对齐
     int64_t fixed_boxes_ = 32;
     int64_t fixed_predicates_ = 0;
+    size_t pairs_ = 0;   // 引擎输出的候选配对数（不是框数）
 
     // host 侧暂存
     std::vector<float> h_pred_;
     std::vector<float> h_pair_;
-    std::vector<int32_t> h_sub_;
-    std::vector<int32_t> h_obj_;
+    std::vector<int64_t> h_sub_;   // ONNX elem_type=int64，不能用 int32
+    std::vector<int64_t> h_obj_;   // ONNX elem_type=int64
     std::vector<uint8_t> h_valid_;
     std::vector<float> h_w_;
     std::vector<float> h_alpha_;

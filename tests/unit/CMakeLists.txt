@@ -56,3 +56,18 @@ target_link_libraries(test_nodes PRIVATE
 )
 
 gtest_discover_tests(test_nodes)
+
+# 关系解码器的 host 端回归测试。纯逻辑，不依赖 GPU 与模型文件——
+# 这些断言锁住的正是"只有真跑模型才会暴露、且不报错"的坑。
+add_executable(test_relation_decode
+    nodes/test_relation_decode.cpp
+    ${PROJECT_SOURCE_DIR}/src/hal/infer/common/relation_decode.cpp
+)
+
+target_include_directories(test_relation_decode PRIVATE
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/src
+    ${PROJECT_SOURCE_DIR}/src/hal/infer/common
+)
+
+add_test(NAME test_relation_decode COMMAND test_relation_decode)

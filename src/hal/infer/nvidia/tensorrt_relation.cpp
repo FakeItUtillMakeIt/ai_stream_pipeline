@@ -85,6 +85,15 @@ bool TensorrtRelation::loadModel(const RelationConfig& config) {
     thresholds_.topk = config_.max_relations > 0 ? config_.max_relations : 20;
     thresholds_.max_per_pair = 1;
     thresholds_.box_score_weight = true;
+    // 标定参数来自 predicate bank。默认值 (1,0) 表示未标定，此时分数与
+    // bank 的标定口径差一个 sigmoid 变换，阈值全线失效且不报错——这是最
+    // 容易被误判成"模型效果不好"而查错方向的情况，所以显式打出来。
+    LOG_INFO_FMT("[Relation] calibration a={} b={} threshold={} topk={}",
+                 thresholds_.calib_a, thresholds_.calib_b,
+                 thresholds_.threshold, thresholds_.topk);
+    if (bank_.calib_a == 1.0f && bank_.calib_b == 0.0f)
+        LOG_WARN("[Relation] predicate bank carried no calibration; scores are "
+                 "uncalibrated raw probabilities, thresholds will not transfer");
     if (config_.img_size > 0)
         bank_.img_size = config_.img_size;
 
@@ -111,7 +120,27 @@ bool TensorrtRelation::loadModel(const RelationConfig& config) {
         if (t.d[1] > 0)
             fixed_boxes_ = t.d[1];
     }
-    fixed_predicates_ = static_cast<int64_t>(active_predicates_.size());
+    // 输出 pred_logits 的最后一维是整张表（静态 243），不是激活数
+    fixed_predicates_ = bank_.empty()
+                            ? static_cast<int64_t>(active_predicates_.size())
+                            : static_cast<int64_t>(bank_.names.size());
+
+    // 配对数不是框数。N=32 时图内部枚举出 128 个候选配对（不是 32），
+    // 所以 host 缓冲必须按引擎的真实输出维度分配。踩过的坑：按框数分配时
+    // sub_idx/obj_idx 读越界，拿到 -1063895040 这类垃圾值，解码于是全部
+    // 被 in_range 过滤掉，表现为"推理成功但 0 条关系"。
+    pairs_ = 0;
+    for (const auto& t : core_.tensors()) {
+        if (t.name != kOutPred || t.nb_dims < 2)
+            continue;
+        if (t.d[1] > 0)
+            pairs_ = static_cast<size_t>(t.d[1]);
+    }
+    if (pairs_ == 0) {
+        LOG_ERROR("[Relation] cannot read num_pairs from engine's pred_logits dims");
+        unload();
+        return false;
+    }
 
     if (!buildPredicateInputs(err)) {
         LOG_ERROR_FMT("[Relation] predicate input build failed: {}", err);
@@ -119,11 +148,13 @@ bool TensorrtRelation::loadModel(const RelationConfig& config) {
         return false;
     }
 
-    h_pred_.assign(static_cast<size_t>(fixed_boxes_) * static_cast<size_t>(fixed_predicates_), 0.0f);
-    h_pair_.assign(static_cast<size_t>(fixed_boxes_), 0.0f);
-    h_sub_.assign(static_cast<size_t>(fixed_boxes_), 0);
-    h_obj_.assign(static_cast<size_t>(fixed_boxes_), 0);
-    h_valid_.assign(static_cast<size_t>(fixed_boxes_), 0);
+    h_pred_.assign(pairs_ * static_cast<size_t>(fixed_predicates_), 0.0f);
+    h_pair_.assign(pairs_, 0.0f);
+    h_sub_.assign(pairs_, 0);
+    h_obj_.assign(pairs_, 0);
+    h_valid_.assign(pairs_, 0);
+    LOG_INFO_FMT("[Relation] engine dims: boxes={} pairs={} predicates={}",
+                 fixed_boxes_, pairs_, fixed_predicates_);
 
     loaded_ = true;
     LOG_INFO_FMT("[Relation] engine ready model={} boxes={} predicates={} size={}",
@@ -177,9 +208,16 @@ bool TensorrtRelation::loadPredicateBank(const std::string& path, std::string& e
         err = "alpha length != names length";
         return false;
     }
+    // dim 从 W/alpha 的长度比推出（不是 alpha.size()，那是谓词个数不是维度）
     const size_t dim = bank_.dim();
-    if (bank_.embed_W.size() != dim * bank_.names.size()) {
-        err = "W size mismatch: expect names*dim";
+    if (dim == 0 || bank_.embed_W.size() != dim * bank_.names.size()) {
+        err = "W size mismatch: expect names * (W.size/alpha.size)";
+        return false;
+    }
+    // 与 manifest 声明的 text_dim 交叉校验。bank 导错了行数时这是唯一能兜住的地方。
+    if (bank_.text_dim > 0 && static_cast<size_t>(bank_.text_dim) != dim) {
+        err = "text_dim=" + std::to_string(bank_.text_dim) +
+              " disagrees with W/alpha implied dim=" + std::to_string(dim);
         return false;
     }
     return true;
@@ -190,21 +228,24 @@ bool TensorrtRelation::buildPredicateInputs(std::string& err) {
         // 引擎内置谓词：W/alpha 是可选输入，不绑定
         return true;
     }
+    // 图按**整张谓词表**导出（num_predicates 是静态维），所以 W/alpha 必须
+    // 填满整表；只把激活谓词的行拷进去，其余填 0（那些谓词得分恒为基准，
+    // 不会挤进 top-k）。若按激活数填，形状对不上，TRT 会直接拒绝。
     const size_t dim = bank_.dim();
-    h_w_.assign(active_predicates_.size() * dim, 0.0f);
-    h_alpha_.assign(active_predicates_.size(), 0.0f);
+    const size_t vocab = bank_.names.size();
+    h_w_.assign(vocab * dim, 0.0f);
+    h_alpha_.assign(vocab, 0.0f);
 
-    for (size_t i = 0; i < active_predicates_.size(); ++i) {
-        const auto it = std::find(bank_.names.begin(), bank_.names.end(),
-                                  active_predicates_[i]);
+    for (const auto& name : active_predicates_) {
+        const auto it = std::find(bank_.names.begin(), bank_.names.end(), name);
         if (it == bank_.names.end()) {
-            err = "predicate not in bank: " + active_predicates_[i];
+            err = "predicate not in bank: " + name;
             return false;
         }
         const size_t row = static_cast<size_t>(std::distance(bank_.names.begin(), it));
-        std::memcpy(h_w_.data() + i * dim, bank_.embed_W.data() + row * dim,
+        std::memcpy(h_w_.data() + row * dim, bank_.embed_W.data() + row * dim,
                     dim * sizeof(float));
-        h_alpha_[i] = bank_.embed_alpha[row];
+        h_alpha_[row] = bank_.embed_alpha[row];
     }
     return true;
 }
@@ -226,7 +267,9 @@ bool TensorrtRelation::setPredicates(const std::vector<std::string>& predicates)
         LOG_WARN_FMT("[Relation] setPredicates failed: {}", err);
         return false;
     }
-    fixed_predicates_ = static_cast<int64_t>(active_predicates_.size());
+    fixed_predicates_ = bank_.empty()
+                            ? static_cast<int64_t>(active_predicates_.size())
+                            : static_cast<int64_t>(bank_.names.size());
 
     // 刻意**不**把 bank 里的逐谓词阈值灌进 per_predicate。
     // 那些是模型作者标定的工作点，实测关系分常在 0.4 量级，而 beside 的 bank
@@ -281,9 +324,14 @@ bool TensorrtRelation::uploadImage(const RelationInput& input) {
             }
         }
     }
-    void* dst = core_.buffer(kInImage);
-    if (dst == nullptr)
+    // 必须用 allocBuffer 而不是 buffer()：前者会 cudaMalloc 并把地址绑到
+    // execution context，buffer() 只是查表。漏掉这步 enqueue 时拿到的是空地址，
+    // 表现为 "uploadImage failed" 而没有任何 TRT 报错。
+    void* dst = core_.allocBuffer(kInImage, nchw.size() * sizeof(float));
+    if (dst == nullptr) {
+        LOG_ERROR_FMT("[Relation] allocBuffer({}) failed", kInImage);
         return false;
+    }
     auto stream = static_cast<cudaStream_t>(core_.stream());
     cudaError_t err = cudaMemcpyAsync(dst, nchw.data(), nchw.size() * sizeof(float),
                                       cudaMemcpyHostToDevice, stream);
@@ -298,27 +346,62 @@ bool TensorrtRelation::runGraph() {
     return core_.enqueue() && core_.synchronize();
 }
 
+void TensorrtRelation::allocOutput(const char* name, size_t bytes) {
+    if (core_.allocBuffer(name, bytes) == nullptr)
+        LOG_ERROR_FMT("[Relation] allocBuffer({}) failed", name);
+}
+
+void TensorrtRelation::bindOutputAddresses() {
+    // TRT 要求 enqueue 前所有 I/O 张量都已 setTensorAddress。这里只分配+绑定，
+    // 不做 D2H——真正取数在 enqueue 之后的 copyOutputsToHost()。
+    // 顺序写反的表现是 enqueueV3 报 "Neither address nor allocator is set for
+    // output tensor pred_logits"，而不是任何形状或显存错误。
+    allocOutput(kOutPred, h_pred_.size() * sizeof(float));
+    allocOutput(kOutPair, h_pair_.size() * sizeof(float));
+    // 元素类型必须与 ONNX 一致（见 relateanything.onnx 的 graph.output）：
+    //   sub_idx / obj_idx = int64、valid_mask = bool(1 byte)。
+    // 按 int32 读 int64 会错位，按 float 读 int64 更是拿到垃圾——两者都不报错，
+    // 只会让 valid 全 0、sub/obj 指向越界，最后表现为"0 条关系"。
+    allocOutput(kOutSub, h_sub_.size() * sizeof(int64_t));
+    allocOutput(kOutObj, h_obj_.size() * sizeof(int64_t));
+    allocOutput(kOutValid, h_valid_.size() * sizeof(uint8_t));
+}
+
 void TensorrtRelation::copyOutputsToHost() {
+    // 地址已在 bindOutputAddresses() 里分配并绑定，这里只取数。
+    // 若这里返回空就说明绑定漏了，必须报错而不是静默跳过——
+    // 静默跳过的后果是解码拿到全零，看起来"推理成功但没有关系"。
     auto pull = [&](const char* name, void* host, size_t bytes) {
-        void* src = core_.buffer(name);
-        if (src == nullptr)
+        void* dst = core_.buffer(name);
+        if (dst == nullptr) {
+            LOG_ERROR_FMT("[Relation] output {} was never bound; "
+                          "bindOutputAddresses() is missing this tensor", name);
             return;
-        cudaMemcpyAsync(host, src, bytes, cudaMemcpyDeviceToHost,
-                        static_cast<cudaStream_t>(core_.stream()));
+        }
+        cudaError_t e = cudaMemcpyAsync(host, dst, bytes, cudaMemcpyDeviceToHost,
+                                        static_cast<cudaStream_t>(core_.stream()));
+        if (e != cudaSuccess)
+            LOG_ERROR_FMT("[Relation] D2H {} failed: {}", name, cudaGetErrorString(e));
     };
     pull(kOutPred, h_pred_.data(), h_pred_.size() * sizeof(float));
     pull(kOutPair, h_pair_.data(), h_pair_.size() * sizeof(float));
-    pull(kOutSub, h_sub_.data(), h_sub_.size() * sizeof(int32_t));
-    pull(kOutObj, h_obj_.data(), h_obj_.size() * sizeof(int32_t));
+    pull(kOutSub, h_sub_.data(), h_sub_.size() * sizeof(int64_t));
+    pull(kOutObj, h_obj_.data(), h_obj_.size() * sizeof(int64_t));
     pull(kOutValid, h_valid_.data(), h_valid_.size() * sizeof(uint8_t));
 }
 
 bool TensorrtRelation::infer(const RelationInput& input,
                              std::vector<RelationTriplet>& out) {
     out.clear();
-    if (!uploadImage(input))
+    if (!uploadImage(input)) {
+        LOG_ERROR_FMT("[Relation] uploadImage failed");
         return false;
-    return runBoxes(input, out);
+    }
+    if (!runBoxes(input, out)) {
+        LOG_ERROR_FMT("[Relation] runBoxes failed");
+        return false;
+    }
+    return true;
 }
 
 bool TensorrtRelation::runBoxes(const RelationInput& input,
@@ -343,49 +426,87 @@ bool TensorrtRelation::runBoxes(const RelationInput& input,
 
     // 形状：image/boxes 随谓词数与框数变
     {
+        // 维度必须与 ONNX 声明一致，否则 setInputShape 会被 TRT 拒绝
+        // （trtexec 建的 profile 是 box_counts:1 / alpha:243，都是 1-D）。
+        // 实测踩过的坑：把 box_counts 设成 [1,1] 会直接
+        // "profile 0 has 2 dimensions"，推理阶段同样失败。
         int64_t d[4] = {1, 3, bank_.img_size, bank_.img_size};
-        if (!core_.setInputShape(kInImage, d, 4)) return false;
+        if (!core_.setInputShape(kInImage, d, 4)) {
+            LOG_ERROR_FMT("[Relation] setInputShape({}) failed", kInImage);
+            return false;
+        }
         int64_t b[3] = {1, k, 4};
-        if (!core_.setInputShape(kInBoxes, b, 3)) return false;
-        int64_t c[2] = {1, 1};
-        if (!core_.setInputShape(kInCounts, c, 2)) return false;
+        if (!core_.setInputShape(kInBoxes, b, 3)) {
+            LOG_ERROR_FMT("[Relation] setInputShape({}) failed", kInBoxes);
+            return false;
+        }
+        int64_t c[1] = {1};                       // box_counts 是 [batch]，1-D
+        if (!core_.setInputShape(kInCounts, c, 1)) {
+            LOG_ERROR_FMT("[Relation] setInputShape({}) failed", kInCounts);
+            return false;
+        }
+        // W / alpha 的第一维是**静态**的整张谓词表（引擎按 243 导出）。
+        // 想只激活几个谓词，就在表里把对应行填好、未激活行填 0，
+        // 靠 host 侧阈值过滤——不能按激活数去 setInputShape，
+        // TRT 会直接报 "Static dimension mismatch"。
         if (!h_w_.empty()) {
-            int64_t w[2] = {v, static_cast<int64_t>(bank_.dim())};
-            if (!core_.setInputShape(kInW, w, 2)) return false;
-            int64_t a[2] = {v, 1};
-            if (!core_.setInputShape(kInAlpha, a, 2)) return false;
+            const int64_t vp = static_cast<int64_t>(bank_.names.size());
+            int64_t w[2] = {vp, static_cast<int64_t>(bank_.dim())};
+            if (!core_.setInputShape(kInW, w, 2)) {
+                LOG_ERROR_FMT("[Relation] setInputShape({}) failed", kInW);
+                return false;
+            }
+            int64_t a[1] = {vp};                  // alpha 与 W 同为整表大小
+            if (!core_.setInputShape(kInAlpha, a, 1)) {
+                LOG_ERROR_FMT("[Relation] setInputShape({}) failed", kInAlpha);
+                return false;
+            }
         }
     }
 
-    // 框：xyxy，且必须与 image 在同一个 letterbox 空间
+    // 框：必须转成**归一化 cxcywh**（0..1），不是 xyxy 像素坐标。
+    //
+    // 依据 deploy/export_onnx.py:159 —— `boxes = torch.rand(1,N,4)*0.5+0.25
+    // # cxcywh in [0,1]`，以及 deploy/runtime.py:412-414 的
+    //   b[:,[0,2]] /= W; b[:,[1,3]] /= H; boxes = [cx,cy,w,h]
+    // 传 xyxy 像素坐标不会报错，只会算出无意义的关系分（实测 0 条输出）。
+    // 注意除的是**图像边长**（letterbox 后为 img_size），因为图像本身已缩放到
+    // img_size，所以像素坐标除以 img_size 即得归一化值。
+    const float side = static_cast<float>(bank_.img_size);
     std::vector<float> boxes(static_cast<size_t>(k) * 4, 0.0f);
     box_scores_.assign(static_cast<size_t>(n_used), 0.0f);
     for (int64_t i = 0; i < n_used; ++i) {
         const auto& b = input.boxes[static_cast<size_t>(i)];
-        boxes[static_cast<size_t>(i) * 4 + 0] = b.x1;
-        boxes[static_cast<size_t>(i) * 4 + 1] = b.y1;
-        boxes[static_cast<size_t>(i) * 4 + 2] = b.x2;
-        boxes[static_cast<size_t>(i) * 4 + 3] = b.y2;
+        const float x1 = b.x1 / side, y1 = b.y1 / side;
+        const float x2 = b.x2 / side, y2 = b.y2 / side;
+        boxes[static_cast<size_t>(i) * 4 + 0] = (x1 + x2) / 2.0f;  // cx
+        boxes[static_cast<size_t>(i) * 4 + 1] = (y1 + y2) / 2.0f;  // cy
+        boxes[static_cast<size_t>(i) * 4 + 2] = (x2 - x1);         // w
+        boxes[static_cast<size_t>(i) * 4 + 3] = (y2 - y1);         // h
         box_scores_[static_cast<size_t>(i)] = b.confidence;
     }
 
-    void* d_boxes = core_.buffer(kInBoxes);
-    void* d_counts = core_.buffer(kInCounts);
-    if (d_boxes == nullptr || d_counts == nullptr) return false;
+    void* d_boxes = core_.allocBuffer(kInBoxes, boxes.size() * sizeof(float));
+    void* d_counts = core_.allocBuffer(kInCounts, sizeof(int32_t));
+    if (d_boxes == nullptr || d_counts == nullptr) {
+        LOG_ERROR("[Relation] allocBuffer for boxes/box_counts failed");
+        return false;
+    }
     cudaMemcpyAsync(d_boxes, boxes.data(), boxes.size() * sizeof(float),
                     cudaMemcpyHostToDevice, static_cast<cudaStream_t>(core_.stream()));
     const int32_t count32 = static_cast<int32_t>(n_used);
     cudaMemcpyAsync(d_counts, &count32, sizeof(int32_t),
                     cudaMemcpyHostToDevice, static_cast<cudaStream_t>(core_.stream()));
     if (!h_w_.empty()) {
-        void* d_w = core_.buffer(kInW);
-        void* d_a = core_.buffer(kInAlpha);
+        void* d_w = core_.allocBuffer(kInW, h_w_.size() * sizeof(float));
+        void* d_a = core_.allocBuffer(kInAlpha, h_alpha_.size() * sizeof(float));
         if (d_w) cudaMemcpyAsync(d_w, h_w_.data(), h_w_.size() * sizeof(float),
                                  cudaMemcpyHostToDevice, static_cast<cudaStream_t>(core_.stream()));
         if (d_a) cudaMemcpyAsync(d_a, h_alpha_.data(), h_alpha_.size() * sizeof(float),
                                  cudaMemcpyHostToDevice, static_cast<cudaStream_t>(core_.stream()));
     }
 
+    bindOutputAddresses();
     if (!runGraph()) {
         LOG_WARN("[Relation] graph execution failed");
         return false;
@@ -393,15 +514,22 @@ bool TensorrtRelation::runBoxes(const RelationInput& input,
     copyOutputsToHost();
     core_.synchronize();
 
-    // 只取前 v 个谓词列：图可能仍按完整词表算，尾部是无关列
-    std::vector<float> pred(static_cast<size_t>(k) * static_cast<size_t>(v));
-    for (int64_t i = 0; i < k; ++i)
-        for (int64_t j = 0; j < v; ++j)
-            pred[static_cast<size_t>(i * v + j)] = h_pred_[static_cast<size_t>(i) * h_pred_.size() / k + j];
+    // 每帧一次汇总。valid 为 0 是"这帧没有可用配对"的强信号：通常意味着
+    // 框坐标格式错（图要归一化 cxcywh）或 box_counts 与实际框数不一致。
+    {
+        size_t valid_cnt = 0;
+        for (uint8_t v : h_valid_) valid_cnt += (v != 0) ? 1u : 0u;
+        LOG_DEBUG_FMT("[Relation] pairs={} valid={} boxes_used={}",
+                      h_valid_.size(), valid_cnt, n_used);
+    }
+
+    // pred_logits 是 [pairs, 整表]，直接整段传给解码器（列名给整表，
+    // 激活过滤由 only_predicates 负责）。
+    std::vector<float> pred(h_pred_.begin(), h_pred_.end());
 
     std::vector<DecodedRelation> decoded;
-    decodeRelations(pred, h_pair_, h_sub_, h_obj_, h_valid_, active_predicates_,
-                    thresholds_, box_scores_, decoded);
+    decodeRelations(pred, h_pair_, h_sub_, h_obj_, h_valid_, bank_.names,
+                    thresholds_, box_scores_, decoded, active_predicates_);
     const size_t cap = config_.max_relations > 0
                            ? static_cast<size_t>(config_.max_relations)
                            : decoded.size();

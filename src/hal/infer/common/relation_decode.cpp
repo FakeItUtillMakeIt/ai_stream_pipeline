@@ -27,13 +27,14 @@ inline float sigmoidf(float x)
 
 void decodeRelations(const std::vector<float>& pred_logits,
                      const std::vector<float>& pair_logits,
-                     const std::vector<int32_t>& sub_idx,
-                     const std::vector<int32_t>& obj_idx,
+                     const std::vector<int64_t>& sub_idx,
+                     const std::vector<int64_t>& obj_idx,
                      const std::vector<uint8_t>& valid_mask,
                      const std::vector<std::string>& predicates,
                      const RelationThresholdConfig& cfg,
                      const std::vector<float>& box_scores,
-                     std::vector<DecodedRelation>& out)
+                     std::vector<DecodedRelation>& out,
+                     const std::vector<std::string>& only_predicates)
 {
     out.clear();
     const size_t v_count = predicates.size();
@@ -43,23 +44,23 @@ void decodeRelations(const std::vector<float>& pred_logits,
     if (pred_logits.size() < k_count * v_count)
         return;                       // 输出形状与契约不符，宁可不给结果
 
-    const int32_t n_boxes = box_scores.empty()
-                                ? -1
-                                : static_cast<int32_t>(box_scores.size());
+    const int64_t n_boxes = box_scores.empty()
+                             ? -1
+                             : static_cast<int64_t>(box_scores.size());
 
     // 图是按固定框数建的并做了零填充，所以无效槽位（以及指向 padding 的槽位）
     // 会带出 >= 真实框数的下标。必须在任何 gather 之前夹住，并且用 in_range 丢掉
     // ——不能只信 valid_mask，那不足以保证下标可寻址。
     std::vector<uint8_t> in_range(k_count, 1);
-    std::vector<int32_t> sub(k_count), obj(k_count);
+    std::vector<int64_t> sub(k_count), obj(k_count);
     for (size_t k = 0; k < k_count; ++k) {
-        int32_t s = k < sub_idx.size() ? sub_idx[k] : -1;
-        int32_t o = k < obj_idx.size() ? obj_idx[k] : -1;
+        int64_t s = k < sub_idx.size() ? sub_idx[k] : -1;
+        int64_t o = k < obj_idx.size() ? obj_idx[k] : -1;
         if (n_boxes >= 0) {
             const bool ok = (s >= 0 && o >= 0 && s < n_boxes && o < n_boxes);
             in_range[k] = ok ? 1u : 0u;
-            s = std::clamp(s, 0, n_boxes - 1);
-            o = std::clamp(o, 0, n_boxes - 1);
+            s = std::clamp<int64_t>(s, 0, n_boxes - 1);
+            o = std::clamp<int64_t>(o, 0, n_boxes - 1);
         } else {
             sub[k] = s;
             obj[k] = o;
@@ -101,8 +102,15 @@ void decodeRelations(const std::vector<float>& pred_logits,
                            (k >= valid_mask.size() || valid_mask[k] != 0);
         if (!usable)
             continue;
-        for (size_t v = 0; v < v_count; ++v)
+        for (size_t v = 0; v < v_count; ++v) {
             keep[k][v] = score[k * v_count + v] >= thr[v] ? 1u : 0u;
+            // 未激活的谓词直接剔掉：图按整表导出，这些列的 W/alpha 被填了 0，
+            // 分数只是基准值，不代表任何启用过的关系。
+            if (keep[k][v] && !only_predicates.empty() &&
+                std::find(only_predicates.begin(), only_predicates.end(),
+                          predicates[v]) == only_predicates.end())
+                keep[k][v] = 0u;
+        }
     }
 
     if (cfg.max_per_pair == 1) {
