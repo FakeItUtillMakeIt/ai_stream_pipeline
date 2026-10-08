@@ -50,6 +50,33 @@ namespace ai_stream
                 {
                     LOG_WARN("ChildNearBoundaryRule: boundary_classes is empty; the rule can never fire");
                 }
+
+                // 告警持续时间：命中需累计超过这个时长才从 DEFAULT 进入 OCCUR。
+                // 兼容两种键名（本工程其它规则用 alert_duration_ms）。
+                if (config.contains("alert_duration_ms"))
+                    alert_duration_ms_ = static_cast<uint64_t>(
+                        config["alert_duration_ms"].get<int64_t>());
+                else if (config.contains("duration_ms"))
+                    alert_duration_ms_ = static_cast<uint64_t>(
+                        config["duration_ms"].get<int64_t>());
+
+                // 最大非更新帧数：允许连续多少帧没命中还保留事件（不清零 detect_ms）。
+                // 这是本规则的关键——关系分在阈值附近抖动、child 偶尔漏检时，
+                // 默认 5 帧(约0.2s)就 erase 并把 duration_ms 打回 0，导致接触一整段
+                // 也攒不到 alert_duration_ms，告警永不触发。放宽它才能桥接间隙。
+                if (config.contains("max_disappear_count")) {
+                    int v = config["max_disappear_count"].get<int>();
+                    if (v <= 0 || v > 255)
+                        LOG_WARN_FMT("ChildNearBoundaryRule: max_disappear_count={} out of (0,255], kept {}",
+                                     v, (int)max_disappear_count_);
+                    else
+                        max_disappear_count_ = static_cast<uint8_t>(v);
+                }
+
+                LOG_INFO_FMT("ChildNearBoundaryRule: relation_threshold={} alert_duration_ms={} "
+                             "max_disappear_count={}",
+                             relation_threshold_, (long long)alert_duration_ms_,
+                             (int)max_disappear_count_);
             }
             catch (const std::exception &e)
             {
@@ -74,8 +101,9 @@ namespace ai_stream
                 {"child_class", child_class_},
                 {"boundary_classes", boundary_classes_},
                 {"relation_threshold", relation_threshold_},
-                {"geomeric_fallback", allow_geometric_fallback_},
+                {"geometric_fallback", allow_geometric_fallback_},
                 {"max_pixel_gap", max_pixel_gap_},
+                {"duration_ms", alert_duration_ms_},
             };
         }
 
@@ -165,7 +193,7 @@ namespace ai_stream
                 LOG_DEBUG("[ChildNearBoundaryRule] hit without track_id; alerting without target id");
 
             updateZoneEvent(zone_no, packet, track_ids);
-            LOG_INFO_FMT("[ChildNearBoundaryRule] {} near {} score={:.3f} predicate={} tracks={}",
+                        LOG_INFO_FMT("[ChildNearBoundaryRule] {} near {} score={:.3f} predicate={} tracks={}",
                          child_class_, boundary_classes_.front(), best, best_predicate,
                          track_ids.size());
             return RuleStatus::RULE_STATUS_OK;
