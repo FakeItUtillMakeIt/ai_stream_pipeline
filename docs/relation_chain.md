@@ -13,12 +13,32 @@
 
 ```
 rtsp_source → ffmpeg_decode → resize_normalize(640) → detection_infer → tracker
-            → relation_recognition → alert → evidence → osd_draw → rtmp_sink
+            → relation_recognition → alert
+     alert ─┬→ osd_draw ─┬→ rtmp_sink
+            │            └→ evidence
+            └→ evidence            # evidence 收两路：draw 的帧 + alert 的告警
 ```
 
 `relation_recognition` 消费 tracker 之后的 `InferenceResultPacket`：
 从 `source_frame->source_mat` 取原图，按 448 做 letterbox，把 detections 映射到
 同一坐标系，一次前向拿到全部三元组写入 `packet->relations`。
+
+### 接线：evidence 是终端，不要串在 draw 前面
+
+`evidence` 节点**只转发 `STREAM_END`，正常帧一律不 `broadcast`**
+（见 `evidence_node.cpp::processPacket`）。因此它必须像下面这样接，而不是塞进
+主链：
+
+```
+alert → draw → sink      # 主链，帧一路传到推流
+alert → evidence         # 告警事件（META_DATA）→ 触发录制/快照
+draw  → evidence         # 绘制后的帧（DECODED_FRAME）→ 预录缓冲、证据截图
+```
+
+**错误写法** `alert → evidence → draw → sink` 的后果：evidence 把帧吞了，
+draw 和 sink 一帧都收不到——快照目录建出来是空的、RTMP 无输出，而且**不报错**，
+只在日志里安静地 "Created snapshot directory" 之后再无下文。
+以能正常工作的 `config/pipelines/fusion_pipeline_v2.json` 为准即可。
 
 ## 坐标系：640 与 448 不会混用
 
@@ -62,6 +82,15 @@ new_packet->source_mat = frame->source_mat;             // <- 这个永远是原
 `tracker` 是原地修改同一个 packet 再广播，所以 `source_frame` 与 detections
 保证同帧，不会出现"A 帧的图配 B 帧的框"。
 
+### 引擎的 `det_boxes` 必须是 cxcywh，不是 xyxy
+
+`detection_infer.cpp:653-671` 把 `det_boxes` 前三列当 `cx,cy` 解析
+（`box.x = orig_cx - orig_w/2`），即**期望 cxcywh**。仓库里现有的 `*_nms.onnx`
+输出的就是 cxcywh。若引擎吐 xyxy（比如直接塞 ultralytics 的 NMS 输出），会被曲解成
+"坐标偏移 + 宽高翻倍"：框跑到画面外、`draw` 里看不见、关系模型拿到错误几何，但**不报错**——
+只表现为"有的框看得见有的看不见"和"关系分莫名偏低"。`tools/model_converter/nvidia/export_yoloe_e2e.py`
+已把这层转成 cxcywh，自定义导出时务必对齐。
+
 ## 节点参数
 
 | 参数 | 默认 | 说明 |
@@ -100,8 +129,28 @@ beside 0.980    in front of 0.870    behind 0.900    on 0.935
 | `child_class` | `child` | 主体类别 |
 | `boundary_classes` | `["wall","gate"]` | 客体类别 |
 | `relation_threshold` | `0.2` | 关系分门限（规则侧再收一次口） |
+| `duration_ms` | `1000` | 命中需**累计**超过此时长才从 DEFAULT 进 OCCUR（也接受键名 `alert_duration_ms`） |
+| `max_disappear_count` | 基类 5 | 允许连续多少帧没命中仍保留事件，超过则 erase、`detect_ms` 归零 |
 | `geometric_fallback` | `false` | 见下 |
 | `max_pixel_gap` | `60` | 几何回退的像素间距 |
+
+### "命中"不等于"告警"：状态机怎么攒 duration
+
+`rule_logic` 打印 `child near wall score=…` 只代表这一帧有命中，
+真正告警要过 `alert_rule_base.h` 的状态机：`updateZoneEvent` 累计
+`duration_ms = 当前命中时刻 - 首次命中时刻`，**只有 `duration_ms > alert_duration_ms_`
+才把状态从 DEFAULT 推到 OCCUR**，OCCUR 才进 `alert_events`、evidence 才录制/截图。
+
+踩过的坑：关系分在阈值附近反复穿越（`0.248, 0.229, 0.194, 0.189, 0.201…`），
+命中是断续的。默认 `max_disappear_count=5`（约 0.2s）一断就 erase、`detect_ms` 归零，
+`duration_ms` 永远攒不到 1000，于是**规则每帧都"命中"却从不告警**。
+两个修法配合用：
+
+- `relation_threshold` 下调到贴合模型工作点（本场景实测稳定命中约 **0.15**，
+  框几何修对后 `in front of` 能到 0.4+）；
+- `max_disappear_count` 放宽（如 **30** ≈ 1.2s），桥接 child 偶尔漏检 / 关系分抖动。
+
+调参用 `child_on_wall.mp4` 这类"持续贴近"的真实素材验证 duration 能否越过阈值。
 
 ### 方向必须显式判
 
@@ -137,18 +186,24 @@ beside 0.980    in front of 0.870    behind 0.900    on 0.935
 
 ### 1. YOLOE 导出（固定三类）
 
+用 `tools/model_converter/nvidia/export_yoloe_e2e.py`，它会导出端到端 NMS 的图，
+并**包装成引擎需要的 5 输出格式**（`det_boxes`(cxcywh)/`det_scores`/`det_classes`/
+`det_batch_ids`/`det_num_dets`），详见 `models/README.md`：
+
 ```bash
-python -c "
-from ultralytics import YOLOE
-m = YOLOE('yoloe-v8s.pt')
-m.set_classes(['child', 'wall', 'gate'])          # 顺序即通道顺序
-m.export(format='onnx', imgsz=640, opset=17, simplify=True, nms=False, batch=1)"
-# 再用 tools/model_converter/nvidia 转成 .engine
+python tools/model_converter/nvidia/export_yoloe_e2e.py \
+    --weight /path/to/yoloe-v8s-seg.pt \
+    --classes child wall gate \
+    --out models/yoloe/yoloe_v8s_child_wall_gate.onnx
+trtexec --onnx=models/yoloe/yoloe_v8s_child_wall_gate.onnx \
+        --saveEngine=models/yoloe/yoloe_v8s_child_wall_gate.engine --fp16
 ```
 
-> **通道顺序 = 导出时的提示顺序**，而 `detector_config.model_class_names` 是手写数组。
-> 两者不一致不会报错，只是标签整体错位（框还在、名字反了）。
-> 建议加测试断言二者一致，别靠人记。
+> `yoloe-v8s.pt` 在 ultralytics 8.4.x **并不存在**，promptable YOLOE 只以
+> `-seg` / `-seg-pf` 变体发布，所以用 `yoloe-v8s-seg.pt`（就是"YOLOE v8s"）。
+> **类别顺序 = 通道顺序**，且 `set_classes` 后文本嵌入烤进图里、engine 不可再改类别；
+> `detector_config.model_class_names` 必须与导出顺序一致，否则静默标签错位。
+> sidecar `*.names.json` 是这个顺序的权威来源，别手抄。
 
 ### 2. 谓词表导出
 
@@ -156,29 +211,42 @@ m.export(format='onnx', imgsz=640, opset=17, simplify=True, nms=False, batch=1)"
 cd /path/to/RelateAnything
 python deploy/export_predicate_bank.py \
     --dist deploy/dist/relsgg-vits16plus \
-    --out /path/to/ai_stream_pipeline/models/relation/predicate_bank.json \
+    --out /path/to/ai_stream_pipeline/models/relateanything/predicate_bank.json \
     --predicates beside "in front of" behind on
 ```
 
 ### 3. 关系引擎
 
 ```bash
-python deploy/export_onnx.py --out relateanything.onnx
-python deploy/export_tensorrt.py --onnx relateanything.onnx --engine relateanything.engine
-# 引擎必须在**目标 GPU 上**构建
+# ONNX 由 RelateAnything/deploy/export_onnx.py 产出（448 输入）
+trtexec --onnx=models/relateanything/relateanything.onnx \
+        --saveEngine=models/relateanything/relateanything.engine --fp16 \
+        --minShapes=image:1x3x448x448,boxes:1x2x4,box_counts:1,W:243x512,alpha:243 \
+        --optShapes=image:1x3x448x448,boxes:1x32x4,box_counts:1,W:243x512,alpha:243 \
+        --maxShapes=image:1x3x448x448,boxes:1x32x4,box_counts:1,W:243x512,alpha:243
+# 引擎必须在目标 GPU 上构建
 ```
+
+profile 里 `box_counts:1`、`alpha:243` 是 **1-D**（写成 `1x1`/`243x1` 会被 TRT 拒：
+"profile 0 has 2 dimensions"）；`boxes` 的 `num_boxes` 是动态维，必须给 min/opt/max 区间。
 
 ## 已知限制
 
-- **YOLOE 导出的 ONNX 有 39 个通道，只有前 3 个有意义。**
-  通道 4/5/6（child/wall/gate）是后 sigmoid 的概率，通道 7..34 是未过 sigmoid 的
-  原始 logits，最大值到 6.32。`detection_post` 必须按 `model_class_names.size()`
-  截断，否则会在不存在的类上产生 0.998 的高置信度框。
-  试过把 ONNX 裁成 7 通道，**失败**（onnxruntime 回落到宽松合并，实际输出仍是 39 通道）。
-- **`relation` 输出通道数是激活谓词数，不是 243。**
-  `W`/`alpha` 作为图输入传入，只有激活的那几列有意义。解码器已按 `predicates.size()` 截断。
+- **YOLOE 用端到端 NMS 导出**，`det_scores` 是每行最大分的一维 `(N,)`
+  （引擎按 `scores[i]` 消费，`detection_infer.cpp:567`），`det_boxes` 是 cxcywh。
+  不再需要早期"按 `model_class_names.size()` 把 39 通道截断"那套——那是原始
+  （非 NMS）导出才有的问题，`export_yoloe_e2e.py` 已用 Split 丢掉 mask 系数段。
+- **`pred_logits` 的谓词维是静态 243，不是激活数。** `W`/`alpha` 虽作为图输入，
+  但 `num_predicates` 在导出时是固定维（=整张词表），运行期不能按激活数 `setInputShape`
+  （TRT 会报 `Static dimension mismatch`）。做法：`W`/`alpha` 填满整表、未激活行填 0，
+  host 解码时再用 `only_predicates` 过滤——否则会把从未启用的谓词当成结果吐出来。
+- **候选配对数 ≠ 框数**：`boxes=32` 时图输出 `pairs=128`，host 缓冲必须按引擎
+  `pred_logits` 的真实维度分配，按框数猜会读到越界垃圾下标（表现为"推理成功但 0 条关系"）。
+- **`sub_idx`/`obj_idx` 是 int64、`valid_mask` 是 bool**，按 int32/float 读会静默错位。
 - **引擎绑 GPU 架构 + TensorRT 版本**，换卡必须重新构建。
-- 关系模型 17.2ms/图（TRT FP32, ViT-S+），YOLOE 17ms/张（预热后），30fps 流逐帧跑约占 50% 算力。
+- 关系模型约 13–16ms/图（TRT FP16, ViT-S+），YOLOE ~17ms/张（预热后）。
+- 关系后端目前**只有 TensorRT（x86）**，无 RKNN/ONNXRuntime 实现；RK3588 需另做后端。
+- `gate` 的谓词组合仍无真实样本验证。
 
 ## 文件
 
@@ -193,6 +261,10 @@ python deploy/export_tensorrt.py --onnx relateanything.onnx --engine relateanyth
 | `src/nodes/infer/relation_recognition.{h,cpp}` | 节点实现 |
 | `src/rules/alert/child_near_boundary_rule.{h,cpp}` | 规则 |
 | `config/pipelines/child_near_boundary_pipeline.json` | 管道示例 |
+| `tools/model_converter/nvidia/export_yoloe_e2e.py` | YOLOE 导出并包装成引擎的 5 输出（cxcywh） |
+| `tests/unit/nodes/test_relation_decode.cpp` | 解码 host 端回归（不依赖 GPU/模型） |
+| `tests/integration/test_relation_cpp.cpp` | 真实推理测试（需 GPU+engine，不进 ctest） |
+| `models/README.md` | 模型资产、导出、engine 构建与格式约定 |
 
 `packet.h` 新增：`AlertType::CHILD_NEAR_BOUNDARY = 20`、
 `InferenceResultPacket::RelationResult` 与 `relations` 字段。
@@ -206,13 +278,16 @@ python deploy/export_tensorrt.py --onnx relateanything.onnx --engine relateanyth
 | 目录 | 内容 |
 |---|---|
 | `models/yoloe/` | `yoloe_v8s_child_wall_gate.onnx` + `.names.json` |
-| `models/relation/` | `relateanything.onnx`、`predicate_bank.json`、`relateanything.json`、`calibration.json`、`thresholds.json` |
+| `models/relateanything/` | `relateanything.onnx`、`predicate_bank.json`、`relateanything.json`、`calibration.json`、`thresholds.json` |
 
 详见 `models/README.md`，其中记录了：
 
-- YOLOE 为什么需要 `tools/export_yoloe_e2e.py` 包装（引擎按 tensor 名取 5 个输出，
-  ultralytics 给的是打包张量）
+- YOLOE 为什么需要 `tools/model_converter/nvidia/export_yoloe_e2e.py` 包装（引擎按
+  tensor 名取 5 个输出，ultralytics 给的是打包张量）
+- **`det_boxes` 必须是 cxcywh**（引擎按 cx,cy,w,h 解析），xyxy 会被曲解成偏移+翻倍的框
 - 类别顺序 = 通道顺序，engine 不可改类别
-- 关系 ONNX 的 `num_boxes` 是动态维，`trtexec` 必须给 profile 区间，
-  否则运行期 shape 不匹配
+- 关系 ONNX 的 `num_boxes` 是动态维，`trtexec` 必须给 profile 区间，否则运行期 shape 不匹配
 - `near` 的实测分数与为何不用 bank 的逐谓词阈值
+
+上线前务必对照本文的**接线**（evidence 是终端、不能串在 draw 前）与**规则 duration**
+（`relation_threshold` 调低 + `max_disappear_count` 放宽，否则断续命中攒不到时长、永不告警）。
