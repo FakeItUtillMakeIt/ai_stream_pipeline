@@ -142,6 +142,8 @@ def wrap_e2e(raw_path: str, classes, imgsz: int, out_path: str) -> None:
         # Split 的 sizes 必须加和等于该维长度，所以要显式切出 mask 系数段
         # 再丢掉（引擎只要 box/scores/classes，不做分割）。
         const("split_sizes", np.array([4, nc, actual_c - 4 - nc], np.int64)),
+        const("split4", np.array([1, 1, 1, 1], np.int64)),
+        const("half", np.array(0.5, np.float32)),
         const("axis0_i", np.array([0], np.int64)),
         const("unsq_axis1", np.array([1], np.int64)),
         # Clamp 上界：NonZero 在空图上给空张量，夹到最后一行的合法下标
@@ -152,7 +154,7 @@ def wrap_e2e(raw_path: str, classes, imgsz: int, out_path: str) -> None:
         helper.make_node("Reshape", ["output0", "to_2d"], ["e2e_flat"]),
         # 最后一维切成 [box(4) | cls(nc) | mask]，mask 段丢弃
         helper.make_node("Split", ["e2e_flat", "split_sizes"],
-                         [OUT_BOXES, "scores_flat", "_mask_dropped"], axis=1),
+                         ["xyxy_all", "scores_flat", "_mask_dropped"], axis=1),
         # class = argmax(score)，reshape 成 (N,1)
         # 引擎按 scores[i] 一维消费 det_scores（detection_infer.cpp:567），
         # 所以 det_scores 必须是每行的最大分，而不是整张 (N,nc) 分数表。
@@ -163,6 +165,25 @@ def wrap_e2e(raw_path: str, classes, imgsz: int, out_path: str) -> None:
         helper.make_node("ArgMax", ["scores_flat"], ["cls_idx"], axis=1, keepdims=0),
         helper.make_node("Cast", ["cls_idx"], ["cls_flat"], to=TensorProto.INT64),
         helper.make_node("Reshape", ["cls_flat", "neg_one_1"], [OUT_CLASSES]),
+        # ---- det_boxes 必须是 cxcywh，不是 xyxy ----
+        #
+        # detection_infer 的 postprocessBatch（detection_infer.cpp:653-671）把
+        # det_boxes 前三列读作 cx,cy 并做 box.x=orig_cx-orig_w/2，即它期望
+        # cxcywh。ultralytics NMS 给的是 xyxy，直接喂进去会被曲解：坐标整体
+        # 偏移、宽高翻倍，表现为框画到画面外（draw 里 inimg=false），但数值
+        # 上"看着像检出了东西"，很难一眼看出是格式错。现有 *_nms.onnx 输出
+        # 的就是 cxcywh，这里必须对齐。
+        helper.make_node("Split", ["xyxy_all", "split4"],
+                         ["bx1", "by1", "bx2", "by2"], axis=1),
+        helper.make_node("Sub", ["bx2", "bx1"], ["bw_raw"]),
+        helper.make_node("Sub", ["by2", "by1"], ["bh_raw"]),
+        helper.make_node("Add", ["bx1", "bx2"], ["sx"]),
+        helper.make_node("Add", ["by1", "by2"], ["sy"]),
+        helper.make_node("Mul", ["sx", "half"], ["bcx"]),
+        helper.make_node("Mul", ["sy", "half"], ["bcy"]),
+        helper.make_node("Concat", ["bcx", "bcy", "bw_raw", "bh_raw"],
+                         [OUT_BOXES], axis=1),
+
         # ---- padding 行不压缩，交给引擎按分数过滤 ----
         #
         # 曾经试过 NonZero/Compress 把分数为 0 的行剔掉，但两种写法都过不去：
@@ -230,7 +251,7 @@ def verify(out_path: str, imgsz: int, nc: int) -> None:
         n = int(np.ravel(out[OUT_NUM_DETS])[0])
         if out[OUT_CLASSES].size:
             assert int(out[OUT_CLASSES].max()) < nc, "class id 越界"
-        print(f"  检出 {n} 个目标，首个 box(xyxy)={out[OUT_BOXES][0].round(1)}")
+        print(f"  检出 {n} 个目标，首个 box(cxcywh)={out[OUT_BOXES][0].round(1)}")
     print("  metadata names:", {p.key: p.value for p in
                                 onnx.load(out_path, load_external_data=False)
                                 .metadata_props}["names"])
