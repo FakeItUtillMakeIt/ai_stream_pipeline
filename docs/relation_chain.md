@@ -184,6 +184,16 @@ beside 0.980    in front of 0.870    behind 0.900    on 0.935
 
 ## 模型准备
 
+> **原始模型已放进对应目录**（`models/` 被 gitignore，只在本机留存）：
+>
+> | 目录 | 源权重 | 用途 |
+> |---|---|---|
+> | `models/yoloe/` | `yoloe-v8s-seg.pt` | 导出 YOLOE ONNX 的源权重 |
+> | `models/relateanything/` | `model.pth` + `text_student.pt` + `predicate_embeddings.npz` | 导出 RelateAnything ONNX 的源权重 |
+>
+> 源 `.pt/.pth` 已就位，但**从源权重重导 ONNX** 的 `export_onnx.py` 需要完整训练环境
+> （ultralytics + relsgg + HF 依赖）；本仓库通常直接复用已导出的 `.onnx`。
+
 ### 1. YOLOE 导出（固定三类）
 
 用 `tools/model_converter/nvidia/export_yoloe_e2e.py`，它会导出端到端 NMS 的图，
@@ -191,17 +201,16 @@ beside 0.980    in front of 0.870    behind 0.900    on 0.935
 `det_batch_ids`/`det_num_dets`），详见 `models/README.md`：
 
 ```bash
+# pt -> onnx
 python tools/model_converter/nvidia/export_yoloe_e2e.py \
-    --weight /path/to/yoloe-v8s-seg.pt \
+    --weight models/yoloe/yoloe-v8s-seg.pt \
     --classes child wall gate \
     --out models/yoloe/yoloe_v8s_child_wall_gate.onnx
-trtexec --onnx=models/yoloe/yoloe_v8s_child_wall_gate.onnx \
-        --saveEngine=models/yoloe/yoloe_v8s_child_wall_gate.engine --fp16
 ```
 
-> `yoloe-v8s.pt` 在 ultralytics 8.4.x **并不存在**，promptable YOLOE 只以
-> `-seg` / `-seg-pf` 变体发布，所以用 `yoloe-v8s-seg.pt`（就是"YOLOE v8s"）。
-> **类别顺序 = 通道顺序**，且 `set_classes` 后文本嵌入烤进图里、engine 不可再改类别；
+> `yoloe-v8s.pt` 在 ultralytics 8.4.x **并不存在**，promptable YOLOE 只以 `-seg` /
+> `-seg-pf` 变体发布，所以源权重是 `yoloe-v8s-seg.pt`（就是"YOLOE v8s"）。
+> **类别顺序 = 通道顺序**，`set_classes` 后文本嵌入烤进图里、engine 不可再改类别；
 > `detector_config.model_class_names` 必须与导出顺序一致，否则静默标签错位。
 > sidecar `*.names.json` 是这个顺序的权威来源，别手抄。
 
@@ -215,20 +224,43 @@ python deploy/export_predicate_bank.py \
     --predicates beside "in front of" behind on
 ```
 
-### 3. 关系引擎
+### 3. ONNX → Engine（统一用脚本）
+
+两条链路的 `.onnx -> .engine` 都用 `tools/model_converter/nvidia/build_engines.sh`，
+参数已固化，避免手敲漏 profile：
 
 ```bash
-# ONNX 由 RelateAnything/deploy/export_onnx.py 产出（448 输入）
+bash tools/model_converter/nvidia/build_engines.sh all           # 两个都转
+bash tools/model_converter/nvidia/build_engines.sh yoloe         # 只转 YOLOE
+bash tools/model_converter/nvidia/build_engines.sh relateanything # 只转关系
+```
+
+展开就是：
+
+```bash
+# YOLOE：batch 固定 1，输出动态维 TRT 自处理，不需要 profile
+trtexec --onnx=models/yoloe/yoloe_v8s_child_wall_gate.onnx \
+        --saveEngine=models/yoloe/yoloe_v8s_child_wall_gate.engine \
+        --fp16 --builderOptimizationLevel=5
+
+# RelateAnything：num_boxes 是动态维，必须给 min/opt/max profile
 trtexec --onnx=models/relateanything/relateanything.onnx \
         --saveEngine=models/relateanything/relateanything.engine --fp16 \
         --minShapes=image:1x3x448x448,boxes:1x2x4,box_counts:1,W:243x512,alpha:243 \
         --optShapes=image:1x3x448x448,boxes:1x32x4,box_counts:1,W:243x512,alpha:243 \
         --maxShapes=image:1x3x448x448,boxes:1x32x4,box_counts:1,W:243x512,alpha:243
-# 引擎必须在目标 GPU 上构建
 ```
 
-profile 里 `box_counts:1`、`alpha:243` 是 **1-D**（写成 `1x1`/`243x1` 会被 TRT 拒：
-"profile 0 has 2 dimensions"）；`boxes` 的 `num_boxes` 是动态维，必须给 min/opt/max 区间。
+**关键坑（脚本里已处理，改脚本别破坏）：**
+
+- 引擎**必须在目标 GPU 上构建**，绑定架构 + TensorRT 版本，换卡重跑脚本即可。
+- profile 里 `box_counts:1`、`alpha:243` 必须是 **1-D**；写成 `1x1` / `243x1`
+  会被 TRT 拒（`profile 0 has 2 dimensions`）。
+- `boxes` 的 `num_boxes` 是动态维，`min/opt/max` 三档必须给全，否则运行期
+  `setInputShape` 才报错。
+- `VOCAB=243` / `DIM=512` / `MAX_BOXES=32` 要与 `predicate_bank.json`、
+  `relateanything.json` 一致；换谓词库时同步改脚本顶部变量。
+- 默认 `--fp16`。要复现数值/换弱卡，去掉 `--fp16` 用 FP32（更慢、更稳）。
 
 ## 已知限制
 
