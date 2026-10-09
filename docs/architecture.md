@@ -23,6 +23,7 @@ ai_stream_pipeline 是一个模块化的视频流 AI 处理框架：以 **节点
 | `ai_stream_hal` | 硬件抽象层：推理引擎/图像加速/编解码接口 + 各平台后端实现（动态库 SHARED） |
 | `ai_stream_nodes` | 全部具体节点实现 + 节点工厂注册 |
 | `alert_rules` / `alert_node` | 告警规则与告警节点（对象库，并入 ai_stream_nodes） |
+| `gate_node` | VLM 告警闸门 + 上报节点（对象库，并入 ai_stream_nodes，需 libcurl） |
 | `http_server` | REST API 服务可执行文件 |
 
 依赖方向：`ai_stream_nodes → ai_stream_core / ai_stream_hal`，
@@ -133,8 +134,10 @@ ai_stream_pipeline 是一个模块化的视频流 AI 处理框架：以 **节点
 | AlertNode | `alert` | QueuedNode（规则经常驻线程池并行执行，`process_type: parallel\|sequence`） |
 | FusionNodeImpl | `fusion` | QueuedNode（双模式见下） |
 | OSDDrawNode | `osd_draw` | QueuedNode（矩形框经 HAL drawBoxes 路由，GPU 数据自动走 NPP；文字/关键点/面板 CPU 绘制，中文需 OpenCV freetype，缺失时英文回退 `cv::putText`） |
-| EvidenceNode | `evidence` | QueuedNode（双输入：告警触发 + 画框帧；内部 FrameBuffer/VideoRecorder/FtpUploader 各自带队列） |
+| EvidenceNode | `evidence` | QueuedNode（双输入：告警触发 + 画框帧；内部 FrameBuffer/VideoRecorder/FtpUploader 各自带队列；落告警快照后把事件回挂 `snapshot_path` 并转发下游 gate/report，但不透传实时帧） |
 | RTMPSinkNode / MP4SaveNode | `rtmp_sink` / `mp4_save` | QueuedNode（编码在 worker 线程串行执行；队列满默认丢最旧） |
+| VlmGateNode | `vlm_gate` | QueuedNode（读 evidence 标注快照→base64→OpenAI 兼容 VLM 判真伪，仅判真放行；去重冷却 + 审计 JSONL；见 `docs/vlm_alert_gate.md`） |
+| ReportSinkNode | `report` | QueuedNode（终端：把收到的告警连同 base64 报警图 POST webhook；上游是 evidence 或 vlm_gate 由接线决定） |
 
 > 源节点（`rtsp_source` / `file_source`）是生产者、自持读流线程，不使用 QueuedNode。
 > 原生 RKNN 检测节点已并入 `detection_infer`（经 HAL `IDetectionInferenceEngine` 选择 RKNN 后端）。

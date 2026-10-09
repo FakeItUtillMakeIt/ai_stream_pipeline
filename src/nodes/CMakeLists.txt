@@ -180,3 +180,20 @@ if(WITH_FTP)
             CURL::libcurl
     )
 endif()
+
+# VLM 告警闸门 + 上报节点（依赖 libcurl）
+if(WITH_VLM)
+    add_subdirectory(gate)
+    target_include_directories(ai_stream_nodes
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/gate
+    )
+    target_sources(ai_stream_nodes
+        PRIVATE
+            $<TARGET_OBJECTS:gate_node>
+    )
+    target_link_libraries(ai_stream_nodes
+        PRIVATE
+            CURL::libcurl
+    )
+endif()

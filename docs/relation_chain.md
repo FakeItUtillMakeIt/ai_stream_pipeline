@@ -14,31 +14,34 @@
 ```
 rtsp_source → ffmpeg_decode → resize_normalize(640) → detection_infer → tracker
             → relation_recognition → alert
-     alert ─┬→ osd_draw ─┬→ rtmp_sink
+     alert ─┬→ osd_draw ─┬→ rtmp_sink          # 实时预览，不受核验影响
             │            └→ evidence
-            └→ evidence            # evidence 收两路：draw 的帧 + alert 的告警
+            └→ evidence → [vlm_gate →] report  # 告警支路，可选过 VLM 闸门
 ```
 
 `relation_recognition` 消费 tracker 之后的 `InferenceResultPacket`：
 从 `source_frame->source_mat` 取原图，按 448 做 letterbox，把 detections 映射到
 同一坐标系，一次前向拿到全部三元组写入 `packet->relations`。
 
-### 接线：evidence 是终端，不要串在 draw 前面
+### 接线：evidence 收两路，且只在告警支路下沉转发
 
-`evidence` 节点**只转发 `STREAM_END`，正常帧一律不 `broadcast`**
-（见 `evidence_node.cpp::processPacket`）。因此它必须像下面这样接，而不是塞进
-主链：
+`evidence` 同时收 `alert`(META_DATA 告警事件) 与 `draw`(DECODED_FRAME 已画框帧)。
+它**不透传实时帧流**——`DECODED_FRAME` 一律吞掉，所以**绝不能把 evidence 串在
+`draw → sink` 中间**，否则 draw/sink 收不到帧、快照目录空、RTMP 无输出且**不报错**。
+
+但 evidence 在**落了一张告警快照后**，会把携带该告警的 `META_DATA` 包（并回挂
+`extra_data["snapshot_path"]`）`broadcast` 给下游，供 `vlm_gate` 取标注图核验、
+或无 gate 时直连 `report` 上报。也就是说：evidence 只在"有告警快照"这一个时机转发
+**告警事件**，不转发普通帧。
 
 ```
-alert → draw → sink      # 主链，帧一路传到推流
-alert → evidence         # 告警事件（META_DATA）→ 触发录制/快照
-draw  → evidence         # 绘制后的帧（DECODED_FRAME）→ 预录缓冲、证据截图
+alert → draw → sink            # 主链，帧一路传到推流
+alert → evidence               # 告警事件 → 触发录制/快照
+draw  → evidence               # 绘制后的帧 → 预录缓冲、证据截图（不转发）
+evidence → vlm_gate → report   # 告警落快照后转发该事件 → 核验 → 上报
 ```
 
-**错误写法** `alert → evidence → draw → sink` 的后果：evidence 把帧吞了，
-draw 和 sink 一帧都收不到——快照目录建出来是空的、RTMP 无输出，而且**不报错**，
-只在日志里安静地 "Created snapshot directory" 之后再无下文。
-以能正常工作的 `config/pipelines/fusion_pipeline_v2.json` 为准即可。
+告警核验与上报（base64 附图）详见 `docs/vlm_alert_gate.md`。
 
 ## 坐标系：640 与 448 不会混用
 
@@ -321,5 +324,6 @@ trtexec --onnx=models/relateanything/relateanything.onnx \
 - 关系 ONNX 的 `num_boxes` 是动态维，`trtexec` 必须给 profile 区间，否则运行期 shape 不匹配
 - `near` 的实测分数与为何不用 bank 的逐谓词阈值
 
-上线前务必对照本文的**接线**（evidence 是终端、不能串在 draw 前）与**规则 duration**
+上线前务必对照本文的**接线**（evidence 只在告警支路转发标注事件、不透传实时帧，
+不能串在 `draw → sink` 之间）与**规则 duration**
 （`relation_threshold` 调低 + `max_disappear_count` 放宽，否则断续命中攒不到时长、永不告警）。

@@ -224,6 +224,8 @@ void EvidenceNode::handleAlertTrigger(std::shared_ptr<core::InferenceResultPacke
                 if (snapshot_config_.enabled) {
                     std::lock_guard<std::mutex> lock(pending_snapshot_mutex_);
                     pending_snapshot_event_ = event;
+                    // 记住原始告警包：落快照后把 snapshot_path 回挂到它并转发下游。
+                    pending_snapshot_packet_ = packet;
                 }
 
                 if (video_config_.enabled) {
@@ -238,16 +240,33 @@ void EvidenceNode::trySavePendingSnapshot(std::shared_ptr<core::VideoFramePacket
     if (!snapshot_config_.enabled || !frame || !frame->mat || frame->mat->empty()) return;
 
     std::optional<rules::AlertEvent> event;
+    std::shared_ptr<core::InferenceResultPacket> packet;
     {
         std::lock_guard<std::mutex> lock(pending_snapshot_mutex_);
         if (pending_snapshot_event_) {
             event = pending_snapshot_event_;
+            packet = pending_snapshot_packet_;
             pending_snapshot_event_.reset();
+            pending_snapshot_packet_.reset();
         }
     }
 
-    if (event) {
-        saveSnapshotImage(frame, *event);
+    if (!event) return;
+
+    const std::string path = writeSnapshot(frame, *event);
+
+    // 关联并转发：把这张已画框的标注图路径挂到"同一个"携带告警的包上，再下发。
+    // 下游若是 vlm_gate 就据此取图核验；若是 report(无 gate 回退) 就据此直接上报。
+    if (!path.empty() && packet) {
+        for (auto& result : packet->alert_result) {
+            for (auto& ev : result.alert_events) {
+                if (ev.status == rules::AlertStatus::ALERT_STATUS_OCCUR &&
+                    !ev.extra_data.contains("snapshot_path")) {
+                    ev.extra_data["snapshot_path"] = path;
+                }
+            }
+        }
+        broadcast(packet);
     }
 }
 
@@ -297,9 +316,9 @@ void EvidenceNode::stopRecording() {
 #endif
 }
 
-void EvidenceNode::saveSnapshotImage(std::shared_ptr<core::VideoFramePacket> frame,
-                                     const rules::AlertEvent& event) {
-    if (!frame || !frame->mat || frame->mat->empty()) return;
+std::string EvidenceNode::writeSnapshot(std::shared_ptr<core::VideoFramePacket> frame,
+                                        const rules::AlertEvent& event) {
+    if (!frame || !frame->mat || frame->mat->empty()) return {};
 
     try {
         std::string filename = generateFilename(event.alert_name, "jpg");
@@ -308,8 +327,10 @@ void EvidenceNode::saveSnapshotImage(std::shared_ptr<core::VideoFramePacket> fra
 
         cv::imwrite(filepath.string(), *frame->mat);
         LOG_INFO_FMT("[EvidenceNode] Snapshot saved: {}", filepath.string());
+        return filepath.string();
     } catch (const std::exception& e) {
         LOG_ERROR_FMT("[EvidenceNode] Failed to save snapshot: {}", e.what());
+        return {};
     }
 }
 

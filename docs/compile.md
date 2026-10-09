@@ -14,9 +14,10 @@
   `HAVE_OPENCV_FREETYPE` 宏并链接；缺失时代码自动回退 `cv::putText`（中文绘制受限），
   仅输出 STATUS 提示、不会导致配置失败
 - **cpp-httplib**：BUILD_HTTP_SERVER=ON 时 FetchContent 自动拉取
-- **libcurl**：WITH_FTP=ON 时优先使用系统 libcurl；找不到则 FetchContent 拉取
-  curl-8.7.1，构建为最小静态库（禁用测试/示例与不必要协议，FTP/FTPS 可用）；
-  WITH_FTP=OFF 时完全不查找，`FtpUploader` 相关代码经 `#ifdef WITH_FTP` 编译剔除
+- **libcurl**：`WITH_FTP` 或 `WITH_VLM` 需要。`WITH_FTP=ON` 时优先系统 libcurl，找不到则
+  FetchContent 拉取 curl-8.7.1 构建最小静态库；`WITH_VLM=ON` 且尚无 CURL target 时单独
+  `find_package(CURL)`，找不到则自动 `WITH_VLM=OFF`（不阻断整包）。`vlm_gate`/`report`
+  节点依赖 curl，缺失即不编译、对应 node type 不注册
 
 ## 2. CMake 选项一览
 
@@ -49,6 +50,7 @@ cmake -LH build   # 查看全部选项及说明
 | `WITH_TRACK` | ON | 跟踪节点（需 Eigen3） |
 | `WITH_ALERT` | ON | 告警节点 |
 | `WITH_FTP` | ON | 证据 FTP 上传（libcurl，缺失时自动 FetchContent 拉取） |
+| `WITH_VLM` | ON | VLM 告警闸门(`vlm_gate`)与上报(`report`)节点，需 libcurl；缺失自动置 OFF |
 
 可选依赖查找失败时**自动禁用对应功能并输出 WARNING**（如 TensorRT 未找到则
 `WITH_TENSORRT` 自动置 OFF），不会中断配置。

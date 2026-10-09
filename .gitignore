@@ -58,6 +58,8 @@ models/**
 !models/**/
 !models/**/README.md
 
-config
+config/**
+!config/**/
+!config/**/pipeline_vlm_gate.json
 
 output

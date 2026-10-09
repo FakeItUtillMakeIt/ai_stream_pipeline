@@ -41,6 +41,8 @@ ai_stream_pipeline/
 │       │   ├── i_fusion_node.h
 │       │   ├── i_draw_node.h      # OSD 绘制（可选依赖 OpenCV freetype，宏 HAVE_OPENCV_FREETYPE）
 │       │   ├── i_evidence_node.h
+│       │   ├── i_vlm_gate_node.h  # VLM 告警闸门接口 + VlmGateConfig
+│       │   ├── i_report_node.h    # 告警上报接口 + ReportConfig
 │       │   └── i_sink_node.h
 │       └── rules/
 │           └── i_alert_rule.h     # 告警规则接口
@@ -84,6 +86,7 @@ ai_stream_pipeline/
 │   │   ├── draw/                  # osd_draw（HAL 路由，CPU/GPU 自适应）/ draw_panel（告警面板）
 │   │   ├── evidence/              # evidence_node / frame_buffer / video_recorder /
 │   │   │                          # video_rollover / ftp_uploader
+│   │   ├── gate/                  # vlm_gate_node / report_sink_node / http_util（需 libcurl）
 │   │   └── sink/                  # rtmp_sink / mp4_save / encoder_base
 │   └── rules/alert/               # 20+ 告警规则（含 falling 跌倒过程）+ alert_rule_factory
 │       └── detector/              # 攀爬/打架/打电话等复合检测器

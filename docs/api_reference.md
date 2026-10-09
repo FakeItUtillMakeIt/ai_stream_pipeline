@@ -60,7 +60,10 @@
 | `alert` | AlertNode | 告警规则容器 |
 | `fusion` | FusionNodeImpl | 多推理源融合 |
 | `osd_draw` | OSD 绘制（CPU/GPU 自适应，框绘制走 HAL） | 中文绘制需 OpenCV freetype |
-| `evidence` | EvidenceNode | 证据链录制/上传 |
+| `evidence` | EvidenceNode | 证据链录制/上传；落告警快照后转发事件给下游（见下） |
+| `relation_recognition` | RelationRecognitionNode | 视觉关系三元组检测（YOLOE+RelateAnything，见 `relation_chain.md`） |
+| `vlm_gate` | VlmGateNode | VLM 告警核验闸门：判真才放行（需 `WITH_VLM`，见 `vlm_alert_gate.md`） |
+| `report` | ReportSinkNode | 告警上报 webhook，附带 base64 报警图（需 `WITH_VLM`） |
 | `rtmp_sink` / `mp4_save` | 推流/存盘 | 编码输出 |
 
 > 具体节点参数请参考各节点的 `configure()` 实现及

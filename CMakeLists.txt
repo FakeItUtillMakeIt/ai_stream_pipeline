@@ -48,6 +48,7 @@ option(WITH_CPU_FALLBACK "Deprecated no-op (CPU fallback backends are always bui
 option(WITH_TRACK "Enable tracking node" ON)
 option(WITH_ALERT "Enable alert node" ON)
 option(WITH_FTP "Enable FTP upload (libcurl)" ON)
+option(WITH_VLM "Enable VLM gate & report nodes (needs libcurl)" ON)
 
 # ------------------------------------------------------------------------------
 # 2. 全局编译设置
@@ -205,6 +206,18 @@ if(WITH_FTP)
     endif()
 else()
     message(STATUS "FTP upload disabled (WITH_FTP=OFF)")
+endif()
+
+# VLM gate/report 也依赖 libcurl，但不能绑死 WITH_FTP：FTP 关时单独找一次系统 curl。
+# 找不到就跳过 VLM 节点编译（不阻断整包构建）。
+if(WITH_VLM AND NOT TARGET CURL::libcurl)
+    find_package(CURL QUIET)
+    if(CURL_FOUND)
+        message(STATUS "VLM: found system CURL ${CURL_VERSION_STRING}")
+    else()
+        message(STATUS "VLM gate/report disabled: libcurl not found")
+        set(WITH_VLM OFF)
+    endif()
 endif()
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")

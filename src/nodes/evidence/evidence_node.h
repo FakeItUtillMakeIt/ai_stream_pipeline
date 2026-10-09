@@ -39,8 +39,9 @@ private:
     void startRecording(const rules::AlertEvent& event);
     void stopRecording();
 
-    void saveSnapshotImage(std::shared_ptr<core::VideoFramePacket> frame,
-                           const rules::AlertEvent& event);
+    // 落盘并返回快照路径；失败/未写返回空串。
+    std::string writeSnapshot(std::shared_ptr<core::VideoFramePacket> frame,
+                              const rules::AlertEvent& event);
 
     void trySavePendingSnapshot(std::shared_ptr<core::VideoFramePacket> frame);
 
@@ -66,6 +67,8 @@ private:
 
     std::optional<rules::AlertEvent> pending_snapshot_event_;
     std::mutex pending_snapshot_mutex_;
+    // 触发该快照的原始告警包：落快照后回挂 snapshot_path 并转发下游（gate/report）。
+    std::shared_ptr<core::InferenceResultPacket> pending_snapshot_packet_;
 
     mutable std::mutex mutex_;
 };

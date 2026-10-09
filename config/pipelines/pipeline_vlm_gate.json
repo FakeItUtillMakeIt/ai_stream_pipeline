@@ -1,0 +1,231 @@
+{
+ "id": "child_boundary_vlm_smoke",
+ "graph": {
+  "nodes": [
+   {
+    "id": "src1",
+    "type": "file_source",
+    "params": {
+     "url": "file:///home/sevnce/project/video/test/child_on_wall.mp4",
+     "loop": true,
+     "realtime": true,
+     "skip_frames": 1
+    }
+   },
+   {
+    "id": "decode1",
+    "type": "ffmpeg_decode",
+    "params": {
+     "output_bgr": true,
+     "hw_decoder": true
+    }
+   },
+   {
+    "id": "preprocess1",
+    "type": "resize_normalize",
+    "params": {
+     "output_width": 640,
+     "output_height": 640,
+     "keep_aspect_ratio": true
+    }
+   },
+   {
+    "id": "infer1",
+    "type": "detection_infer",
+    "params": {
+     "detector_config": {
+      "model_path": "/home/sevnce/project/ai_stream_pipeline/models/yoloe/yoloe_v8s_child_wall_gate.engine",
+      "conf_threshold": 0.25,
+      "nms_threshold": 0.4,
+      "input_size": {
+       "width": 640,
+       "height": 640
+      },
+      "batch_size": 1,
+      "model_class_names": [
+       "child",
+       "wall",
+       "gate"
+      ]
+     }
+    }
+   },
+   {
+    "id": "tracker1",
+    "type": "tracker",
+    "params": {
+     "tracker_type": "bytetrack",
+     "sub_stream_id": "src1"
+    }
+   },
+   {
+    "id": "rel1",
+    "type": "relation_recognition",
+    "params": {
+     "model_path": "/home/sevnce/project/ai_stream_pipeline/models/relateanything/relateanything.engine",
+     "predicate_bank": "/home/sevnce/project/ai_stream_pipeline/models/relateanything/predicate_bank.json",
+     "img_size": 448,
+     "max_boxes": 32,
+     "predicates": [
+      "beside",
+      "in front of",
+      "behind",
+      "on"
+     ],
+     "score_threshold": 0.1,
+     "box_confidence": 0.2,
+     "max_relations": 256,
+     "boundary_classes": [
+      "wall",
+      "gate"
+     ],
+     "backend": "auto"
+    }
+   },
+   {
+    "id": "alert1",
+    "type": "alert",
+    "params": {
+     "process_type": "parallel",
+     "rules": [
+      {
+       "type": "child_near_boundary",
+       "params": {
+        "name": "child_near_wall",
+        "rule_zones": [],
+        "child_class": "child",
+        "boundary_classes": [
+         "wall",
+         "gate"
+        ],
+        "relation_threshold": 0.15,
+        "geometric_fallback": false,
+        "max_pixel_gap": 60,
+        "duration_ms": 800,
+        "max_disappear_count": 30
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "evid1",
+    "type": "evidence",
+    "params": {
+     "video": {
+      "enabled": true,
+      "pre_frames": 20,
+      "post_frames": 40,
+      "fps": 25,
+      "encoder": "h264_nvenc",
+      "bitrate": 4000,
+      "output_dir": "./evidence/videos"
+     },
+     "snapshot": {
+      "enabled": true,
+      "output_dir": "./evidence/snapshots"
+     }
+    }
+   },
+   {
+    "id": "draw1",
+    "type": "osd_draw",
+    "params": {
+     "snapshot": {
+      "enabled": false,
+      "interval": 100,
+      "dir": "./draw_snapshot1/",
+      "font_file": "/home/sevnce/project/ai_stream_pipeline/resources/ai.ttf",
+      "logo_file": "/home/sevnce/project/ai_stream_pipeline/resources/logo.png"
+     },
+     "panel": {
+      "enabled": true
+     }
+    }
+   },
+   {
+    "id": "sink1",
+    "type": "mp4_save",
+    "params": {
+     "output_url": "./output/vlm_smoke.mp4"
+    }
+   },
+   {
+    "id": "vlm1",
+    "type": "vlm_gate",
+    "params": {
+     "enabled": true,
+     "url": "http://127.0.0.1:8901/v1",
+     "api_key": "dummy",
+     "model": "qwen2.5-vl-7b-instruct",
+     "timeout_ms": 3000,
+     "retries": 1,
+     "max_side": 1024,
+     "confidence_threshold": 0.6,
+     "cooldown_s": 3,
+     "review_dir": "./vlm_review"
+    }
+   },
+   {
+    "id": "report1",
+    "type": "report",
+    "params": {
+     "enabled": true,
+     "url": "http://127.0.0.1:8902/alert",
+     "timeout_ms": 3000,
+     "source": "ai_stream"
+    }
+   }
+  ],
+  "edges": [
+   {
+    "from": "src1",
+    "to": "decode1"
+   },
+   {
+    "from": "decode1",
+    "to": "preprocess1"
+   },
+   {
+    "from": "preprocess1",
+    "to": "infer1"
+   },
+   {
+    "from": "infer1",
+    "to": "tracker1"
+   },
+   {
+    "from": "tracker1",
+    "to": "rel1"
+   },
+   {
+    "from": "rel1",
+    "to": "alert1"
+   },
+   {
+    "from": "alert1",
+    "to": "draw1"
+   },
+   {
+    "from": "alert1",
+    "to": "evid1"
+   },
+   {
+    "from": "draw1",
+    "to": "evid1"
+   },
+   {
+    "from": "draw1",
+    "to": "sink1"
+   },
+   {
+    "from": "evid1",
+    "to": "vlm1"
+   },
+   {
+    "from": "vlm1",
+    "to": "report1"
+   }
+  ]
+ }
+}
