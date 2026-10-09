@@ -43,8 +43,16 @@ private:
     // 读 snapshot 文件 → base64（超 max_side 先下采样）。返回空表示图不可用。
     std::string loadSnapshotBase64(const std::string& path, int max_side);
 
+    // 三种处理模式
+    enum class GateMode { Verify, Passthrough, Hold };
+
+    // 按 alert_name 解析出"有效提示词"（question/system/阈值/max_tokens 全部落实）。
+    // 命中 cfg_.prompts 用精调；否则按 unmatched_policy：Auto=用模板套 alert_name 生成，
+    // Passthrough/Hold 直接返回对应模式（out 不用于调 VLM）。
+    GateMode resolvePrompt(const std::string& alert_name, VlmPromptSpec& out);
+
     // 调 OpenAI 兼容端点，解析出 verdict/confidence/reason。失败填 error。
-    Verdict callVlm(const std::string& image_b64, const std::string& alert_name);
+    Verdict callVlm(const std::string& image_b64, const VlmPromptSpec& spec);
 
     // 冷却判定 + 记录。命中冷却返回 true（本周期已决策，跳过重复调用）。
     bool inCooldown(const std::string& key, long long now_ms);

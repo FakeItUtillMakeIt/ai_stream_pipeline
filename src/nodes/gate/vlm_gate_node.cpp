@@ -116,30 +116,84 @@ std::string VlmGateNode::loadSnapshotBase64(const std::string& path, int max_sid
     return http::base64Encode(buf);
 }
 
-VlmGateNode::Verdict VlmGateNode::callVlm(const std::string& image_b64, const std::string& alert_name)
+namespace {
+
+// alert_name → 人可读：child_near_wall → "child near wall"（喂给模型的 {alert}）
+std::string prettifyAlertName(const std::string& name)
 {
-    (void)alert_name;
+    std::string s = name;
+    std::replace(s.begin(), s.end(), '_', ' ');
+    std::replace(s.begin(), s.end(), '-', ' ');
+    return s;
+}
+
+std::string fillTemplate(const std::string& tpl, const std::string& alert)
+{
+    std::string out;
+    out.reserve(tpl.size());
+    for (size_t i = 0; i < tpl.size();) {
+        if (tpl[i] == '{' && tpl.compare(i, 7, "{alert}") == 0) {
+            out += alert;
+            i += 7;
+        } else {
+            out += tpl[i++];
+        }
+    }
+    return out;
+}
+
+}  // namespace
+
+VlmGateNode::GateMode VlmGateNode::resolvePrompt(const std::string& alert_name,
+                                                 VlmPromptSpec& out)
+{
+    auto it = cfg_.prompts.find(alert_name);
+    if (it != cfg_.prompts.end()) {
+        out = it->second;
+        if (out.system.empty()) out.system = cfg_.system_prompt;
+        if (!out.has_threshold) { out.confidence_threshold = cfg_.confidence_threshold; }
+        if (!out.has_max_tokens) { out.max_tokens = cfg_.max_tokens; }
+        return GateMode::Verify;
+    }
+
+    // 未命中：按策略
+    switch (cfg_.unmatched_policy) {
+        case VlmUnmatchedPolicy::Passthrough: return GateMode::Passthrough;
+        case VlmUnmatchedPolicy::Hold:        return GateMode::Hold;
+        case VlmUnmatchedPolicy::Auto:
+        default:
+            // 用 alert_name 套模板自动生成核验问题
+            out = VlmPromptSpec{};
+            out.question = fillTemplate(cfg_.question_template, prettifyAlertName(alert_name));
+            out.system = cfg_.system_prompt;
+            out.confidence_threshold = cfg_.confidence_threshold;
+            out.max_tokens = cfg_.max_tokens;
+            return GateMode::Verify;
+    }
+}
+
+VlmGateNode::Verdict VlmGateNode::callVlm(const std::string& image_b64, const VlmPromptSpec& spec)
+{
     Verdict v;
     const long long t0 = utils::TimeUtil::currentTimeMs();
     const std::string url = cfg_.url + cfg_.endpoint;
 
-    // OpenAI 兼容 body：system 定死只输出 JSON，user 带图文本 + 标注图。
-    json question =
-        json{{"type", "text"},
-             {"text", "图中红框为儿童、蓝框为墙或大门。请判断：是否确实有一名儿童紧贴在墙或大门"
-                      "旁边（存在坠落/翻越等风险位置）。只判真假，不纠正类别。仅输出 "
-                      "{\"verdict\":true/false,\"confidence\":0.0-1.0,\"reason\":\"不超过20字\"}"}};
+    // OpenAI 兼容 body：system 只输出 JSON，user 带"核验问题 + 标注图"。
+    json question = json{{"type", "text"}, {"text", spec.question}};
     json image = json{{"type", "image_url"},
                       {"image_url", {{"url", "data:image/jpeg;base64," + image_b64}}}};
     json body = json{
         {"model", cfg_.model},
         {"temperature", 0},
-        {"max_tokens", 120},
+        {"max_tokens", spec.max_tokens > 0 ? spec.max_tokens : cfg_.max_tokens},
         {"messages",
-         {{{"role", "system"},
-           {"content", "你是安防告警核验助手，只输出一个 JSON 对象，不要多余文字。"}},
+         {{{"role", "system"}, {"content", spec.system}},
           {{"role", "user"}, {"content", {question, image}}}}},
     };
+    // 关思考：vLLM/Qwen 经 chat_template_kwargs 透传。思考模型会先吐很长的
+    // reasoning_content，小 max_tokens 下可见 content 直接为空 → 解析失败 → HOLD。
+    if (!cfg_.enable_thinking)
+        body["chat_template_kwargs"] = json{{"enable_thinking", false}};
 
     std::vector<std::string> headers;
     if (!cfg_.api_key.empty())
@@ -163,18 +217,30 @@ VlmGateNode::Verdict VlmGateNode::callVlm(const std::string& image_b64, const st
     // 解析 choices[0].message.content
     try {
         json root = json::parse(resp.body);
-        const json& content = root["choices"][0]["message"]["content"];
+        const json& msg = root["choices"][0]["message"];
+        const json& content = msg["content"];
+        // 思考模型常见：content 为 null（token 被 reasoning_content 吃光）。
+        if (content.is_null() || (content.is_string() && content.get<std::string>().empty())) {
+            std::string rc = msg.contains("reasoning_content") && msg["reasoning_content"].is_string()
+                                 ? msg["reasoning_content"].get<std::string>() : "";
+            v.error = "empty content (thinking model? set enable_thinking=false or raise max_tokens)"
+                      "; reasoning_len=" + std::to_string(rc.size());
+            LOG_WARN_FMT("[VlmGate] 模型返回空 content，reasoning_len={}", rc.size());
+            return v;
+        }
         std::string text =
             content.is_string() ? content.get<std::string>() : content.dump();
         const std::string obj = extractJsonObject(text);
         if (obj.empty()) {
             v.error = "no json in content";
+            LOG_WARN_FMT("[VlmGate] content 无 JSON，原文(截断): {}", text.substr(0, 200));
             return v;
         }
         json pj = json::parse(obj);
         bool verdict = false;
         if (!jsonToBool(pj, "verdict", verdict)) {
             v.error = "missing verdict field";
+            LOG_WARN_FMT("[VlmGate] content 缺 verdict，原文(截断): {}", obj.substr(0, 200));
             return v;
         }
         v.verdict = verdict;
@@ -183,6 +249,8 @@ VlmGateNode::Verdict VlmGateNode::callVlm(const std::string& image_b64, const st
             v.reason = pj["reason"].get<std::string>();
     } catch (const std::exception& e) {
         v.error = std::string("parse fail: ") + e.what();
+        LOG_WARN_FMT("[VlmGate] 响应解析失败: {} body(截断): {}", e.what(),
+                     resp.body.substr(0, 240));
     }
     return v;
 }
@@ -259,35 +327,50 @@ void VlmGateNode::processPacket(std::shared_ptr<core::BasePacket> packet)
         std::vector<rules::AlertEvent> keep;
         for (auto& ev : result.alert_events) {
             const std::string key = dedupKey(*infer, ev);
-            if (inCooldown(key, now)) {
-                continue;   // 冷却期内不重复调 VLM，也不重复放行
-            }
-
             const std::string snap = ev.extra_data.value("snapshot_path", "");
+
+            VlmPromptSpec spec;
+            const GateMode mode = resolvePrompt(ev.alert_name, spec);
+
             Verdict v;
             v.pushed = false;
 
-            if (snap.empty()) {
-                v.error = "no_snapshot";
+            if (mode == GateMode::Passthrough) {
+                // 未配模板且策略=放行：不调 VLM，直接上报
+                v.decision = "PASSTHROUGH";
+                v.pushed = true;
+            } else if (mode == GateMode::Hold) {
+                // 未配模板且策略=转人工：不上报、不丢弃
                 v.decision = "HOLD";
+                v.error = "no_prompt_configured";
             } else {
-                const std::string b64 = loadSnapshotBase64(snap, cfg_.max_side);
-                if (b64.empty()) {
-                    v.error = "image_unreadable";
+                // Verify
+                if (inCooldown(key, now)) {
+                    continue;   // 冷却期内不重复调 VLM，也不重复放行
+                }
+                if (snap.empty()) {
+                    v.error = "no_snapshot";
                     v.decision = "HOLD";
                 } else {
-                    v = callVlm(b64, ev.alert_name);
-                    if (!v.error.empty()) {
-                        v.decision = "HOLD";           // 异常不判假：转人工，不丢弃
-                    } else if (!v.verdict) {
-                        v.decision = "DROP";          // 明确判假：不上报
-                    } else if (v.confidence >= cfg_.confidence_threshold) {
-                        v.decision = "PUSH";
-                        v.pushed = true;
+                    const std::string b64 = loadSnapshotBase64(snap, cfg_.max_side);
+                    if (b64.empty()) {
+                        v.error = "image_unreadable";
+                        v.decision = "HOLD";
                     } else {
-                        v.decision = "HOLD";          // 判真但低置信：转人工
+                        v = callVlm(b64, spec);
+                        if (!v.error.empty()) {
+                            v.decision = "HOLD";               // 异常不判假：转人工
+                        } else if (!v.verdict) {
+                            v.decision = "DROP";               // 明确判假：不上报
+                        } else if (v.confidence >= spec.confidence_threshold) {
+                            v.decision = "PUSH";               // 判真且达该类阈值
+                            v.pushed = true;
+                        } else {
+                            v.decision = "HOLD";               // 判真但低置信：转人工
+                        }
                     }
                 }
+                touchCooldown(key, now);
             }
 
             // 把核验结论挂回事件，供 report / 下游与审计使用
@@ -297,7 +380,6 @@ void VlmGateNode::processPacket(std::shared_ptr<core::BasePacket> packet)
                 {"error", v.error}, {"model", cfg_.model},
                 {"latency_ms", v.latency_ms}};
 
-            touchCooldown(key, now);
             appendAudit(*infer, ev, snap, v);
 
             if (v.pushed) {
@@ -310,7 +392,7 @@ void VlmGateNode::processPacket(std::shared_ptr<core::BasePacket> packet)
         result.alert_events = std::move(keep);
     }
 
-    // 只把"有被判真事件"的告警下发；全 DROP/HOLD 时不发任何东西（report 收不到即不上报）。
+    // 只把"有可上报事件(PUSH/PASSTHROUGH)"的告警下发；全 DROP/HOLD 时不发。
     if (any_push)
         broadcast(infer);
 }

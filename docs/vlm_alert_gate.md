@@ -57,20 +57,54 @@ broadcast(packet);
 读 snapshot_path → 读图(可 max_side 下采样) → base64 → POST <url>/chat/completions
 解析 content 里的 {"verdict","confidence","reason"}：
 
-verdict=true  且 confidence ≥ confidence_threshold → PUSH   （放行给 report）
-verdict=false                                       → DROP   （不上报，落审计）
-verdict=true  但 confidence < 阈值                    → HOLD   （不上报，转人工）
-无图 / 图不可读 / 超时 / 非2xx / JSON 不可解析         → HOLD   （不上报，不丢弃，转人工）
+ verdict=true  且 confidence ≥ 该类阈值           → PUSH   （放行给 report）
+ verdict=false                                       → DROP   （不上报，落审计）
+ verdict=true  但 confidence < 阈值                    → HOLD   （不上报，转人工）
+ 无图 / 图不可读 / 超时 / 非2xx / JSON 不可解析         → HOLD   （不上报，不丢弃，转人工）
 ```
 
 - **`error` ≠ 判假**：VLM 挂了不产生 `false`，走 HOLD，既不误报也不"因宕机丢弃真告警"，
   而是落人工复核队列。
-- **只有 PUSH 事件会被 broadcast**；全 DROP/HOLD 时 gate 不发任何东西（report 收不到即不上报）。
+- **只有 PUSH（或未配模板且 `unmatched_policy=passthrough` 的 PASSTHROUGH）事件会被
+  broadcast**；全 DROP/HOLD 时 gate 不发任何东西（report 收不到即不上报）。
+- **每类独立阈值**：`prompts[名字].confidence_threshold` 覆盖全局 `confidence_threshold`，
+  不同告警（把握度不同）可分别调。
 - **去重/冷却**：`dedupKey = stream_id | alert_type | zone_no | 首个 object_id`；
-  命中 `cooldown_s` 内不重复调 VLM、不重复放行。
+  命中 `cooldown_s` 内不重复调 VLM、不重复放行。多类告警天然按类型隔离，互不压制。
 - **审计**：每个决策写一行 `review_dir/decisions.jsonl`，字段含
   `decision / vlm_verdict / vlm_confidence / vlm_reason / vlm_error / latency_ms /
   snapshot_path / object_ids / ground_truth(null)`，供漏报误报评测与后续微调。
+
+### 多告警类型：一套 gate 处理所有（P0）
+
+gate 与告警类型解耦——决策/去重/审计/附图逻辑通用，**只有"核验问题"按类型不同**：
+
+```
+解析优先级：prompts[alert_name] 命中 → 用其精调问题
+            未命中 → 按 unmatched_policy：
+              auto（默认）: 用 question_template 把 {alert} 换成 prettify(alert_name) 自动生成
+              passthrough : 不调 VLM，直接放行（不阻塞未覆盖的告警）
+              hold        : 不调 VLM，转人工
+```
+
+即：任何告警挂上 gate 都能核验（auto 按名字生成问题）；想更准就给它加一条
+`prompts`。示例：
+
+```jsonc
+"vlm_gate": {
+  "url":"http://ip:8901/v1","model":"qwen3.8-27b","api_key":"${VLM_API_KEY}",
+  "enable_thinking": false, "max_tokens": 512, "confidence_threshold": 0.6,
+  "unmatched_policy": "auto",
+  "prompts": {
+    "child_near_wall": { "question":"儿童是否在墙/门附近，有翻越坠落风险？", "confidence_threshold":0.6 },
+    "fall_down":       { "question":"画面中是否有人跌倒/倒地不起？", "confidence_threshold":0.7 },
+    "fighting":        { "question":"是否发生斗殴肢体冲突？" }
+  }
+}
+```
+
+> 注意：跌倒/打架这类**时序动作**用单张快照把握差，容易误判 false；这类建议走 P1
+> 的多帧输入（`frames>1`），P0 只保证"能按名字核验"。
 
 ### 本地/云端统一
 
@@ -126,13 +160,23 @@ verdict=true  但 confidence < 阈值                    → HOLD   （不上报
 | `api_key` | "" | 支持 `${ENV}`；可留空（本地无鉴权） |
 | `model` | 必填 | 模型名 |
 | `endpoint` | `/chat/completions` | 追加到 url |
-| `timeout_ms` / `connect_timeout_ms` | 3000 / 1500 | curl 超时；超时→HOLD |
+| `timeout_ms` / `connect_timeout_ms` | 3000 / 1500 | curl 超时；超时→HOLD。真实模型（尤其思考/本地7B）建议 8000~15000 |
 | `retries` | 1 | VLM 失败重试 |
 | `max_side` | 1024 | 送图前下采样 |
-| `confidence_threshold` (τ) | 0.6 | true 且 conf≥τ 才 PUSH |
+| `max_tokens` | 512 | 生成上限。**思考模型必须够大**，否则 content 被 reasoning 吃光→空→HOLD |
+| `enable_thinking` | false | 关思考（注入 `chat_template_kwargs.enable_thinking=false`）：更快、content 直接是 JSON |
+| `confidence_threshold` (τ) | 0.6 | 全局阈值：true 且 conf≥τ 才 PUSH；可被 `prompts[].confidence_threshold` 覆盖 |
 | `cooldown_s` | 30 | 同目标冷却 |
 | `review_dir` | `./vlm_review` | 审计 JSONL |
-| `passthrough` | false | true 直接全放行（灰度） |
+| `passthrough` | false | true 直接全放行（灰度回退） |
+| `system_prompt` | 见实现 | 全局 system（只输出 JSON） |
+| `question_template` | 见实现 | `unmatched_policy=auto` 时生成问题用，`{alert}` 占位 alert_name |
+| `prompts` | {} | `alert_name → {question, system?, confidence_threshold?, max_tokens?}` 精调表 |
+| `unmatched_policy` | `auto` | 未配 prompts 的类型：`auto`/`passthrough`/`hold` |
+
+> **换真实模型"没反应"的头号原因**：思考模型 + `max_tokens` 太小 → `content` 为空 →
+> 解析失败 → 每帧 HOLD、不外发。设 `enable_thinking=false` 且 `max_tokens≥512` 即解决
+> （实测该配置下延迟从"空返回"降到 ~1.5s 且判真）。
 
 `report`（`ReportConfig`）：
 
@@ -166,8 +210,12 @@ verdict=true  但 confidence < 阈值                    → HOLD   （不上报
 
 1. 起 VLM 兼容端点（或先用 mock，见 §8）。
 2. 配置里把 `vlm1.params.enabled=true` 并填 `url/model/api_key`；`report1.params.enabled=true` 填 `url`。
+   真实思考模型务必 `enable_thinking:false` + `max_tokens≥512`（见 §5 提示）。
 3. 确认边为 `rel1→alert1→evidence1→vlm1→report1` 且 `alert1→draw1→sink1`。
 4. `τ` 与 `cooldown_s` 按误报率调；先小流量观察 `vlm_review/decisions.jsonl`。
+5. **其它告警接入**：任何管道只要接上 `alert → evidence → vlm_gate → report` 即自动核验；
+   未配 `prompts` 的类型按 `unmatched_policy`（默认 auto，用 alert_name 生成问题）处理，
+   要更准再补一条 `prompts[alert_name].question`。
 
 ---
 
