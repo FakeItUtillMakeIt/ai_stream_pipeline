@@ -52,7 +52,11 @@ __pycache__/
 
 .opencode/
 
-models
+# models：忽略目录内容，但允许进入子目录并放行各级 README.md。
+# 不能写 `models`（整目录排除后，git 不再下沉，目录内 ! 反忽略一律无效）。
+models/**
+!models/**/
+!models/**/README.md
 
 config
 

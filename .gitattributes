@@ -1,4 +1,9 @@
 *.engine filter=lfs diff=lfs merge=lfs -text
 *.onnx filter=lfs diff=lfs merge=lfs -text
-*.pth filter=lfs diff=lfs merge=lfs -text
-*.pt filter=lfs diff=lfs merge=lfs -text
+
+# 仅本次新增的三个权重走 LFS：用精确路径，避免全局 *.pt/*.pth
+# 追溯命中仓库里早已作为普通 blob 提交的旧权重（sevncevision / videomae /
+# yolov8n 等），那会让它们在 git status 里显示为"待迁移成 LFS 指针"的假改动。
+models/yoloe/yoloe-v8s-seg.pt          filter=lfs diff=lfs merge=lfs -text
+models/relateanything/model.pth        filter=lfs diff=lfs merge=lfs -text
+models/relateanything/text_student.pt  filter=lfs diff=lfs merge=lfs -text
