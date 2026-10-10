@@ -34,6 +34,10 @@ namespace ai_stream
             // 每帧只运行一次检测器，结果缓存供各 zone 复用
             bool last_is_fighting_ = false;
             std::vector<int> last_fight_track_ids_;
+            // 动作模型逐窗抖动时的一次保持(hysteresis)：判到 fighting 后，
+            // 在 fight_hold_ms 内即使后续帧说 other 也维持为真，让 duration 能连续累积。
+            int64_t fight_hold_ms_ = 0;
+            int64_t last_fighting_ts_ = -1;
         };
     }
 }

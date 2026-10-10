@@ -34,6 +34,10 @@ namespace ai_stream
             // 每帧只运行一次检测器，结果缓存供各 zone 复用
             bool last_is_climbing_ = false;
             std::vector<int> last_climb_track_ids_;
+            // 动作模型逐窗抖动时的一次保持(hysteresis)：判到 climbing 后，
+            // 在 climb_hold_ms 内即使后续帧说别的也维持为真，让 duration 能连续累积。
+            int64_t climb_hold_ms_ = 0;
+            int64_t last_climbing_ts_ = -1;
         };
     }
 }

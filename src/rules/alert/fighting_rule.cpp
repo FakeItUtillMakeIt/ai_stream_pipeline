@@ -25,6 +25,21 @@ namespace ai_stream
                 {
                     setName(config.value("name", ""));
                 }
+                if (config.contains("action_recongnition_mode") && config["action_recongnition_mode"].is_string())
+                {
+                    std::string mode = config.value("action_recongnition_mode", "");
+                    if (mode == "model")
+                    {
+                        action_recognition_mode_ = ActionRecongnitionType::ACTION_RECOGNITION_MODEL;
+                    }
+                    else if (mode == "pose")
+                    {
+                        action_recognition_mode_ = ActionRecongnitionType::ACTION_RECOGNITION_POSE;
+                    }
+                }
+                // fighting 一次保持时长(ms)：桥接动作模型逐窗抖动，默认 0（不保持）
+                if (config.contains("fight_hold_ms"))
+                    fight_hold_ms_ = config["fight_hold_ms"].get<int64_t>();
             }
             catch (const std::exception &e)
             {
@@ -38,30 +53,45 @@ namespace ai_stream
         {
             last_is_fighting_ = false;
             last_fight_track_ids_.clear();
+
+            // MODEL 模式：只依据 VideoMAE 的动作结果判定，不依赖 person 框。
+            // （旧实现把 person_boxes.empty() 提前 return 挡在 MODEL 分支之前，
+            //  导致没检出 person 的帧即便动作是 fighting 也被跳过。）
+            if (action_recognition_mode_ == ActionRecongnitionType::ACTION_RECOGNITION_MODEL)
+            {
+                bool now_fight = false;
+                for (const auto &action_result : packet->action_results)
+                {
+                    LOG_INFO_FMT("FightingRule::onPreProcess() action_result.action_label: {}", action_result.action_label);
+                    if (action_result.action_label == alertTypeMap[AlertType::FIGHTING])
+                        now_fight = true;
+                }
+                const int64_t ts = packet->timestamp_ms;
+                if (now_fight)
+                    last_fighting_ts_ = ts;
+                // 一次保持：桥接 VideoMAE 逐窗 fighting/other 抖动，让 duration 能连续累积
+                if (fight_hold_ms_ > 0 && last_fighting_ts_ >= 0)
+                    last_is_fighting_ = (ts - last_fighting_ts_) <= fight_hold_ms_;
+                else
+                    last_is_fighting_ = now_fight;
+                return;
+            }
+
+            // POSE 模式：需要 person 框做肢体/轨迹启发式
             std::vector<ai_stream::core::InferenceResultPacket::BBox> person_boxes;
             for (const auto &detection : packet->detections)
             {
                 if (detection.class_name == "person")
                     person_boxes.push_back(detection);
             }
+            LOG_INFO_FMT("FightingRule::onPreProcess() person_boxes.size(): {}", person_boxes.size());
             if (person_boxes.empty())
             {
                 return;
             }
-            if (action_recognition_mode_ == ActionRecongnitionType::ACTION_RECOGNITION_MODEL)
-            {
-                for (const auto &action_result : packet->action_results)
-                {
-                    if (action_result.action_label == alertTypeMap[AlertType::FIGHTING])
-                        last_is_fighting_ = true;
-                }
-            }
-            else if (action_recognition_mode_ == ActionRecongnitionType::ACTION_RECOGNITION_POSE)
-            {
-                auto fight_result = fighting_detector_.process(person_boxes);
-                last_is_fighting_ = fight_result.is_fighting;
-                last_fight_track_ids_ = fight_result.active_track_ids;
-            }
+            auto fight_result = fighting_detector_.process(person_boxes);
+            last_is_fighting_ = fight_result.is_fighting;
+            last_fight_track_ids_ = fight_result.active_track_ids;
         }
 
         void FightingRule::reset()

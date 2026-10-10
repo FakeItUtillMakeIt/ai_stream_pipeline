@@ -85,6 +85,7 @@ namespace ai_stream
                 timestamp_threshold_ms_ = params["timestamp_threshold_ms"].get<int64_t>();
             }
             drop_non_inference_ = params.value("drop_non_inference", drop_non_inference_);
+            action_persist_ = params.value("action_persist", action_persist_);
 
             if (fusion_mode_ == FusionMode::DETECTION_MERGE)
             {
@@ -254,9 +255,12 @@ namespace ai_stream
                 return;
             }
 
-            // 检查时间戳是否在阈值范围内
+            // 检查时间戳是否在阈值范围内。
+            // action_persist 模式下跳过此判定：把最近一次动作持续盖到每帧，直到下一次
+            // 推理覆盖——否则 VideoMAE 每 stride 帧才出一个结果、且被一次性消费，
+            // 规则侧只见到孤立的单帧动作，攒不够 duration_ms 就永不告警。
             int64_t time_diff = std::abs(result->timestamp_ms - cached_action_timestamp_);
-            if (time_diff > timestamp_threshold_ms_)
+            if (!action_persist_ && time_diff > timestamp_threshold_ms_)
             {
                 // 动作识别结果太旧，不融合
                 LOG_DEBUG_FMT("[Fusion] Action result too old (diff: {}ms > threshold: {}ms), skipping",
@@ -286,9 +290,12 @@ namespace ai_stream
                 }
             }
 
-            // 融合：将动作结果附加到检测结果（一次性消费，避免同一次动作附加到多帧）
+            // 融合：将动作结果附加到检测结果。
+            // 默认一次性消费（避免同一动作重复附加）；action_persist 时保留缓存，
+            // 让最近动作持续附加到每帧，直到下一次推理覆盖。
             result->action_results.push_back(cached_action_);
-            has_cached_action_ = false;
+            if (!action_persist_)
+                has_cached_action_ = false;
 
             LOG_DEBUG_FMT("[Fusion] Fused detection with action: {} (time_diff: {}ms)",
                           cached_action_.action_label, time_diff);

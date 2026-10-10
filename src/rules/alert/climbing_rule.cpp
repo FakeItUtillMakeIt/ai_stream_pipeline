@@ -36,6 +36,9 @@ namespace ai_stream
                         action_recognition_mode_ = ActionRecongnitionType::ACTION_RECOGNITION_POSE;
                     }
                 }
+                // climbing 一次保持时长(ms)：桥接动作模型逐窗抖动，默认 0（不保持）
+                if (config.contains("climb_hold_ms"))
+                    climb_hold_ms_ = config["climb_hold_ms"].get<int64_t>();
             }
             catch (const std::exception &e)
             {
@@ -50,6 +53,30 @@ namespace ai_stream
             // 每帧只运行一次检测器/模型判定（多 zone 时不得重复推进状态机）
             last_is_climbing_ = false;
             last_climb_track_ids_.clear();
+
+            // MODEL 模式：只看动作识别结果，不依赖 person 框。
+            // （旧实现把 person_boxes.empty() 提前 return 挡在 MODEL 分支之前，
+            //  导致没检出 person 的帧即便动作是 climbing 也被跳过。）
+            if (action_recognition_mode_ == ActionRecongnitionType::ACTION_RECOGNITION_MODEL)
+            {
+                bool now_climb = false;
+                for (const auto &action_result : packet->action_results)
+                {
+                    if (action_result.action_label == alertTypeMap[AlertType::CLIMBING])
+                        now_climb = true;
+                }
+                const int64_t ts = packet->timestamp_ms;
+                if (now_climb)
+                    last_climbing_ts_ = ts;
+                // 一次保持：桥接动作模型逐窗抖动，让 duration 能连续累积
+                if (climb_hold_ms_ > 0 && last_climbing_ts_ >= 0)
+                    last_is_climbing_ = (ts - last_climbing_ts_) <= climb_hold_ms_;
+                else
+                    last_is_climbing_ = now_climb;
+                return;
+            }
+
+            // POSE 模式：需要 person 框做攀爬启发式
             std::vector<ai_stream::core::InferenceResultPacket::BBox> person_boxes;
             for (const auto &detection : packet->detections)
             {
@@ -60,20 +87,9 @@ namespace ai_stream
             {
                 return;
             }
-            if (action_recognition_mode_ == ActionRecongnitionType::ACTION_RECOGNITION_MODEL)
-            {
-                for (const auto &action_result : packet->action_results)
-                {
-                    if (action_result.action_label == alertTypeMap[AlertType::CLIMBING])
-                        last_is_climbing_ = true;
-                }
-            }
-            else if (action_recognition_mode_ == ActionRecongnitionType::ACTION_RECOGNITION_POSE)
-            {
-                auto climb_result = climbing_detector_.process(person_boxes);
-                last_is_climbing_ = climb_result.is_climbing;
-                last_climb_track_ids_ = climb_result.active_track_ids;
-            }
+            auto climb_result = climbing_detector_.process(person_boxes);
+            last_is_climbing_ = climb_result.is_climbing;
+            last_climb_track_ids_ = climb_result.active_track_ids;
         }
 
         void ClimbingRule::reset()

@@ -6,7 +6,7 @@
     "id": "src1",
     "type": "file_source",
     "params": {
-     "url": "file:///home/sevnce/project/video/test/child_on_wall.mp4",
+     "url": "file:///home/sevnce/project/video/fight/fight.mp4",
      "loop": true,
      "realtime": true,
      "skip_frames": 1
@@ -161,8 +161,8 @@
      "confidence_threshold": 0.7,
      "batch_size": 1,
      "action_labels": [
-      "climb",
-      "fight",
+      "climbing",
+      "fighting",
       "other"
      ],
      "passthrough_input": false
@@ -174,7 +174,8 @@
     "params": {
      "action_source": "action1",
      "timestamp_threshold_ms": 200,
-     "drop_non_inference": false
+     "drop_non_inference": false,
+     "action_persist": true
     }
    },
    {
@@ -201,18 +202,13 @@
        }
       },
       {
-       "type": "person_intrusion",
-       "params": {
-        "name": "person_intrusion",
-        "rule_zones": []
-       }
-      },
-      {
        "type": "fighting",
        "params": {
         "name": "fighting",
         "action_recongnition_mode": "model",
-        "rule_zones": []
+        "rule_zones": [],
+        "duration_ms": 500,
+        "fight_hold_ms": 1000
        }
       }
      ]

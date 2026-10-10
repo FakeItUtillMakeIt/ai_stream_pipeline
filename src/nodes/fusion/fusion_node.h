@@ -64,6 +64,10 @@ namespace nodes {
         // 与 draw 的有框帧交替 → 证据视频/预览闪烁。开启后 fusion 只放行
         // InferenceResultPacket，丢弃这些原始帧。默认 false 保持既有行为。
         bool drop_non_inference_ = false;
+        // 动作合流(frame_level)时把最近一次动作持续附加到每帧，直到下次推理覆盖。
+        // 用于 VideoMAE 这类隔窗才出结果的模型：否则规则侧只见到孤立单帧动作，
+        // 攒不够 duration_ms 就永不告警。默认 false 保持"一次性消费"旧行为。
+        bool action_persist_ = false;
 
         // 帧配对状态（仅 worker 线程访问）
         struct PendingFrame {
