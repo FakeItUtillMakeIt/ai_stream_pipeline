@@ -84,6 +84,7 @@ namespace ai_stream
             {
                 timestamp_threshold_ms_ = params["timestamp_threshold_ms"].get<int64_t>();
             }
+            drop_non_inference_ = params.value("drop_non_inference", drop_non_inference_);
 
             if (fusion_mode_ == FusionMode::DETECTION_MERGE)
             {
@@ -156,6 +157,10 @@ namespace ai_stream
             auto result = std::dynamic_pointer_cast<core::InferenceResultPacket>(packet);
             if (!result)
             {
+                // 非推理结果包（如 VideoMAE 透传的原始帧）。动作合流时这些帧
+                // 会让 evidence/sink 混入无框帧导致闪烁，按需丢弃。
+                if (drop_non_inference_)
+                    return;
                 // 非推理结果包，直接转发
                 broadcast(packet);
                 return;
@@ -301,6 +306,15 @@ namespace ai_stream
         {
             auto key = std::make_pair(result->stream_id, result->frame_id);
             int64_t now_ms = utils::TimeUtil::currentTimeMs();
+
+            // 该帧已广播过（配齐或超时半包）→ 迟到的另一路结果直接丢弃，
+            // 不再新建 pending 二次广播。否则同源帧被吐两帧 → 证据视频闪烁+卡顿。
+            if (wasEmitted(key))
+            {
+                LOG_DEBUG_FMT("[Fusion] Drop late source '{}' for already-merged frame {} (stream {})",
+                              result->producer_id, key.second, key.first);
+                return;
+            }
 
             auto& pending = pending_[key];
             if (pending.first_arrival_ms == 0)
@@ -448,6 +462,7 @@ namespace ai_stream
 
             LOG_DEBUG_FMT("[Fusion] Merged {} sources -> {} detections (stream {}, frame {})",
                           parts.size(), merged->detections.size(), key.first, key.second);
+            markEmitted(key);   // 记为已吐，之后该 frame_id 的迟到结果将被丢弃
             broadcast(merged);
         }
 

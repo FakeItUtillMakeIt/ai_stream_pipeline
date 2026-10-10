@@ -43,6 +43,10 @@ public:
         float box_confidence = 0.25f;
         int max_relations = 256;
         int device_id = 0;
+        // 隔帧跑关系推理（>1 时降 GPU 负载）。跳过的帧不跑推理、relations 留空，
+        // 下游规则靠 max_disappear_count 容忍这些空帧。child 贴墙不是亚秒级事件，
+        // 设 2~3 通常无感，却能显著抬高整链 fps。
+        int run_every_n_frames = 1;
     };
 
     RelationRecognitionNode();
@@ -82,6 +86,7 @@ private:
     bool is_initialized_ = false;
     int image_size_ = 448;
     int64_t last_infer_ms_ = 0;
+    int64_t frame_counter_ = 0;   // 用于 run_every_n_frames 隔帧
     std::mutex engine_mutex_;
 };
 

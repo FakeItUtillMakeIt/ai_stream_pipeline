@@ -71,6 +71,8 @@ bool RelationRecognitionNode::configureImpl(const std::string& node_id,
             cfg_.box_confidence = params["box_confidence"].get<float>();
         if (params.contains("max_relations"))
             cfg_.max_relations = params["max_relations"].get<int>();
+        if (params.contains("run_every_n_frames"))
+            cfg_.run_every_n_frames = std::max(1, params["run_every_n_frames"].get<int>());
         if (params.contains("device_id"))
             cfg_.device_id = params["device_id"].get<int>();
         if (params.contains("backend")) {
@@ -205,6 +207,14 @@ void RelationRecognitionNode::processPacket(std::shared_ptr<core::BasePacket> pa
         return;
     }
     in->relations.clear();
+    // 隔帧降负载：非推理帧直接透传（relations 留空）。下游 child 规则靠
+    // max_disappear_count 容忍这些空帧，不影响"持续贴墙"的判定。
+    if (cfg_.run_every_n_frames > 1) {
+        if ((++frame_counter_ % cfg_.run_every_n_frames) != 0) {
+            broadcast(packet);
+            return;
+        }
+    }
     // source_mat 必须有：detection_infer 已在原图坐标里给框，这里再把同一张
     // 原图 letterbox 到 448 去配它们。误用 mat（预处理后的 640）会让框和图
     // 不同尺寸，但不会报错，只表现为关系分莫名偏低。
