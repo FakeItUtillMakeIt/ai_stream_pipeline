@@ -33,6 +33,10 @@ public:
         float confidence_threshold = 0.5f;
         int batch_size = 1;
         std::vector<std::string> action_labels;
+        // 是否把每个输入原始帧也透传给下游（默认 true，保持内联帧流用法）。
+        // 作为并行旁支（如喂给动作合流 fusion）时应设 false，避免透传的 DECODED_FRAME
+        // 混入主链造成下游无框帧闪烁。
+        bool passthrough_input = true;
     };
     
     ActionRecognitionVideoMAENode();
@@ -55,6 +59,7 @@ public:
     void setConfidenceThreshold(float threshold) override;
     void setBatchSize(int batch_size) override;
     void setDeviceId(int device_id) override { device_id_ = device_id; }
+    void setPassthroughInput(bool on) override { cfg_.passthrough_input = on; }
 
 private:
     // 推理（通过 HAL 后端引擎）

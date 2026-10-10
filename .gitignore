@@ -61,5 +61,7 @@ models/**
 config/**
 !config/**/
 !config/**/pipeline_vlm_gate.json
+!config/**/2_infer_fusion.json
+!config/**/3_infer_fusion.json
 
 output

@@ -140,8 +140,9 @@ void ActionRecognitionVideoMAENode::processPacket(std::shared_ptr<core::BasePack
         }
     }
     
-    // 广播原始packet（用于下游节点）
-    broadcast(packet);
+    // 广播原始packet（用于下游节点）。旁支用法可关闭，避免透传的原始帧污染主链。
+    if (cfg_.passthrough_input)
+        broadcast(packet);
 }
 
 bool ActionRecognitionVideoMAENode::shouldRunInference(uint32_t stream_id) {

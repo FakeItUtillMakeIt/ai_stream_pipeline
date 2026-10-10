@@ -66,6 +66,14 @@ public:
 
     virtual void setDeviceId(int device_id) { (void)device_id; }
 
+    /**
+     * @brief 是否把每个输入原始帧透传给下游（默认 true）
+     *
+     * 作为并行旁支喂给动作合流节点时应设 false，避免透传的 DECODED_FRAME
+     * 混入主链导致下游无框帧闪烁。
+     */
+    virtual void setPassthroughInput(bool on) { (void)on; }
+
     bool configure(const std::string& node_id, const nlohmann::json& params) override {
         (void)node_id;
         if (params.contains("input_height") && params.contains("input_width")) {
@@ -91,6 +99,9 @@ public:
         }
         if (params.contains("model_path")) {
             setModelPath(params["model_path"].get<std::string>());
+        }
+        if (params.contains("passthrough_input")) {
+            setPassthroughInput(params["passthrough_input"].get<bool>());
         }
         return true;
     }
