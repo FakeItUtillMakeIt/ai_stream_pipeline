@@ -97,6 +97,7 @@ void ReportSinkNode::processPacket(std::shared_ptr<core::BasePacket> packet)
 
     for (const auto& result : infer->alert_result) {
         for (const auto& ev : result.alert_events) {
+          try {
             // 到这里的事件已是"可上报"的（无 gate 时为全部告警，有 gate 时为判真告警）
             json payload;
             payload["source"] = cfg_.source;
@@ -110,7 +111,10 @@ void ReportSinkNode::processPacket(std::shared_ptr<core::BasePacket> packet)
             std::string img_b64;
             size_t img_bytes = 0;
             if (cfg_.attach_image) {
-                const std::string snap = ev.extra_data.value("snapshot_path", "");
+                // extra_data 可能为 null（未挂快照），value() 对 null 会抛，先判对象。
+                const std::string snap = ev.extra_data.is_object()
+                                             ? ev.extra_data.value("snapshot_path", "")
+                                             : std::string();
                 if (loadImageBase64(snap, cfg_.image_max_side, img_b64)) {
                     payload[cfg_.image_field] = img_b64;
                     payload["image_mime"] = "image/jpeg";
@@ -140,6 +144,11 @@ void ReportSinkNode::processPacket(std::shared_ptr<core::BasePacket> packet)
                              ev.alert_name, resp.err, resp.status,
                              resp.body.substr(0, 200));
             }
+          } catch (const std::exception& e) {
+            LOG_ERROR_FMT("[Report] 处理告警异常，跳过: {}", e.what());
+          } catch (...) {
+            LOG_ERROR("[Report] 处理告警未知异常，跳过");
+          }
         }
     }
 }

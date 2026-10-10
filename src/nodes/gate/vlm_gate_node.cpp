@@ -326,8 +326,13 @@ void VlmGateNode::processPacket(std::shared_ptr<core::BasePacket> packet)
     for (auto& result : infer->alert_result) {
         std::vector<rules::AlertEvent> keep;
         for (auto& ev : result.alert_events) {
+          try {
             const std::string key = dedupKey(*infer, ev);
-            const std::string snap = ev.extra_data.value("snapshot_path", "");
+            // extra_data 可能是 null（该事件没被 evidence 挂过快照）。nlohmann 的
+            // value() 对 null 会抛 type_error.306，必须先判 is_object。
+            const std::string snap = ev.extra_data.is_object()
+                                         ? ev.extra_data.value("snapshot_path", "")
+                                         : std::string();
 
             VlmPromptSpec spec;
             const GateMode mode = resolvePrompt(ev.alert_name, spec);
@@ -373,7 +378,10 @@ void VlmGateNode::processPacket(std::shared_ptr<core::BasePacket> packet)
                 touchCooldown(key, now);
             }
 
-            // 把核验结论挂回事件，供 report / 下游与审计使用
+            // 把核验结论挂回事件，供 report / 下游与审计使用。
+            // extra_data 若不是对象（null/其它）先归一成对象，否则 operator[] 抛。
+            if (!ev.extra_data.is_object())
+                ev.extra_data = json::object();
             ev.extra_data["vlm"] = json{
                 {"decision", v.decision}, {"verdict", v.verdict},
                 {"confidence", v.confidence}, {"reason", v.reason},
@@ -388,6 +396,12 @@ void VlmGateNode::processPacket(std::shared_ptr<core::BasePacket> packet)
             }
             LOG_INFO_FMT("[VlmGate] {} decision={} verdict={} conf={:.2f} err={}",
                          ev.alert_name, v.decision, v.verdict, v.confidence, v.error);
+          } catch (const std::exception& e) {
+            // 单个事件异常绝不能让 worker 抛出去（会 std::terminate 整个进程）。
+            LOG_ERROR_FMT("[VlmGate] 处理事件异常，跳过: {}", e.what());
+          } catch (...) {
+            LOG_ERROR("[VlmGate] 处理事件未知异常，跳过");
+          }
         }
         result.alert_events = std::move(keep);
     }
