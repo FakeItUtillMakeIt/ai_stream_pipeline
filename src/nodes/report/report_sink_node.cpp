@@ -1,7 +1,7 @@
-// src/nodes/gate/report_sink_node.cpp
+// src/nodes/report/report_sink_node.cpp
 #include "report_sink_node.h"
 #include "registry/node_factory.h"
-#include "http_util.h"
+#include "utils/http_util.h"
 #include "utils/time_util.h"
 
 #include <nlohmann/json.hpp>
@@ -40,7 +40,7 @@ bool loadImageBase64(const std::string& path, int max_side, std::string& out_b64
         std::vector<unsigned char> buf;
         if (!cv::imencode(".jpg", img, buf, {cv::IMWRITE_JPEG_QUALITY, 85}))
             return false;
-        out_b64 = http::base64Encode(buf);
+        out_b64 = utils::http::base64Encode(buf);
         return !out_b64.empty();
     }
 
@@ -51,7 +51,7 @@ bool loadImageBase64(const std::string& path, int max_side, std::string& out_b64
                                    std::istreambuf_iterator<char>());
     if (buf.empty())
         return false;
-    out_b64 = http::base64Encode(buf);
+    out_b64 = utils::http::base64Encode(buf);
     return !out_b64.empty();
 }
 }  // namespace
@@ -63,7 +63,7 @@ ReportSinkNode::~ReportSinkNode() { core::QueuedNode<IReportNode>::stop(); }
 void ReportSinkNode::setReportConfig(const ReportConfig& config)
 {
     cfg_ = config;
-    cfg_.api_key = http::expandEnv(cfg_.api_key);   // 明文默认，允许 ${ENV}
+    cfg_.api_key = utils::http::expandEnv(cfg_.api_key);   // 明文默认，允许 ${ENV}
 }
 
 bool ReportSinkNode::onStartup()
@@ -122,10 +122,10 @@ void ReportSinkNode::processPacket(std::shared_ptr<core::BasePacket> packet)
                 }
             }
 
-            http::Response resp;
+            utils::http::Response resp;
             const int attempts = 1 + std::max(0, cfg_.retries);
             for (int i = 0; i < attempts; ++i) {
-                resp = http::postJson(cfg_.url, payload.dump(), headers,
+                resp = utils::http::postJson(cfg_.url, payload.dump(), headers,
                                       cfg_.timeout_ms, cfg_.connect_timeout_ms);
                 if (resp.ok())
                     break;

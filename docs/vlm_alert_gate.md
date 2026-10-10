@@ -260,10 +260,11 @@ python3 tools/mock/mock_alert_server.py --vlm-only
 |---|---|
 | `include/ai_stream/nodes/i_vlm_gate_node.h` | gate 接口 + `VlmGateConfig` |
 | `include/ai_stream/nodes/i_report_node.h` | report 接口 + `ReportConfig` |
-| `src/nodes/gate/http_util.h` | header-only libcurl POST + base64 + `${ENV}` |
+| `utils/http_util.h` | header-only libcurl POST + base64 + `${ENV}`（namespace `ai_stream::utils::http`） |
 | `src/nodes/gate/vlm_gate_node.{h,cpp}` | 闸门节点（核验、决策、审计、去重） |
-| `src/nodes/gate/report_sink_node.{h,cpp}` | 上报节点（payload + base64 附图） |
 | `src/nodes/gate/CMakeLists.txt` | `gate_node` OBJECT 库 |
+| `src/nodes/report/report_sink_node.{h,cpp}` | 上报节点（payload + base64 附图） |
+| `src/nodes/report/CMakeLists.txt` | `report_node` OBJECT 库 |
 | `src/nodes/evidence/evidence_node.{h,cpp}` | 落快照→回挂 `snapshot_path`→转发 |
 | `tools/mock/mock_alert_server.py` | 联调用 mock 接收端 + VLM 桩 |
 | `config/pipelines/child_near_boundary_pipeline.json` | 含 `vlm1/report1`（默认关）|

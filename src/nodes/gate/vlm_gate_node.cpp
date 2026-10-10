@@ -1,7 +1,7 @@
 // src/nodes/gate/vlm_gate_node.cpp
 #include "vlm_gate_node.h"
 #include "registry/node_factory.h"
-#include "http_util.h"
+#include "utils/http_util.h"
 #include "utils/time_util.h"
 
 #include <nlohmann/json.hpp>
@@ -77,7 +77,7 @@ VlmGateNode::~VlmGateNode() { core::QueuedNode<IVlmGateNode>::stop(); }
 void VlmGateNode::setGateConfig(const VlmGateConfig& config)
 {
     cfg_ = config;
-    cfg_.api_key = http::expandEnv(cfg_.api_key);   // 明文默认，但支持 ${ENV}
+    cfg_.api_key = utils::http::expandEnv(cfg_.api_key);   // 明文默认，但支持 ${ENV}
 }
 
 bool VlmGateNode::onStartup()
@@ -113,7 +113,7 @@ std::string VlmGateNode::loadSnapshotBase64(const std::string& path, int max_sid
     std::vector<unsigned char> buf;
     if (!cv::imencode(".jpg", img, buf, {cv::IMWRITE_JPEG_QUALITY, 85}))
         return {};
-    return http::base64Encode(buf);
+    return utils::http::base64Encode(buf);
 }
 
 namespace {
@@ -199,10 +199,10 @@ VlmGateNode::Verdict VlmGateNode::callVlm(const std::string& image_b64, const Vl
     if (!cfg_.api_key.empty())
         headers.push_back("Authorization: Bearer " + cfg_.api_key);
 
-    http::Response resp;
+    utils::http::Response resp;
     const int attempts = 1 + std::max(0, cfg_.retries);
     for (int i = 0; i < attempts; ++i) {
-        resp = http::postJson(url, body.dump(), headers, cfg_.timeout_ms, cfg_.connect_timeout_ms);
+        resp = utils::http::postJson(url, body.dump(), headers, cfg_.timeout_ms, cfg_.connect_timeout_ms);
         if (resp.ok())
             break;
     }

@@ -1,4 +1,4 @@
-// src/nodes/gate/http_util.h
+// utils/http_util.h
 // gate / report 节点共用的极小 HTTP + base64 工具，基于 libcurl。
 // 只做 POST(JSON) 与读图转 base64，够 VLM 网关与告警上报用；不做连接池/异步。
 #pragma once
@@ -13,7 +13,7 @@
 #include <cstdlib>
 
 namespace ai_stream {
-namespace nodes {
+namespace utils {
 namespace http {
 
 // curl 全局初始化只需一次，且必须线程安全。
@@ -120,5 +120,5 @@ inline std::string expandEnv(const std::string& v)
 }
 
 }  // namespace http
-}  // namespace nodes
+}  // namespace utils
 }  // namespace ai_stream

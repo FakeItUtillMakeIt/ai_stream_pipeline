@@ -1,4 +1,4 @@
-// src/nodes/gate/report_sink_node.h
+// src/nodes/report/report_sink_node.h
 #pragma once
 
 #include "ai_stream/core/queued_node.h"

@@ -1,13 +1,13 @@
-# src/nodes/gate/CMakeLists.txt
+# src/nodes/report/CMakeLists.txt
 
-set(GATE_SOURCES
-    vlm_gate_node.cpp
+set(REPORT_SOURCES
+    report_sink_node.cpp
 )
 
-add_library(gate_node OBJECT ${GATE_SOURCES})
-set_target_properties(gate_node PROPERTIES POSITION_INDEPENDENT_CODE ON)
+add_library(report_node OBJECT ${REPORT_SOURCES})
+set_target_properties(report_node PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-target_include_directories(gate_node
+target_include_directories(report_node
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${OpenCV_INCLUDE_DIRS}
@@ -19,7 +19,7 @@ target_include_directories(gate_node
         ${CMAKE_SOURCE_DIR}/include/ai_stream/nodes
 )
 
-target_link_libraries(gate_node
+target_link_libraries(report_node
     PUBLIC
         nlohmann_json::nlohmann_json
         ai_stream_core
@@ -30,4 +30,4 @@ target_link_libraries(gate_node
         CURL::libcurl
 )
 
-target_compile_features(gate_node PRIVATE cxx_std_17)
+target_compile_features(report_node PRIVATE cxx_std_17)
