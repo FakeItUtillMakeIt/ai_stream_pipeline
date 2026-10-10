@@ -156,7 +156,7 @@
     "params": {
      "enabled": true,
      "url": "http://8.137.122.254:21610/v1",
-     "api_key": "sk-vllm-Q8xK3mR9pL2wN7jT5yB4cF6hA1dE0gUz",
+     "api_key": "${VLM_API_KEY}",
      "model": "qwen3.8-27b",
      "timeout_ms": 15000,
      "retries": 1,
