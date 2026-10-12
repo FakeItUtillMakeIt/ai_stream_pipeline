@@ -202,6 +202,13 @@
        }
       },
       {
+        "type": "person_intrusion",
+        "params": {
+            "name": "person_intrusion",
+            "rule_zones": []
+        }
+      },
+      {
        "type": "fighting",
        "params": {
         "name": "fighting",

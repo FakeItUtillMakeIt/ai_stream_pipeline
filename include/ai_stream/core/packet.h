@@ -56,6 +56,7 @@ namespace rules
         DISCOVER_SMOKE = 18,
         DISCOVER_HOSE_CUTOFF = 19,
         CHILD_NEAR_BOUNDARY = 20,      // 儿童靠近边界
+        PERSON_LOITERING = 21,         // 人员徘徊
         ACTION_RECOGNITION = 100
     };
 
@@ -81,6 +82,7 @@ namespace rules
         {AlertType::DISCOVER_SMOKE, "discover_smoke"},
         {AlertType::DISCOVER_HOSE_CUTOFF, "discover_hose_cutoff"},
         {AlertType::CHILD_NEAR_BOUNDARY, "child_near_boundary"},
+        {AlertType::PERSON_LOITERING, "person_loitering"},
         {AlertType::ACTION_RECOGNITION, "action_recognition"}
     };
 
@@ -106,6 +108,7 @@ namespace rules
         {AlertType::DISCOVER_SMOKE, "发现烟雾"},
         {AlertType::DISCOVER_HOSE_CUTOFF, "发现软管断流"},
         {AlertType::CHILD_NEAR_BOUNDARY, "儿童靠近边界"},
+        {AlertType::PERSON_LOITERING, "人员徘徊"},
         {AlertType::ACTION_RECOGNITION, "动作识别"}
     };
 
@@ -147,6 +150,7 @@ namespace rules
         {AlertType::DISCOVER_SMOKE, AlertItemType::ITEM_SCENE_RECOGNITION},
         {AlertType::DISCOVER_HOSE_CUTOFF, AlertItemType::ITEM_SCENE_RECOGNITION},
         {AlertType::CHILD_NEAR_BOUNDARY, AlertItemType::ITEM_RELATION_RECOGNITION},
+        {AlertType::PERSON_LOITERING, AlertItemType::ITEM_PERSON_BEHAVIOR},
         {AlertType::ACTION_RECOGNITION, AlertItemType::ITEM_PERSON_BEHAVIOR}
     };
 
