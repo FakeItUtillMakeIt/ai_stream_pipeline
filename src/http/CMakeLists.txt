@@ -4,6 +4,7 @@
 
 add_executable(http_server
     api_server.cpp
+    request_log.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
 )
 

@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
 
 using json = nlohmann::json;
 
@@ -35,6 +36,11 @@ ApiServer::ApiServer(bool async_mode) : async_mode_(async_mode) {
             LOG_WARN("ApiServer API token auth enabled (AI_STREAM_API_TOKEN)");
         }
     }
+    // 请求持久化状态目录（默认 ./api_state，可用 AI_STREAM_STATE_DIR 覆盖）
+    {
+        const char* sd = std::getenv("AI_STREAM_STATE_DIR");
+        reqlog_ = std::make_unique<RequestLog>(sd && *sd ? sd : "./api_state");
+    }
     hal::logAvailableBackends();
     setupRoutes();
 }
@@ -53,6 +59,84 @@ bool ApiServer::parseJsonBody(const httplib::Request& req, httplib::Response& re
 
 ApiServer::~ApiServer() {
     stop();
+}
+
+void ApiServer::recordRequest(const std::string& action, const std::string& pipeline_id,
+                              const json* build_body) {
+    if (!reqlog_ || pipeline_id.empty())
+        return;
+    std::string cfg;
+    if (action == "build" && build_body) {
+        cfg = reqlog_->saveConfig(pipeline_id, *build_body);   // 存配置文件
+    } else {
+        cfg = reqlog_->configPath(pipeline_id);                // 复用 build 时的配置
+    }
+    reqlog_->append(action, pipeline_id, cfg);
+}
+
+void ApiServer::recoverFromState() {
+    if (!reqlog_) return;
+    auto states = reqlog_->finalStates();
+    if (states.empty()) {
+        LOG_INFO("[Recover] 无历史请求记录，等待平台下发");
+        return;
+    }
+
+    int rebuilt = 0, started = 0, skipped = 0;
+    for (const auto& st : states) {
+        // 已销毁的管道不复活
+        if (st.action == "delete") {
+            LOG_INFO_FMT("[Recover] '{}' 末态 delete，跳过", st.id);
+            skipped++;
+            continue;
+        }
+        json cfg = reqlog_->loadConfig(st.config);
+        if (cfg.is_null() || !cfg.is_object() || !cfg.contains("graph")) {
+            LOG_WARN_FMT("[Recover] '{}' 配置文件无效，跳过：{}", st.id, st.config);
+            skipped++;
+            continue;
+        }
+        // build/stop → 只重建不启动；start → 重建并启动
+        bool should_start = (st.action == "start");
+
+        try {
+            if (async_mode_ && manager_) {
+                if (!manager_->hasPipeline(st.id))
+                    manager_->loadPipelineFromJsonAsync(cfg);
+                if (should_start)
+                    manager_->startPipelineAsync(st.id);
+            } else {
+                std::shared_ptr<core::Pipeline> pipeline;
+                {
+                    std::lock_guard<std::mutex> lock(pipelines_mutex_);
+                    auto it = pipelines_.find(st.id);
+                    if (it != pipelines_.end()) pipeline = it->second;
+                }
+                if (!pipeline) {
+                    pipeline = std::make_shared<core::Pipeline>(st.id);
+                    if (!pipeline->buildFromJson(cfg["graph"])) {
+                        LOG_WARN_FMT("[Recover] '{}' 重建失败", st.id);
+                        skipped++;
+                        continue;
+                    }
+                    std::lock_guard<std::mutex> lock(pipelines_mutex_);
+                    pipelines_[st.id] = pipeline;
+                }
+                if (should_start && !pipeline->start()) {
+                    LOG_WARN_FMT("[Recover] '{}' 启动失败", st.id);
+                    should_start = false;   // 启动没成功，不计入 started
+                }
+            }
+            rebuilt++;
+            if (should_start) started++;
+            LOG_INFO_FMT("[Recover] '{}' 末态={} → 重建{}", st.id, st.action,
+                         should_start ? "+启动" : "（不启动）");
+        } catch (const std::exception& e) {
+            LOG_ERROR_FMT("[Recover] '{}' 恢复异常: {}", st.id, e.what());
+            skipped++;
+        }
+    }
+    LOG_INFO_FMT("[Recover] 完成：重建 {}（含启动 {}），跳过 {}", rebuilt, started, skipped);
 }
 
 void ApiServer::setupRoutes() {
@@ -144,6 +228,9 @@ bool ApiServer::start(const std::string& host, int port) {
         if (server_.is_running()) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
+    // 服务就绪后，尝试按历史最后一条请求自动恢复（仅 start 才恢复）
+    if (server_.is_running())
+        recoverFromState();
     return server_.is_running();
 }
 
@@ -256,6 +343,7 @@ void ApiServer::handlePipelineBuildSync(const httplib::Request& req, httplib::Re
         };
         res.set_content(response.dump(), "application/json");
         LOG_INFO_FMT("Pipeline '{}' built via API", pipeline_id);
+        recordRequest("build", pipeline_id, &body);
     } catch (const std::exception& e) {
         res.status = 500;
         json err = {{"error", e.what()}};
@@ -291,6 +379,7 @@ void ApiServer::handlePipelineStartSync(const httplib::Request& req, httplib::Re
         json response = {{"status", "ok"}, {"id", pipeline_id}, {"running", true}};
         res.set_content(response.dump(), "application/json");
         LOG_INFO_FMT("Pipeline '{}' started via API", pipeline_id);
+        recordRequest("start", pipeline_id);
     } catch (const std::exception& e) {
         res.status = 500;
         json err = {{"error", e.what()}};
@@ -320,6 +409,7 @@ void ApiServer::handlePipelineStopSync(const httplib::Request& req, httplib::Res
         json response = {{"status", "ok"}, {"id", pipeline_id}, {"running", false}};
         res.set_content(response.dump(), "application/json");
         LOG_INFO_FMT("Pipeline '{}' stopped via API", pipeline_id);
+        recordRequest("stop", pipeline_id);
     } catch (const std::exception& e) {
         res.status = 500;
         json err = {{"error", e.what()}};
@@ -353,6 +443,7 @@ void ApiServer::handlePipelineDestroySync(const httplib::Request& req, httplib::
         json response = {{"status", "ok"}, {"id", pipeline_id}, {"message", "Pipeline destroyed"}};
         res.set_content(response.dump(), "application/json");
         LOG_INFO_FMT("Pipeline '{}' destroyed via API", pipeline_id);
+        recordRequest("delete", pipeline_id);
     }
     catch (const std::exception& e) {
         res.status = 500;
@@ -435,6 +526,7 @@ void ApiServer::handlePipelineBuildAsync(const httplib::Request& req, httplib::R
         };
         res.set_content(response.dump(), "application/json");
         LOG_INFO_FMT("Pipeline '{}' build submitted via API (async)", pipeline_id);
+        recordRequest("build", pipeline_id, &body);
     } catch (const std::exception& e) {
         res.status = 500;
         json err = {{"error", e.what()}};
@@ -458,6 +550,7 @@ void ApiServer::handlePipelineStartAsync(const httplib::Request& req, httplib::R
         json response = {{"status", "accepted"}, {"id", pipeline_id}, {"state", "starting"}};
         res.set_content(response.dump(), "application/json");
         LOG_INFO_FMT("Pipeline '{}' start submitted via API (async)", pipeline_id);
+        recordRequest("start", pipeline_id);
     } catch (const std::exception& e) {
         res.status = 500;
         json err = {{"error", e.what()}};
@@ -481,6 +574,7 @@ void ApiServer::handlePipelineStopAsync(const httplib::Request& req, httplib::Re
         json response = {{"status", "accepted"}, {"id", pipeline_id}, {"state", "stopping"}};
         res.set_content(response.dump(), "application/json");
         LOG_INFO_FMT("Pipeline '{}' stop submitted via API (async)", pipeline_id);
+        recordRequest("stop", pipeline_id);
     } catch (const std::exception& e) {
         res.status = 500;
         json err = {{"error", e.what()}};
@@ -504,6 +598,7 @@ void ApiServer::handlePipelineDestroyAsync(const httplib::Request& req, httplib:
         json response = {{"status", "accepted"}, {"id", pipeline_id}, {"message", "Pipeline destroy submitted"}};
         res.set_content(response.dump(), "application/json");
         LOG_INFO_FMT("Pipeline '{}' destroy submitted via API (async)", pipeline_id);
+        recordRequest("delete", pipeline_id);
     }
     catch (const std::exception& e) {
         res.status = 500;

@@ -8,6 +8,7 @@
 #include <httplib.h>
 #include "ai_stream/core/pipeline.h"
 #include "src/core/async_pipeline_manager.h"
+#include "request_log.h"
 
 namespace ai_stream {
 namespace http {
@@ -74,6 +75,13 @@ private:
     // 健康检查
     void handleHealth(const httplib::Request& req, httplib::Response& res);
 
+    // ===== 请求持久化 / 掉线重启恢复 =====
+    // 记录一次平台请求。build 会把请求体存成配置文件，其余动作复用同一路径。
+    void recordRequest(const std::string& action, const std::string& pipeline_id,
+                       const nlohmann::json* build_body = nullptr);
+    // 启动时读取历史最后一行：仅当是 start 才据此重建并启动，否则等待。
+    void recoverFromState();
+
     // 指标监控
     void handleMetricsPrometheus(const httplib::Request& req, httplib::Response& res);
     void handleMetricsJson(const httplib::Request& req, httplib::Response& res);
@@ -89,6 +97,9 @@ private:
 
     // 异步模式：任务队列管理器
     std::unique_ptr<core::AsyncPipelineManager> manager_;
+
+    // 请求历史持久化（掉线/重启恢复）
+    std::unique_ptr<RequestLog> reqlog_;
 
     std::thread server_thread_;
     std::atomic<bool> running_{false};

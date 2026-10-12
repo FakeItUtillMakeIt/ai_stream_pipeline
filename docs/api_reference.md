@@ -211,3 +211,54 @@ curl -X POST :8080/api/v1/pipeline/start -d '{"id":"my_pipeline"}'
 curl -X POST :8080/api/v1/pipeline/stop -d '{"id":"my_pipeline"}'
 curl -X DELETE :8080/api/v1/pipeline/delete -d '{"id":"my_pipeline"}'
 ```
+
+---
+
+## 请求持久化与掉线/重启自动恢复
+
+程序掉线或板子重启后，服务会依据历史请求自动把管道恢复到崩溃前的状态，无需平台重发。
+
+### 状态目录
+
+- 默认 `./api_state/`，可用环境变量 `AI_STREAM_STATE_DIR` 覆盖。
+- 结构：
+  - `api_state/requests.log` —— 历史文本，**每行一条 JSON 记录**，最新在最后一行：
+    ```
+    {"ts":1791776804425,"action":"build","id":"pipeB","config":"api_state/pipelines/pipeB.json"}
+    ```
+    `action` ∈ `build | start | stop | delete`。
+  - `api_state/pipelines/<id>.json` —— build 请求体（含 `id` + `graph`），即"配置文件"，恢复时据此重建。
+
+### 记录时机
+
+每个接口**成功**后追加一行：`build` 会把请求体存成配置文件；`start/stop/delete` 复用同一配置文件路径。同步/异步两种模式都会记录。
+
+### 恢复规则（按每个 pipeline 的最后状态独立恢复）
+
+服务启动、就绪后读取 `requests.log`，对**每个 id 取其最后一条记录**决定：
+
+| 末态 action | 恢复动作 |
+|---|---|
+| `build` | 重建管道（**不启动**）——build 过就恢复其"已构建待命"状态 |
+| `start` | 重建 + 启动 |
+| `stop` | 重建（不启动） |
+| `delete` | 跳过（不复活） |
+| 配置文件缺失/坏行 | 跳过并告警 |
+
+即：**只有处于 `start` 末态的管道会被重新拉起运行**；`build`/`stop` 末态只重建到"待命"；`delete` 不恢复。多管道各自独立恢复（不是只看全局最后一行）。
+
+### 恢复日志
+
+```
+[Recover] 'pipeA' 末态=build → 重建（不启动）
+[Recover] 'pipeB' 末态=start → 重建+启动
+[Recover] 'pipeC' 末态=stop  → 重建（不启动）
+[Recover] 'pipeD' 末态 delete，跳过
+[Recover] 完成：重建 3（含启动 1），跳过 1
+```
+
+### 注意
+
+- 恢复是"尽力而为"：重建会重新加载模型，若资源不可用会记 `重建失败/启动失败` 并继续处理其余管道。
+- 想清空恢复状态：删除 `api_state/` 即可（下次起服务视为无历史，等待平台下发）。
+- `delete` 目前只记历史、不删配置文件；如需彻底清理，手动删 `api_state/pipelines/<id>.json`。
