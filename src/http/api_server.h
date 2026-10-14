@@ -55,6 +55,8 @@ private:
     void handlePipelineDestroy(const httplib::Request& req, httplib::Response& res);
     void handlePipelineList(const httplib::Request& req, httplib::Response& res);
     void handlePipelineStatus(const httplib::Request& req, httplib::Response& res);
+    // 保存管道配置文件到 <state>/pipelines/<id>.json（编辑器"保存到服务器"）
+    void handleSaveConfig(const httplib::Request& req, httplib::Response& res);
 
     // 同步模式实现
     void handlePipelineBuildSync(const httplib::Request& req, httplib::Response& res);

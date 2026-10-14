@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.vite/
+*.local
+.DS_Store
+npm-debug.log*
+
+# 仓库根 .gitignore 有全局 *.ts（针对构建产物），会误伤本前端的 .ts 源码。
+# 这里对本目录反忽略；node_modules/ dist/ 是目录级忽略，不受影响。
+!*.ts
+!**/*.ts
+

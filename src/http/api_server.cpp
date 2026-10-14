@@ -7,8 +7,11 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 
 using json = nlohmann::json;
+namespace fs = std::filesystem;
 
 namespace ai_stream {
 namespace http {
@@ -139,6 +142,36 @@ void ApiServer::recoverFromState() {
     LOG_INFO_FMT("[Recover] 完成：重建 {}（含启动 {}），跳过 {}", rebuilt, started, skipped);
 }
 
+void ApiServer::handleSaveConfig(const httplib::Request& req, httplib::Response& res) {
+    json body;
+    if (!parseJsonBody(req, res, body)) return;
+    try {
+        std::string pipeline_id = idOf(body);
+        if (pipeline_id.empty() || !body.contains("graph")) {
+            res.status = 400;
+            res.set_content(R"({"error":"Missing pipeline id or graph"})", "application/json");
+            return;
+        }
+        if (!reqlog_) {
+            res.status = 500;
+            res.set_content(R"({"error":"RequestLog unavailable"})", "application/json");
+            return;
+        }
+        std::string path = reqlog_->saveConfig(pipeline_id, body);
+        if (path.empty()) {
+            res.status = 500;
+            res.set_content(R"({"error":"Failed to write config"})", "application/json");
+            return;
+        }
+        json response = {{"status", "ok"}, {"id", pipeline_id}, {"config", path}};
+        res.set_content(response.dump(), "application/json");
+        LOG_INFO_FMT("Pipeline '{}' config saved to {}", pipeline_id, path);
+    } catch (const std::exception& e) {
+        res.status = 500;
+        res.set_content(json{{"error", e.what()}}.dump(), "application/json");
+    }
+}
+
 void ApiServer::setupRoutes() {
     // 请求体上限与读写超时（防超大 body / 慢连接拖垮服务）
     server_.set_payload_max_length(16 * 1024 * 1024);  // 16 MB
@@ -184,6 +217,10 @@ void ApiServer::setupRoutes() {
     server_.Post("/api/v1/pipeline/status", [this](const auto& req, auto& res) {
         handlePipelineStatus(req, res);
     });
+    // 保存管道配置文件（编辑器"保存到服务器"）：写 <state>/pipelines/<id>.json
+    server_.Post("/api/v1/pipeline/save-config", [this](const auto& req, auto& res) {
+        handleSaveConfig(req, res);
+    });
 
     // 健康检查
     server_.Get("/health", [this](const auto& req, auto& res) {
@@ -212,6 +249,27 @@ void ApiServer::setupRoutes() {
             res.set_content(err.dump(), "application/json");
         }
     });
+
+    // ===== 静态托管：Web 管道编辑器（同源，免 CORS）=====
+    // 根目录用 AI_STREAM_WEB_ROOT 指定，默认 ./web/pipeline-editor/dist
+    {
+        const char* wr = std::getenv("AI_STREAM_WEB_ROOT");
+        std::string root = (wr && *wr) ? wr : "./web/pipeline-editor/dist";
+        std::error_code ec;
+        if (fs::exists(root, ec) && fs::is_directory(root, ec)) {
+            // 静态资源（js/css/图标等）由 mount 提供
+            server_.set_mount_point("/", root);
+            // SPA 根路径回退到 index.html
+            server_.Get("/", [root](const httplib::Request&, httplib::Response& res) {
+                std::ifstream idx((fs::path(root) / "index.html").string(), std::ios::binary);
+                if (idx) { std::stringstream ss; ss << idx.rdbuf(); res.set_content(ss.str(), "text/html"); }
+                else { res.status = 404; res.set_content("index.html not found", "text/plain"); }
+            });
+            LOG_INFO_FMT("Serving web editor from {}", root);
+        } else {
+            LOG_WARN_FMT("web root 不存在，跳过静态托管: {}（先构建编辑器再放到该路径）", root);
+        }
+    }
 }
 
 bool ApiServer::start(const std::string& host, int port) {

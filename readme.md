@@ -35,6 +35,7 @@
 | [deployment.md](./docs/deployment.md) | 部署指南：依赖清单、运行 HTTP 服务、安装与集成、优雅退出 |
 | [api_reference.md](./docs/api_reference.md) | HTTP API 参考（同步/异步模式、管道 JSON 格式） |
 | [adding_new_node.md](./docs/adding_new_node.md) | 自定义节点开发指南 |
+| [pipeline_editor.md](./docs/pipeline_editor.md) | 流水线可视化编辑器（DAG 拖拽配置 + 调 API） |
 | [action_recognition_guide.md](./docs/action_recognition_guide.md) | 动作识别（VideoMAE）使用指南 |
 | [relation_chain.md](./docs/relation_chain.md) | 儿童靠近边界：YOLOE+RelateAnything 关系检测链路与调参 |
 | [vlm_alert_gate.md](./docs/vlm_alert_gate.md) | VLM 告警闸门与上报（判真才推、报警图 base64 上传、mock 联调） |
