@@ -4,7 +4,7 @@
 
 export type FieldType =
   | 'string' | 'path' | 'number' | 'int' | 'bool' | 'enum'
-  | 'stringList' | 'nodeRefList' | 'json';
+  | 'stringList' | 'nodeRefList' | 'json' | 'rulelist';
 
 export interface FieldDef {
   type: FieldType;
@@ -162,7 +162,7 @@ export const SCHEMA: Record<string, NodeTypeDef> = {
     label: '告警规则', category: 'alert', color: '#d55',
     fields: {
       process_type: { type: 'enum', label: '执行方式', values: ['parallel', 'sequence'], default: 'parallel' },
-      rules: { type: 'json', label: '规则数组', required: true, hint: '[{"type":"...","params":{...}}]' },
+      rules: { type: 'rulelist', label: '规则列表', required: true, hint: '[{"type":"...","params":{...}}]' },
     },
   },
 

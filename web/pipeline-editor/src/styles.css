@@ -24,7 +24,7 @@
 html, body, #root { margin: 0; height: 100%; font-family: system-ui, "Segoe UI", sans-serif; color: var(--text); }
 body { background: var(--bg); }
 
-.app { display: flex; flex-direction: column; height: 100vh; background: var(--bg); }
+.app { display: flex; flex-direction: column; height: 100vh; background: var(--bg); color: var(--text); }
 
 .topbar { display: flex; align-items: center; gap: 6px; padding: 8px 10px; background: var(--topbar); color: var(--topbar-fg); flex-wrap: wrap; }
 .topbar .title { font-weight: 700; margin-right: 8px; }
@@ -60,8 +60,8 @@ body { background: var(--bg); }
 .issue { padding: 1px 0; } .issue.error { color: var(--error); } .issue.warn { color: var(--warn); }
 
 /* ===== 右侧属性 + 日志抽屉 ===== */
-.right { width: 340px; border-left: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; background: var(--panel); }
-.prop { flex: 1; overflow-y: auto; padding: 10px; }
+.right { width: 340px; flex: none; border-left: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; background: var(--panel); overflow: hidden; }
+.prop { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 10px; min-width: 0; }
 .prop-empty { color: var(--muted); font-size: 13px; margin-top: 20px; text-align: center; }
 .prop-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
 .prop-type { font-weight: 700; } .prop-id { font-family: monospace; font-size: 12px; color: var(--text-dim); }
@@ -77,6 +77,21 @@ body { background: var(--bg); }
 .err { color: var(--error); font-size: 11px; margin-top: 2px; }
 .hint { color: var(--muted); font-size: 11px; margin: 4px 0; }
 .prop-raw textarea { width: 100%; font-family: monospace; font-size: 11px; }
+
+/* ===== 规则编辑器 ===== */
+.rule-editor { border: 1px solid var(--border); border-radius: 6px; padding: 6px; min-width: 0; }
+.rule-toolbar { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.rule-toolbar .spacer { flex: 1; }
+.rule-toolbar select { flex: 1; padding: 4px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel); color: var(--text); font-size: 12px; }
+.rule-card { border: 1px solid var(--border); border-radius: 6px; margin: 4px 0; background: var(--panel-2); }
+.rule-card-head { display: flex; align-items: center; gap: 6px; padding: 5px 6px; cursor: pointer; font-size: 12px; min-width: 0; }
+.rule-card-head .caret { width: 10px; flex: none; }
+.rule-card-title { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; overflow: hidden; }
+.rule-card-title b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; max-width: 45%; }
+.rule-card-head .rule-actions { display: flex; gap: 3px; flex: none; }
+.rule-type { font-size: 10px; color: var(--muted); background: var(--panel); padding: 1px 5px; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rule-name { color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.rule-card-body { padding: 4px 8px 8px; border-top: 1px solid var(--border); }
 
 /* 日志抽屉 */
 .logdrawer { border-top: 1px solid var(--border); background: var(--log-bg); color: var(--log-fg); display: flex; flex-direction: column; }
