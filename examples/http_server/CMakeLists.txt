@@ -4,6 +4,7 @@ find_package(nlohmann_json REQUIRED)
 add_executable(ai_stream_server 
     ai_stream_server.cpp
     ${PROJECT_SOURCE_DIR}/src/http/api_server.cpp
+    ${PROJECT_SOURCE_DIR}/src/http/request_log.cpp
 )
 
 target_link_libraries(ai_stream_server
