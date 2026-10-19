@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ReactFlow, Background, Controls, MiniMap, addEdge,
+  ReactFlow, Background, Controls, addEdge,
   useNodesState, useEdgesState, Connection, Node, Edge,
   MarkerType, ReactFlowProvider, useReactFlow,
 } from '@xyflow/react';
@@ -30,6 +30,7 @@ function Editor() {
   // 多管道：store 按 id 存文档，activeId 为当前编辑的管道
   const [store, setStore] = useState<Record<string, PipelineDoc>>({});
   const [activeId, setActiveId] = useState('');
+  const [idDraft, setIdDraft] = useState('');
   const [serverState, setServerState] = useState<Record<string, string>>({});
 
   // 日志
@@ -66,6 +67,42 @@ function Editor() {
     return id;
   };
 
+  // 生成不冲突的管道 id（不依赖 window.prompt，避免被屏蔽时"点了没反应"）
+  const genPipelineId = () => {
+    let n = 1;
+    while (store[`pipeline_${n}`]) n++;
+    return `pipeline_${n}`;
+  };
+
+  // 确保有当前管道：拖入第一个节点时若还没选管道，自动建一个，避免 Build 报"未选择管道"
+  const ensureActive = () => {
+    if (activeId) return;
+    const id = genPipelineId();
+    const doc = buildDoc(id);
+    setStore((s) => ({ ...s, [id]: doc }));
+    setActiveId(id);
+    setIdDraft(id);
+  };
+
+  // 重命名当前管道（改 store 的 key）
+  const renameActive = (raw: string) => {
+    const next = raw.trim();
+    if (!activeId) { // 还没有活动管道：直接采用
+      if (!next) return;
+      if (store[next]) { appendLog(`管道 ${next} 已存在`, 'warn'); setIdDraft(activeId); return; }
+      const doc = buildDoc(next);
+      setStore((s) => ({ ...s, [next]: doc }));
+      setActiveId(next);
+      return;
+    }
+    if (!next || next === activeId) { setIdDraft(activeId); return; }
+    if (store[next]) { appendLog(`管道 ${next} 已存在，未改名`, 'warn'); setIdDraft(activeId); return; }
+    const doc = buildDoc(next);
+    setStore((s) => { const n = { ...s }; delete n[activeId]; n[next] = doc; return n; });
+    setActiveId(next);
+    appendLog(`管道重命名 ${activeId} → ${next}`);
+  };
+
   // ===== 当前编辑态 ↔ store =====
   const buildDoc = (id: string): PipelineDoc => fromFlow(id, nodes, edges, paramsById);
 
@@ -79,6 +116,7 @@ function Editor() {
     doc.graph.nodes.forEach((n) => { p[n.id] = n.params || {}; });
     setParamsById(p);
     setActiveId(doc.id);
+    setIdDraft(doc.id);
     setSelectedId(null);
     setIssues([]);
     setStatus(st);
@@ -99,11 +137,8 @@ function Editor() {
   };
 
   const newPipeline = () => {
-    const id = window.prompt('新管道 id', 'pipeline_' + (Object.keys(store).length + 1));
-    if (!id || !id.trim()) return;
-    const key = id.trim();
-    if (store[key]) { appendLog(`管道 ${key} 已存在`, 'warn'); return; }
     commitActive();
+    const key = genPipelineId();
     const doc: PipelineDoc = { id: key, graph: { nodes: [], edges: [] } };
     setStore((s) => ({ ...s, [key]: doc }));
     loadDoc(doc);
@@ -112,6 +147,7 @@ function Editor() {
 
   // ===== 画布编辑 =====
   const addNodeAt = (type: string, position: { x: number; y: number }) => {
+    ensureActive();
     const id = genId(type);
     const n: Node = { id, type: 'pipelineNode', position, data: { label: id, nodeType: type, status } };
     setNodes((ns) => ns.concat(n));
@@ -258,6 +294,11 @@ function Editor() {
             <option key={id} value={id}>{serverState[id] === 'running' ? '● ' : ''}{id}</option>
           ))}
         </select>
+        <input className="pid" value={idDraft} placeholder="管道 id（可改名）"
+          onChange={(e) => setIdDraft(e.target.value)}
+          onBlur={(e) => renameActive(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+          title="当前管道 id，可编辑改名" />
         <button className="btn tiny" onClick={newPipeline} title="新建管道">＋新建</button>
         <input className="cfg" value={settings.baseUrl} placeholder="API base(同源留空)" onChange={(e) => setSettings({ ...settings, baseUrl: e.target.value })} />
         <input className="cfg" value={settings.token} placeholder="API Token" onChange={(e) => setSettings({ ...settings, token: e.target.value })} />
@@ -284,9 +325,10 @@ function Editor() {
             onConnect={onConnect} onNodesDelete={onNodesDelete}
             onNodeClick={(_, n) => setSelectedId(n.id)}
             nodeTypes={nodeTypes} colorMode={theme}
+            proOptions={{ hideAttribution: true }}
             deleteKeyCode={['Delete', 'Backspace']} fitView
           >
-            <Background /><Controls /><MiniMap pannable zoomable />
+            <Background /><Controls />
           </ReactFlow>
           {issues.length > 0 && (
             <div className="issues">
