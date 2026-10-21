@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <cctype>
 #include <fstream>
 #include <sstream>
 
@@ -131,6 +132,7 @@ void ApiServer::recoverFromState() {
                 }
             }
             rebuilt++;
+            extractMeta(st.id, cfg);   // 恢复的管道同样登记 play_url / evidence 目录
             if (should_start) started++;
             LOG_INFO_FMT("[Recover] '{}' 末态={} → 重建{}", st.id, st.action,
                          should_start ? "+启动" : "（不启动）");
@@ -170,6 +172,158 @@ void ApiServer::handleSaveConfig(const httplib::Request& req, httplib::Response&
         res.status = 500;
         res.set_content(json{{"error", e.what()}}.dump(), "application/json");
     }
+}
+
+void ApiServer::extractMeta(const std::string& pipeline_id, const json& body) {
+    PipelineMeta m;
+    try {
+        if (body.contains("graph") && body["graph"].contains("nodes") && body["graph"]["nodes"].is_array()) {
+            for (const auto& n : body["graph"]["nodes"]) {
+                if (!n.is_object()) continue;
+                const std::string type = n.value("type", "");
+                json params = n.contains("params") && n["params"].is_object() ? n["params"] : json::object();
+                // 播放地址：取自输出侧 sink 节点的 play_url
+                if ((type == "rtmp_sink" || type == "mp4_save" || type == "hls_sink") &&
+                    params.contains("play_url") && params["play_url"].is_string())
+                    m.play_url = params["play_url"].get<std::string>();
+                // 证据目录：evidence 节点 video/snapshot 的 output_dir
+                if (type == "evidence") {
+                    auto addDir = [&](const json& sub) {
+                        if (sub.is_object() && sub.contains("output_dir") && sub["output_dir"].is_string()) {
+                            std::string d = sub["output_dir"].get<std::string>();
+                            if (!d.empty()) m.evidence_dirs.push_back(d);
+                        }
+                    };
+                    if (params.contains("video")) addDir(params["video"]);
+                    if (params.contains("snapshot")) addDir(params["snapshot"]);
+                }
+            }
+        }
+    } catch (const std::exception& e) {
+        LOG_WARN_FMT("extractMeta '{}' 异常: {}", pipeline_id, e.what());
+    }
+    std::lock_guard<std::mutex> lk(meta_mutex_);
+    meta_[pipeline_id] = std::move(m);
+}
+
+static std::string evidenceKind(const std::string& name) {
+    auto dot = name.find_last_of('.');
+    std::string ext = dot == std::string::npos ? "" : name.substr(dot + 1);
+    for (auto& c : ext) c = static_cast<char>(std::tolower(c));
+    if (ext == "jpg" || ext == "jpeg" || ext == "png") return "image";
+    if (ext == "mp4" || ext == "mkv" || ext == "webm" || ext == "ts") return "video";
+    return "other";
+}
+static const char* evidenceMime(const std::string& name) {
+    auto dot = name.find_last_of('.');
+    std::string ext = dot == std::string::npos ? "" : name.substr(dot + 1);
+    for (auto& c : ext) c = static_cast<char>(std::tolower(c));
+    if (ext == "jpg" || ext == "jpeg") return "image/jpeg";
+    if (ext == "png") return "image/png";
+    if (ext == "mp4") return "video/mp4";
+    if (ext == "webm") return "video/webm";
+    return "application/octet-stream";
+}
+
+void ApiServer::handleEvidenceList(const httplib::Request& req, httplib::Response& res) {
+    const std::string id = req.get_param_value("pipeline");
+    PipelineMeta m;
+    {
+        std::lock_guard<std::mutex> lk(meta_mutex_);
+        auto it = meta_.find(id);
+        if (it != meta_.end()) m = it->second;
+    }
+    json files = json::array();
+    std::error_code ec;
+    for (size_t i = 0; i < m.evidence_dirs.size(); ++i) {
+        fs::path dir = fs::absolute(m.evidence_dirs[i], ec);  // 相对程序运行目录解析
+        if (!fs::is_directory(dir, ec)) continue;
+        for (const auto& entry : fs::directory_iterator(dir, ec)) {
+            if (!entry.is_regular_file()) continue;
+            const std::string name = entry.path().filename().string();
+            json f;
+            f["dir_index"] = static_cast<int>(i);
+            f["name"] = name;
+            f["kind"] = evidenceKind(name);
+            f["size"] = static_cast<long long>(entry.file_size(ec));
+            files.push_back(std::move(f));
+        }
+    }
+    json resp = {{"pipeline", id}, {"play_url", m.play_url}, {"files", files}};
+    res.set_content(resp.dump(), "application/json");
+}
+
+void ApiServer::handleEvidenceFile(const httplib::Request& req, httplib::Response& res) {
+    const std::string id = req.get_param_value("pipeline");
+    const std::string name = req.get_param_value("name");
+    int dir_index = std::atoi(req.get_param_value("dir").c_str());
+    // 安全：文件名不得含路径分隔/..
+    if (name.empty() || name.find('/') != std::string::npos || name.find('\\') != std::string::npos ||
+        name.find("..") != std::string::npos) {
+        res.status = 400; res.set_content(R"({"error":"bad name"})", "application/json"); return;
+    }
+    PipelineMeta m;
+    {
+        std::lock_guard<std::mutex> lk(meta_mutex_);
+        auto it = meta_.find(id);
+        if (it != meta_.end()) m = it->second;
+    }
+    if (dir_index < 0 || dir_index >= static_cast<int>(m.evidence_dirs.size())) {
+        res.status = 400; res.set_content(R"({"error":"bad dir"})", "application/json"); return;
+    }
+    std::error_code ec;
+    fs::path base = fs::absolute(m.evidence_dirs[dir_index], ec);
+    fs::path full = base / name;
+    std::string absFull = fs::absolute(full, ec).lexically_normal().string();
+    std::string absBase = base.lexically_normal().string();
+    if (absFull.compare(0, absBase.size(), absBase) != 0) {  // 越界防护
+        res.status = 403; res.set_content(R"({"error":"forbidden"})", "application/json"); return;
+    }
+    std::ifstream in(absFull, std::ios::binary | std::ios::ate);
+    if (!in) { res.status = 404; res.set_content(R"({"error":"not found"})", "application/json"); return; }
+    const long long fsize = static_cast<long long>(in.tellg());
+    res.set_header("Accept-Ranges", "bytes");
+
+    // 解析 Range: bytes=start-end（支持 mp4 播放/拖动；浏览器先发 bytes=0-）
+    long long start = 0, end = fsize - 1;
+    bool partial = false;
+    if (req.has_header("Range")) {
+        std::string r = req.get_header_value("Range");
+        const std::string pfx = "bytes=";
+        if (r.compare(0, pfx.size(), pfx) == 0) {
+            std::string spec = r.substr(pfx.size());
+            auto comma = spec.find(',');
+            if (comma != std::string::npos) spec = spec.substr(0, comma);  // 只取第一段
+            auto dash = spec.find('-');
+            std::string s1 = dash == std::string::npos ? spec : spec.substr(0, dash);
+            std::string s2 = dash == std::string::npos ? "" : spec.substr(dash + 1);
+            if (s1.empty() && !s2.empty()) {                 // bytes=-N（末尾 N 字节）
+                long long n = std::atoll(s2.c_str());
+                start = std::max<long long>(0, fsize - n); end = fsize - 1;
+            } else {
+                if (!s1.empty()) start = std::atoll(s1.c_str());
+                if (!s2.empty()) end = std::atoll(s2.c_str());
+            }
+            if (start > end || start >= fsize) {             // 越界
+                res.status = 416;
+                res.set_header("Content-Range", "bytes */" + std::to_string(fsize));
+                res.set_content("", "text/plain"); return;
+            }
+            end = std::min<long long>(end, fsize - 1);
+            partial = true;
+        }
+    }
+    long long len = end - start + 1;
+    std::vector<char> buf(static_cast<size_t>(len));
+    in.seekg(start, std::ios::beg);
+    in.read(buf.data(), len);
+    buf.resize(static_cast<size_t>(in.gcount()));
+    if (partial) {
+        res.status = 206;
+        res.set_header("Content-Range",
+                       "bytes " + std::to_string(start) + "-" + std::to_string(end) + "/" + std::to_string(fsize));
+    }
+    res.set_content(std::string(buf.data(), buf.size()), evidenceMime(name));
 }
 
 void ApiServer::setupRoutes() {
@@ -220,6 +374,13 @@ void ApiServer::setupRoutes() {
     // 保存管道配置文件（编辑器"保存到服务器"）：写 <state>/pipelines/<id>.json
     server_.Post("/api/v1/pipeline/save-config", [this](const auto& req, auto& res) {
         handleSaveConfig(req, res);
+    });
+    // 证据查看（预览页）
+    server_.Get("/api/v1/evidence/list", [this](const auto& req, auto& res) {
+        handleEvidenceList(req, res);
+    });
+    server_.Get("/api/v1/evidence/file", [this](const auto& req, auto& res) {
+        handleEvidenceFile(req, res);
     });
 
     // 健康检查
@@ -367,16 +528,30 @@ void ApiServer::handlePipelineBuildSync(const httplib::Request& req, httplib::Re
             return;
         }
 
+        // replace=true：若已存在则先停止并销毁旧管道，再重建（编辑器"覆盖重建"）
+        const bool replace = body.value("replace", false);
         {
-            std::lock_guard<std::mutex> lock(pipelines_mutex_);
-            if (pipelines_.find(pipeline_id) != pipelines_.end()) {
-                res.status = 409;
-                res.set_content(R"({"error":"Pipeline id already exists"})", "application/json");
-                return;
+            std::shared_ptr<core::Pipeline> old;
+            {
+                std::lock_guard<std::mutex> lock(pipelines_mutex_);
+                auto it = pipelines_.find(pipeline_id);
+                if (it != pipelines_.end()) {
+                    if (!replace) {
+                        res.status = 409;
+                        res.set_content(R"({"error":"Pipeline id already exists"})", "application/json");
+                        return;
+                    }
+                    old = it->second;
+                    pipelines_.erase(it);
+                }
+            }
+            if (old) {
+                old->stop();
+                core::MetricsCollector::instance().reset(pipeline_id);
+                recordRequest("delete", pipeline_id);
+                LOG_INFO_FMT("Pipeline '{}' replaced: 旧管道已停止并销毁", pipeline_id);
             }
         }
-
-        // 构建（含模型加载，可能耗时）放在全局锁外，避免阻塞其它请求
         auto pipeline = std::make_shared<core::Pipeline>(pipeline_id);
         if (!pipeline->buildFromJson(body["graph"])) {
             res.status = 400;
@@ -402,6 +577,7 @@ void ApiServer::handlePipelineBuildSync(const httplib::Request& req, httplib::Re
         res.set_content(response.dump(), "application/json");
         LOG_INFO_FMT("Pipeline '{}' built via API", pipeline_id);
         recordRequest("build", pipeline_id, &body);
+        extractMeta(pipeline_id, body);
     } catch (const std::exception& e) {
         res.status = 500;
         json err = {{"error", e.what()}};
@@ -514,10 +690,16 @@ void ApiServer::handlePipelineListSync(const httplib::Request& /*req*/, httplib:
         std::lock_guard<std::mutex> lock(pipelines_mutex_);
         json list = json::array();
         for (const auto& [id, pipeline] : pipelines_) {
-            list.push_back({
-                {"id", id},
-                {"running", pipeline->isRunning()}
-            });
+            json item = {{"id", id}, {"running", pipeline->isRunning()}};
+            {
+                std::lock_guard<std::mutex> mlk(meta_mutex_);
+                auto mit = meta_.find(id);
+                if (mit != meta_.end()) {
+                    item["play_url"] = mit->second.play_url;
+                    item["evidence_dirs"] = mit->second.evidence_dirs;
+                }
+            }
+            list.push_back(item);
         }
         json response = {{"pipelines", list}};
         res.set_content(response.dump(), "application/json");
@@ -565,6 +747,14 @@ void ApiServer::handlePipelineBuildAsync(const httplib::Request& req, httplib::R
     try {
         LOG_INFO_FMT("Received async pipeline build request: {}", idOf(body));
 
+        // replace=true：已存在则先销毁旧管道再重建
+        if (body.value("replace", false) && manager_->hasPipeline(idOf(body))) {
+            if (manager_->removePipeline(idOf(body))) {
+                recordRequest("delete", idOf(body));
+                LOG_INFO_FMT("Pipeline '{}' replaced: 旧管道已提交销毁", idOf(body));
+            }
+        }
+
         std::string pipeline_id = manager_->loadPipelineFromJsonAsync(body);
         if (pipeline_id.empty()) {
             res.status = manager_->hasPipeline(idOf(body)) ? 409 : 400;
@@ -585,6 +775,7 @@ void ApiServer::handlePipelineBuildAsync(const httplib::Request& req, httplib::R
         res.set_content(response.dump(), "application/json");
         LOG_INFO_FMT("Pipeline '{}' build submitted via API (async)", pipeline_id);
         recordRequest("build", pipeline_id, &body);
+        extractMeta(pipeline_id, body);
     } catch (const std::exception& e) {
         res.status = 500;
         json err = {{"error", e.what()}};
@@ -669,11 +860,20 @@ void ApiServer::handlePipelineListAsync(const httplib::Request& /*req*/, httplib
         json list = json::array();
         for (const auto& id : manager_->getAllPipelineIds()) {
             auto state = manager_->getPipelineLifecycleState(id);
-            list.push_back({
+            json item = {
                 {"id", id},
                 {"state", core::AsyncPipelineManager::stateToString(state)},
                 {"running", manager_->getPipelineState(id)}
-            });
+            };
+            {
+                std::lock_guard<std::mutex> mlk(meta_mutex_);
+                auto mit = meta_.find(id);
+                if (mit != meta_.end()) {
+                    item["play_url"] = mit->second.play_url;
+                    item["evidence_dirs"] = mit->second.evidence_dirs;
+                }
+            }
+            list.push_back(item);
         }
         json response = {{"pipelines", list}};
         res.set_content(response.dump(), "application/json");

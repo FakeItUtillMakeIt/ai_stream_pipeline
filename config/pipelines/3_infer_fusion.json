@@ -6,7 +6,7 @@
     "id": "src1",
     "type": "file_source",
     "params": {
-     "url": "file:///home/sevnce/project/video/fight/fight.mp4",
+     "url": "file:///home/sevnce/project/video/test/child_on_wall.mp4",
      "loop": true,
      "realtime": true,
      "skip_frames": 1

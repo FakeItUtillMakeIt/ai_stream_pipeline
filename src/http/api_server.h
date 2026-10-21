@@ -4,6 +4,8 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <map>
+#include <vector>
 #include <mutex>
 #include <httplib.h>
 #include "ai_stream/core/pipeline.h"
@@ -12,6 +14,16 @@
 
 namespace ai_stream {
 namespace http {
+
+/**
+ * @brief 每个管道的运行时元数据（供预览页取用）
+ *  - play_url:    外部媒体服务器(mediamtx/nginx-rtmp)转出的 HLS/WebRTC 播放地址，取自 sink 节点 params.play_url
+ *  - evidence_dirs: 证据目录（取自 evidence 节点 video/snapshot 的 output_dir，相对程序运行目录解析）
+ */
+struct PipelineMeta {
+    std::string play_url;
+    std::vector<std::string> evidence_dirs;
+};
 
 /**
  * @brief HTTP API 服务，管理多个 Pipeline 实例
@@ -57,6 +69,11 @@ private:
     void handlePipelineStatus(const httplib::Request& req, httplib::Response& res);
     // 保存管道配置文件到 <state>/pipelines/<id>.json（编辑器"保存到服务器"）
     void handleSaveConfig(const httplib::Request& req, httplib::Response& res);
+    // 证据查看（预览页）：列目录 / 取文件（限制在该管道 evidence 目录内）
+    void handleEvidenceList(const httplib::Request& req, httplib::Response& res);
+    void handleEvidenceFile(const httplib::Request& req, httplib::Response& res);
+    // 从 build 请求体抽取 play_url / evidence 目录，登记到 meta_
+    void extractMeta(const std::string& pipeline_id, const nlohmann::json& body);
 
     // 同步模式实现
     void handlePipelineBuildSync(const httplib::Request& req, httplib::Response& res);
@@ -102,6 +119,10 @@ private:
 
     // 请求历史持久化（掉线/重启恢复）
     std::unique_ptr<RequestLog> reqlog_;
+
+    // 每管道运行时元数据（play_url / evidence 目录），供预览页
+    std::map<std::string, PipelineMeta> meta_;
+    std::mutex meta_mutex_;
 
     std::thread server_thread_;
     std::atomic<bool> running_{false};

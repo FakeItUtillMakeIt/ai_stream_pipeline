@@ -132,11 +132,15 @@
 
 ```json
 // 同步模式
-{"pipelines": [{"id": "my_pipeline", "running": true}]}
+{"pipelines": [{"id": "my_pipeline", "running": true, "play_url": "...", "evidence_dirs": ["evidence"]}]}
 
 // 异步模式（多 state 字段）
-{"pipelines": [{"id": "my_pipeline", "state": "running", "running": true}]}
+{"pipelines": [{"id": "my_pipeline", "state": "running", "running": true, "play_url": "...", "evidence_dirs": ["evidence"]}]}
 ```
+
+`play_url` / `evidence_dirs` 由 build 时从管道图抽取（预览页使用），详见"证据与预览"：
+- `play_url`：输出侧 sink 节点（`rtmp_sink`/`mp4_save`/`hls_sink`）`params.play_url`，即媒体服务器转出的 HLS(.m3u8)/WebRTC 播放地址；未配置为空串。
+- `evidence_dirs`：`evidence` 节点 `video.output_dir` 与 `snapshot.output_dir` 之和（相对程序运行目录）。
 
 ## POST /api/v1/pipeline/status — 管道状态
 
@@ -197,6 +201,26 @@
 无指标：`404 {"error": "No metrics found for pipeline"}`
 
 ---
+
+## 证据与预览（预览页专用）
+
+实时预览（方案 A）：浏览器不能直接播 RTMP。`rtmp_sink` 推到外部媒体服务器（mediamtx / nginx-rtmp），由其转成 **HLS(.m3u8) 或 WebRTC**；把该播放地址填进 sink 节点的 `play_url`，前端预览页用 hls.js 播放。后端不转码，仅提供播放地址来源与证据文件。
+
+### GET /api/v1/evidence/list?pipeline=<id>
+列出该管道 `evidence_dirs` 内的证据文件（快照图 / 录像片段）：
+```json
+{"pipeline": "my_pipeline", "play_url": "...", "files": [
+  {"dir_index": 0, "name": "alert_1.jpg", "kind": "image", "size": 88123},
+  {"dir_index": 0, "name": "fight_2.mp4", "kind": "video", "size": 456789}
+]}
+```
+目录不存在或管道无证据配置 → `files` 为空数组。`kind ∈ image | video | other`。
+
+### GET /api/v1/evidence/file?pipeline=<id>&dir=<idx>&name=<filename>
+取回单个证据文件的字节（`dir` 是 `evidence/list` 返回的 `dir_index`）。
+- 安全：`name` 不得含 `/ \ ..`，且解析后必须仍位于该 `dir_index` 对应目录内，否则 `400/403`；文件不存在 `404`。
+- `Content-Type` 按扩展名给出（image/jpeg、image/png、video/mp4、video/webm）。
+- 支持 **HTTP Range**（`Accept-Ranges: bytes` + `206 Partial Content`），`<video>` 播放/拖动定位正常。
 
 ## 异步模式典型调用序列
 

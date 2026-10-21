@@ -113,7 +113,29 @@ cd web/pipeline-editor && npm run dev     # 默认 http://localhost:5173
 
 ---
 
-## 7. 已知限制 / 后续
+## 7. 运行预览（Preview 视图）
+
+顶栏 **预览 ▶** 进入预览页（Start 成功也会自动进入），左上 **← 返回编辑** 回编辑器。
+预览页可切换正在运行的管道（来自 `GET /api/v1/pipeline/list`，含运行态标记），四个标签：
+
+| 标签 | 内容 | 数据来源 |
+|---|---|---|
+| 实时预览 | 播放 sink 输出的那路流（HLS/WebRTC） | sink 节点 `play_url` → hls.js / `<video>` |
+| 证据 | 该管道告警落的快照图/录像片段网格 | `GET /api/v1/evidence/list` + `/file` |
+| 指标 | 各节点包数/丢包/延迟/错误表 | `GET /api/v1/metrics` |
+| 状态 | 该管道 JSON 状态 | `POST /api/v1/pipeline/status` |
+
+- **实时预览走方案 A**：浏览器不能直接播 RTMP，需外部媒体服务器（mediamtx / nginx-rtmp）把
+  `rtmp_sink` 推的流转成 HLS(.m3u8) 或 WebRTC；把该播放地址填进 sink 节点的
+  **播放地址(play_url)** 字段（导出/Build 时后端会抽取）。未填则预览页提示"未配置播放地址"。
+- **证据目录**：取 `evidence` 节点 `video/snapshot` 的 `output_dir`，按程序运行目录解析；
+  仅列出/读取这些目录内的文件（含路径穿越防护）。
+- 部署：先起 mediamtx（订阅 rtmp 输入、发布 hls/webrtc），把 HLS 地址填入 sink `play_url`，
+  Build/Start 后即可在预览页看流。
+
+---
+
+## 8. 已知限制 / 后续
 
 - 复杂参数目前靠"原始 JSON 编辑"兜底；专用子编辑器（规则逐条表单、prompts 结构化、
   `rule_zones` 多边形在画布上绘制）属后续增强。

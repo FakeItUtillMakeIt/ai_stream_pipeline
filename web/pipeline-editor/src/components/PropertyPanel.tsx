@@ -9,16 +9,26 @@ interface Props {
   allNodeIds: string[];
   onChange: (node: NodeDef) => void;
   onDelete: (id: string) => void;
+  onRename: (oldId: string, newId: string) => void;
 }
 
-export default function PropertyPanel({ node, allNodeIds, onChange, onDelete }: Props) {
+export default function PropertyPanel({ node, allNodeIds, onChange, onDelete, onRename }: Props) {
   const [rawMode, setRawMode] = useState(false);
   const [rawText, setRawText] = useState('');
   const [rawErr, setRawErr] = useState('');
+  const [idDraft, setIdDraft] = useState(node?.id ?? '');
+  const [editId, setEditId] = useState(false);
 
   if (!node) return <div className="prop"><div className="prop-empty">选中一个节点以编辑参数</div></div>;
+  if (idDraft !== node.id && !editId) setIdDraft(node.id);
 
   const def = SCHEMA[node.type];
+
+  const commitId = () => {
+    setEditId(false);
+    if (idDraft.trim() && idDraft.trim() !== node.id) onRename(node.id, idDraft.trim());
+    else setIdDraft(node.id);
+  };
 
   const update = (path: string, val: unknown) => {
     const params = JSON.parse(JSON.stringify(node.params));
@@ -38,9 +48,17 @@ export default function PropertyPanel({ node, allNodeIds, onChange, onDelete }: 
   return (
     <div className="prop">
       <div className="prop-head">
-        <div>
+        <div style={{ minWidth: 0 }}>
           <div className="prop-type">{def?.label || node.type}</div>
-          <div className="prop-id">{node.id}</div>
+          {editId ? (
+            <input className="prop-id-edit" value={idDraft} autoFocus
+              onChange={(e) => setIdDraft(e.target.value)} onBlur={commitId}
+              onKeyDown={(e) => { if (e.key === 'Enter') commitId(); if (e.key === 'Escape') { setIdDraft(node.id); setEditId(false); } }} />
+          ) : (
+            <div className="prop-id" title="双击改名" onDoubleClick={() => setEditId(true)}>
+              {node.id} <button className="btn tiny" onClick={() => setEditId(true)}>✎</button>
+            </div>
+          )}
         </div>
         <button className="btn danger" onClick={() => onDelete(node.id)}>删除节点</button>
       </div>

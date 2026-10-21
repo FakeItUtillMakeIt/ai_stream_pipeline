@@ -8,17 +8,36 @@ import '@xyflow/react/dist/style.css';
 import Palette from './components/Palette';
 import PropertyPanel from './components/PropertyPanel';
 import PipelineNode from './components/PipelineNode';
+import PreviewView from './components/PreviewView';
 import { defaultParams } from './schema/nodeSchema';
 import { toFlow, fromFlow } from './graph/flow';
 import { validate, hasErrors, Issue } from './graph/validation';
 import { PipelineDoc, NodeDef } from './types';
-import { api, ApiSettings, waitState } from './api/client';
+import { api, ApiSettings, waitState, deriveState } from './api/client';
 
 const nodeTypes = { pipelineNode: PipelineNode };
 
 type LogLevel = 'info' | 'warn' | 'error';
 type Status = 'waiting' | 'running' | 'error';
 interface LogEntry { ts: string; level: LogLevel; msg: string; }
+interface SrvInfo { running: boolean; state: string; }
+
+const sig = (d: unknown) => JSON.stringify(d);
+
+// 深替换：把所有等于 oldId 的字符串值/对象键改成 newId（节点改名后修正引用）
+function replaceRefs(v: any, oldId: string, newId: string): any {
+  if (Array.isArray(v)) return v.map((x) => replaceRefs(x, oldId, newId));
+  if (v && typeof v === 'object') {
+    const o: any = {};
+    for (const [k, val] of Object.entries(v)) o[k === oldId ? newId : k] = replaceRefs(val, oldId, newId);
+    return o;
+  }
+  return v === oldId ? newId : v;
+}
+
+function load<T>(key: string, fallback: T): T {
+  try { const s = localStorage.getItem(key); return s ? JSON.parse(s) : fallback; } catch { return fallback; }
+}
 
 function Editor() {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
@@ -27,34 +46,35 @@ function Editor() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [issues, setIssues] = useState<Issue[]>([]);
 
-  // 多管道：store 按 id 存文档，activeId 为当前编辑的管道
-  const [store, setStore] = useState<Record<string, PipelineDoc>>({});
+  // 多管道 store（持久化到 localStorage）
+  const [store, setStore] = useState<Record<string, PipelineDoc>>(() => load('editorStore', {}));
+  const [savedSig, setSavedSig] = useState<Record<string, string>>(() => load('editorSavedSig', {}));
   const [activeId, setActiveId] = useState('');
   const [idDraft, setIdDraft] = useState('');
-  const [serverState, setServerState] = useState<Record<string, string>>({});
+  const [serverState, setServerState] = useState<Record<string, SrvInfo>>({});
 
-  // 日志
   const [log, setLog] = useState<LogEntry[]>([]);
   const [levels, setLevels] = useState<Record<LogLevel, boolean>>({ info: true, warn: true, error: true });
   const [autoScroll, setAutoScroll] = useState(true);
   const [logOpen, setLogOpen] = useState(true);
   const logRef = useRef<HTMLDivElement>(null);
 
-  // 主题 + 当前节点视觉状态
-  const [theme, setTheme] = useState<'light' | 'dark'>(
-    () => (localStorage.getItem('editorTheme') as 'light' | 'dark') || 'dark');
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => load('editorTheme', 'dark'));
   const [status, setStatus] = useState<Status>('waiting');
+  const [view, setView] = useState<'editor' | 'preview'>('editor');
+  const [overwrite, setOverwrite] = useState<boolean>(() => load('editorOverwrite', true));
 
-  const [settings, setSettings] = useState<ApiSettings>(() => {
-    try { return JSON.parse(localStorage.getItem('apiSettings') || ''); }
-    catch { return { baseUrl: '', token: '' }; }
-  });
+  const [settings, setSettings] = useState<ApiSettings>(() => load('apiSettings', { baseUrl: '', token: '' }));
   const fileRef = useRef<HTMLInputElement>(null);
   const counter = useRef(1);
+  const inited = useRef(false);
   const rf = useReactFlow();
 
   useEffect(() => { localStorage.setItem('apiSettings', JSON.stringify(settings)); }, [settings]);
-  useEffect(() => { localStorage.setItem('editorTheme', theme); }, [theme]);
+  useEffect(() => { localStorage.setItem('editorTheme', JSON.stringify(theme)); }, [theme]);
+  useEffect(() => { localStorage.setItem('editorStore', JSON.stringify(store)); }, [store]);
+  useEffect(() => { localStorage.setItem('editorSavedSig', JSON.stringify(savedSig)); }, [savedSig]);
+  useEffect(() => { localStorage.setItem('editorOverwrite', JSON.stringify(overwrite)); }, [overwrite]);
   useEffect(() => { setNodes((ns) => ns.map((n) => ({ ...n, data: { ...n.data, status } }))); }, [status, setNodes]);
   useEffect(() => { if (autoScroll && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [log, autoScroll, logOpen]);
 
@@ -66,50 +86,16 @@ function Editor() {
     do { id = `${type}_${counter.current++}`; } while (nodes.some((n) => n.id === id));
     return id;
   };
-
-  // 生成不冲突的管道 id（不依赖 window.prompt，避免被屏蔽时"点了没反应"）
-  const genPipelineId = () => {
-    let n = 1;
-    while (store[`pipeline_${n}`]) n++;
-    return `pipeline_${n}`;
-  };
-
-  // 确保有当前管道：拖入第一个节点时若还没选管道，自动建一个，避免 Build 报"未选择管道"
-  const ensureActive = () => {
-    if (activeId) return;
-    const id = genPipelineId();
-    const doc = buildDoc(id);
-    setStore((s) => ({ ...s, [id]: doc }));
-    setActiveId(id);
-    setIdDraft(id);
-  };
-
-  // 重命名当前管道（改 store 的 key）
-  const renameActive = (raw: string) => {
-    const next = raw.trim();
-    if (!activeId) { // 还没有活动管道：直接采用
-      if (!next) return;
-      if (store[next]) { appendLog(`管道 ${next} 已存在`, 'warn'); setIdDraft(activeId); return; }
-      const doc = buildDoc(next);
-      setStore((s) => ({ ...s, [next]: doc }));
-      setActiveId(next);
-      return;
-    }
-    if (!next || next === activeId) { setIdDraft(activeId); return; }
-    if (store[next]) { appendLog(`管道 ${next} 已存在，未改名`, 'warn'); setIdDraft(activeId); return; }
-    const doc = buildDoc(next);
-    setStore((s) => { const n = { ...s }; delete n[activeId]; n[next] = doc; return n; });
-    setActiveId(next);
-    appendLog(`管道重命名 ${activeId} → ${next}`);
-  };
+  const genPipelineId = () => { let n = 1; while (store[`pipeline_${n}`]) n++; return `pipeline_${n}`; };
 
   // ===== 当前编辑态 ↔ store =====
   const buildDoc = (id: string): PipelineDoc => fromFlow(id, nodes, edges, paramsById);
+  const currentDoc = (): PipelineDoc => buildDoc(activeId);
 
   const loadDoc = (doc: PipelineDoc) => {
     const f = toFlow(doc);
-    const st: Status = serverState[doc.id] === 'running' ? 'running'
-      : serverState[doc.id] === 'load_failed' ? 'error' : 'waiting';
+    const info = serverState[doc.id];
+    const st: Status = info?.running ? 'running' : info?.state === 'load_failed' ? 'error' : 'waiting';
     setNodes(f.nodes.map((n) => ({ ...n, data: { ...n.data, status: st } })));
     setEdges(f.edges.map((e) => ({ ...e, markerEnd: { type: MarkerType.ArrowClosed } })));
     const p: Record<string, NodeDef['params']> = {};
@@ -123,18 +109,9 @@ function Editor() {
     counter.current = Math.max(counter.current, doc.graph.nodes.length + 1);
   };
 
-  const commitActive = () => {
-    if (!activeId) return;
-    const doc = buildDoc(activeId);
-    setStore((s) => ({ ...s, [activeId]: doc }));
-  };
+  const commitActive = () => { if (!activeId) return; const doc = buildDoc(activeId); setStore((s) => ({ ...s, [activeId]: doc })); };
 
-  const switchTo = (id: string) => {
-    if (id === activeId) return;
-    commitActive();
-    const doc = store[id];
-    if (doc) loadDoc(doc);
-  };
+  const switchTo = (id: string) => { if (id === activeId) return; commitActive(); const doc = store[id]; if (doc) loadDoc(doc); };
 
   const newPipeline = () => {
     commitActive();
@@ -145,9 +122,48 @@ function Editor() {
     appendLog(`新建管道 ${key}`);
   };
 
+  const renameActive = (raw: string) => {
+    const next = raw.trim();
+    if (!activeId) {
+      if (!next) return;
+      if (store[next]) { appendLog(`管道 ${next} 已存在`, 'warn'); setIdDraft(''); return; }
+      setStore((s) => ({ ...s, [next]: buildDoc(next) })); setActiveId(next); return;
+    }
+    if (!next || next === activeId) { setIdDraft(activeId); return; }
+    if (store[next]) { appendLog(`管道 ${next} 已存在，未改名`, 'warn'); setIdDraft(activeId); return; }
+    const doc = buildDoc(next);
+    setStore((s) => { const n = { ...s }; delete n[activeId]; n[next] = doc; return n; });
+    if (savedSig[activeId]) setSavedSig((s) => { const n = { ...s }; n[next] = n[activeId]; delete n[activeId]; return n; });
+    setActiveId(next);
+    appendLog(`管道重命名 ${activeId} → ${next}`);
+  };
+
+  // 节点改名：更新节点/边/params，并深替换其它节点参数里对该 id 的引用
+  const renameNode = (oldId: string, rawNew: string) => {
+    const newId = rawNew.trim();
+    if (!newId || newId === oldId) return;
+    if (nodes.some((n) => n.id === newId)) { appendLog(`节点 id ${newId} 已存在`, 'warn'); return; }
+    setNodes((ns) => ns.map((n) => (n.id === oldId ? { ...n, id: newId, data: { ...n.data, label: newId } } : n)));
+    setEdges((es) => es.map((e) => {
+      const source = e.source === oldId ? newId : e.source;
+      const target = e.target === oldId ? newId : e.target;
+      return { ...e, source, target, id: `${source}->${target}` };
+    }));
+    setParamsById((p) => {
+      const next: Record<string, NodeDef['params']> = {};
+      for (const [k, v] of Object.entries(p)) {
+        const nk = k === oldId ? newId : k;
+        next[nk] = replaceRefs(v, oldId, newId);
+      }
+      return next;
+    });
+    setSelectedId((s) => (s === oldId ? newId : s));
+    appendLog(`节点改名 ${oldId} → ${newId}`);
+  };
+
   // ===== 画布编辑 =====
   const addNodeAt = (type: string, position: { x: number; y: number }) => {
-    ensureActive();
+    if (!activeId) { const id = genPipelineId(); setStore((s) => ({ ...s, [id]: buildDoc(id) })); setActiveId(id); setIdDraft(id); }
     const id = genId(type);
     const n: Node = { id, type: 'pipelineNode', position, data: { label: id, nodeType: type, status } };
     setNodes((ns) => ns.concat(n));
@@ -161,7 +177,7 @@ function Editor() {
     const position = rf.screenToFlowPosition({ x: e.clientX, y: e.clientY });
     addNodeAt(type, { x: Math.round(position.x), y: Math.round(position.y) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rf, status, nodes.length]);
+  }, [rf, status, nodes.length, activeId]);
   const onDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }, []);
   const onConnect = useCallback((c: Connection) => {
     if (!c.source || !c.target || c.source === c.target) return;
@@ -174,29 +190,25 @@ function Editor() {
     setSelectedId((s) => (s && ids.has(s) ? null : s));
   }, [setEdges]);
 
-  const currentDoc = (): PipelineDoc => buildDoc(activeId);
-
   const doValidate = () => {
     const iss = validate(currentDoc()); setIssues(iss);
     const e = iss.filter((i) => i.level === 'error').length, w = iss.filter((i) => i.level === 'warn').length;
     appendLog(`校验: ${e} 错误 / ${w} 警告`, e ? 'error' : w ? 'warn' : 'info');
     return iss;
   };
-
   const exportJson = () => {
     const doc = currentDoc();
     const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = `${activeId || 'pipeline'}.json`; a.click();
-    URL.revokeObjectURL(a.href);
-    appendLog('已导出 JSON');
+    URL.revokeObjectURL(a.href); appendLog('已导出 JSON');
   };
-
   const importJson = (file: File) => {
     file.text().then((t) => {
       try {
         const doc: PipelineDoc = JSON.parse(t);
         if (!doc.id) doc.id = file.name.replace(/\.json$/i, '');
+        if (store[doc.id] && !window.confirm(`管道 ${doc.id} 已存在，覆盖？`)) return;
         commitActive();
         setStore((s) => ({ ...s, [doc.id]: doc }));
         loadDoc(doc);
@@ -207,29 +219,35 @@ function Editor() {
 
   // ===== 服务器交互 =====
   const guard = (): boolean => { if (!activeId) { appendLog('未选择管道', 'error'); return false; } const iss = validate(currentDoc()); setIssues(iss); return !hasErrors(iss); };
+  const markSaved = (id: string) => { const doc = id === activeId ? currentDoc() : store[id]; if (doc) setSavedSig((s) => ({ ...s, [id]: sig(doc) })); };
 
   const refreshStatus = async () => {
     const r = await api.list(settings);
-    if (r.ok && r.json) {
-      const map: Record<string, string> = {};
-      const arr = Array.isArray(r.json) ? r.json : (r.json.pipelines || r.json.items || []);
-      for (const it of arr) { const id = it.id || it.name; const st = it.state || it.status || (it.running ? 'running' : 'stopped'); if (id) map[id] = st; }
-      setServerState(map);
-      appendLog('已刷新服务器管道状态');
-    } else {
-      appendLog('List → ' + JSON.stringify(r.json), 'error');
-    }
+    if (r.ok && r.json?.pipelines) {
+      const map: Record<string, SrvInfo> = {};
+      for (const it of r.json.pipelines) {
+        const id = it.id; if (!id) continue;
+        const state = deriveState(it) || 'stopped';
+        map[id] = { running: it.running === true || state === 'running', state };
+      }
+      setServerState(map); appendLog('已刷新服务器管道状态');
+    } else appendLog('List → ' + JSON.stringify(r.json), 'error');
   };
 
   const doBuild = async () => {
     if (!guard()) return;
-    commitActive();
-    setStatus('waiting');
-    const r = await api.build(settings, currentDoc());
+    commitActive(); setStatus('waiting');
+    let r = await api.build(settings, currentDoc(), overwrite);
+    if (r.status === 409) {
+      appendLog('管道已存在（未开覆盖重建）。勾选"覆盖重建"再 Build，或先 Delete。', 'warn');
+      setStatus('error'); return;
+    }
     appendLog(`Build ${activeId} → ${r.status} ${JSON.stringify(r.json)}`, r.ok ? 'info' : 'error');
     if (!r.ok) { setStatus('error'); return; }
-    await waitState(settings, activeId, ['stopped', 'running', 'load_failed'], 30000,
-      (s) => { const st = s?.state || s?.status; if (st === 'load_failed') { setStatus('error'); appendLog('加载失败', 'error'); } });
+    const final = await waitState(settings, activeId, ['stopped', 'running', 'load_failed'], 30000);
+    const st = deriveState(final);
+    if (st === 'load_failed') { setStatus('error'); appendLog('加载失败', 'error'); }
+    else { markSaved(activeId); appendLog('Build 完成（已保存配置）'); }
     refreshStatus();
   };
   const doStart = async () => {
@@ -237,6 +255,7 @@ function Editor() {
     const r = await api.start(settings, activeId);
     appendLog(`Start ${activeId} → ${r.status} ${JSON.stringify(r.json)}`, r.ok ? 'info' : 'error');
     setStatus(r.ok ? 'running' : 'error'); refreshStatus();
+    if (r.ok) setView('preview');
   };
   const doStop = async () => {
     if (!activeId) return;
@@ -246,13 +265,16 @@ function Editor() {
   };
   const doDelete = async () => {
     if (!activeId) return;
+    if (!window.confirm(`删除管道 ${activeId}？`)) return;
     const r = await api.del(settings, activeId);
     appendLog(`Delete ${activeId} → ${r.status} ${JSON.stringify(r.json)}`, r.ok ? 'info' : 'error');
     if (r.ok) {
       setStatus('waiting');
-      setStore((s) => { const n = { ...s }; delete n[activeId]; return n; });
-      const rest = Object.keys(store).filter((k) => k !== activeId);
-      if (rest[0]) loadDoc(store[rest[0]]); else loadDoc({ id: '', graph: { nodes: [], edges: [] } });
+      const gone = activeId;
+      setStore((s) => { const n = { ...s }; delete n[gone]; return n; });
+      setSavedSig((s) => { const n = { ...s }; delete n[gone]; return n; });
+      const rest = Object.keys(store).filter((k) => k !== gone);
+      if (rest[0]) loadDoc(store[rest[0]]); else { setActiveId(''); setIdDraft(''); setNodes([]); setEdges([]); setParamsById({}); }
       refreshStatus();
     }
   };
@@ -261,6 +283,7 @@ function Editor() {
     commitActive();
     const r = await api.saveConfig(settings, currentDoc());
     appendLog(`保存到服务器 ${activeId} → ${r.status} ${JSON.stringify(r.json)}`, r.ok ? 'info' : 'error');
+    if (r.ok) markSaved(activeId);
   };
 
   const selectedNode: NodeDef | null = useMemo(() => {
@@ -281,8 +304,35 @@ function Editor() {
     setSelectedId(null);
   };
 
-  const shownLog = log.filter((l) => levels[l.level]);
   const pipelineIds = Object.keys(store);
+  const isDirty = (id: string) => { const doc = id === activeId ? currentDoc() : store[id]; return doc ? sig(doc) !== (savedSig[id] || '') : false; };
+  const anyDirty = pipelineIds.some(isDirty) || (!!activeId && isDirty(activeId));
+
+  // 关页/刷新前，若有未保存到服务器的改动则提示
+  useEffect(() => {
+    const h = (e: BeforeUnloadEvent) => { if (anyDirty) { e.preventDefault(); e.returnValue = ''; } };
+    window.addEventListener('beforeunload', h);
+    return () => window.removeEventListener('beforeunload', h);
+  }, [anyDirty]);
+
+  // 首次挂载：从 localStorage 恢复的 store 里载入第一条
+  useEffect(() => {
+    if (inited.current) return; inited.current = true;
+    const ids = Object.keys(store);
+    if (ids.length) loadDoc(store[ids[0]]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const shownLog = log.filter((l) => levels[l.level]);
+
+  if (view === 'preview') {
+    return (
+      <div className={`app theme-${theme}`}>
+        <PreviewView settings={settings} initialId={activeId}
+          onBack={() => { setView('editor'); refreshStatus(); }} />
+      </div>
+    );
+  }
 
   return (
     <div className={`app theme-${theme}`}>
@@ -291,28 +341,31 @@ function Editor() {
         <select className="pid" value={activeId} onChange={(e) => switchTo(e.target.value)} title="切换已加载的管道">
           <option value="">（选择管道）</option>
           {pipelineIds.map((id) => (
-            <option key={id} value={id}>{serverState[id] === 'running' ? '● ' : ''}{id}</option>
+            <option key={id} value={id}>{`${serverState[id]?.running ? '●' : ''}${isDirty(id) ? '✎' : ''} ${id}`}</option>
           ))}
         </select>
-        <input className="pid" value={idDraft} placeholder="管道 id（可改名）"
-          onChange={(e) => setIdDraft(e.target.value)}
-          onBlur={(e) => renameActive(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-          title="当前管道 id，可编辑改名" />
+        <input className="pid" value={idDraft} placeholder="管道 id（改名）"
+          onChange={(e) => setIdDraft(e.target.value)} onBlur={(e) => renameActive(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} title="当前管道 id，可改名" />
         <button className="btn tiny" onClick={newPipeline} title="新建管道">＋新建</button>
+        <span className="dirty-flag" title={anyDirty ? '有改动未保存到服务器' : '已全部保存'}>{anyDirty ? '✎ 未保存' : '✓ 已保存'}</span>
         <input className="cfg" value={settings.baseUrl} placeholder="API base(同源留空)" onChange={(e) => setSettings({ ...settings, baseUrl: e.target.value })} />
-        <input className="cfg" value={settings.token} placeholder="API Token" onChange={(e) => setSettings({ ...settings, token: e.target.value })} />
+        <input className="cfg" value={settings.token} type="password" placeholder="API Token" onChange={(e) => setSettings({ ...settings, token: e.target.value })} />
         <div className="spacer" />
         <button className="btn" onClick={() => fileRef.current?.click()}>导入</button>
         <input ref={fileRef} type="file" accept=".json" hidden onChange={(e) => e.target.files?.[0] && importJson(e.target.files[0])} />
         <button className="btn" onClick={exportJson}>导出JSON</button>
         <button className="btn" onClick={doValidate}>校验</button>
         <button className="btn" onClick={doSave}>保存到服务器</button>
+        <label className="chk" title="已存在同 id 管道时，先停止并销毁再重建（改完配置直接 Build）">
+          <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />覆盖重建
+        </label>
         <button className="btn primary" onClick={doBuild}>Build</button>
         <button className="btn" onClick={doStart}>Start</button>
         <button className="btn" onClick={doStop}>Stop</button>
         <button className="btn danger" onClick={doDelete}>Delete</button>
         <button className="btn" onClick={refreshStatus} title="刷新服务器管道状态">刷新状态</button>
+        <button className="btn" onClick={() => { commitActive(); setView('preview'); }} title="查看运行/预览/证据/指标">预览 ▶</button>
         <button className="btn" onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}>{theme === 'dark' ? '☀' : '🌙'}</button>
       </div>
 
@@ -332,13 +385,16 @@ function Editor() {
           </ReactFlow>
           {issues.length > 0 && (
             <div className="issues">
-              {issues.map((i, k) => <div key={k} className={'issue ' + i.level}>• {i.message}</div>)}
+              {issues.map((i, k) => (
+                <div key={k} className={'issue ' + i.level} onClick={() => i.nodeId && setSelectedId(i.nodeId)}
+                  style={i.nodeId ? { cursor: 'pointer' } : undefined}>• {i.message}</div>
+              ))}
             </div>
           )}
         </div>
 
         <div className="right">
-          <PropertyPanel node={selectedNode} allNodeIds={nodes.map((n) => n.id)} onChange={onParamChange} onDelete={onDeleteNode} />
+          <PropertyPanel node={selectedNode} allNodeIds={nodes.map((n) => n.id)} onChange={onParamChange} onDelete={onDeleteNode} onRename={renameNode} />
           <div className="logdrawer">
             <div className="log-head">
               <span className="lg-title">日志</span>

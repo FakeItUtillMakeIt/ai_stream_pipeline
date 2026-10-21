@@ -287,7 +287,13 @@ bool EncoderBase::writeHeader() {
         return false;
     }
     av_dump_format(fmt_ctx_, 0, fmt_ctx_->url, 1);
-    int ret = avformat_write_header(fmt_ctx_, nullptr);
+    // mp4 输出加 faststart：把 moov 前置，浏览器 <video> 无需读文件尾即可播放
+    // （配合 /evidence/file 的 HTTP Range，避免经代理时尾部定位失败导致黑屏）
+    AVDictionary* hopts = nullptr;
+    if (fmt_ctx_->oformat && fmt_ctx_->oformat->name && strcmp(fmt_ctx_->oformat->name, "mp4") == 0)
+        av_dict_set(&hopts, "movflags", "faststart", 0);
+    int ret = avformat_write_header(fmt_ctx_, &hopts);
+    av_dict_free(&hopts);
     if (ret < 0) {
         char errbuf[256] = {0};
         av_strerror(ret, errbuf, sizeof(errbuf));
