@@ -234,6 +234,32 @@ function Editor() {
     } else appendLog('List → ' + JSON.stringify(r.json), 'error');
   };
 
+  // 同步服务器：刷新运行态 + 把"服务器有、本地无"的管道配置导入编辑器
+  const syncFromServer = async (silent = false) => {
+    const r = await api.list(settings);
+    if (!r.ok || !r.json?.pipelines) { if (!silent) appendLog('同步失败: ' + JSON.stringify(r.json), 'error'); return; }
+    const arr = r.json.pipelines as any[];
+    const map: Record<string, SrvInfo> = {};
+    for (const it of arr) {
+      const id = it.id; if (!id) continue;
+      const state = deriveState(it) || 'stopped';
+      map[id] = { running: it.running === true || state === 'running', state };
+    }
+    setServerState(map);
+    let imported = 0;
+    for (const it of arr) {
+      const id = it.id; if (!id || store[id]) continue;
+      const c = await api.getConfig(settings, id);
+      if (c.ok && c.json?.graph) { setStore((s) => (s[id] ? s : { ...s, [id]: { id, graph: c.json.graph } })); imported++; }
+    }
+    if (!silent) appendLog(`同步服务器：${arr.length} 个管道${imported ? `，导入 ${imported} 个新管道` : ''}`);
+  };
+
+  // 定时静默同步：外部(Apipost/平台)的 build/start/stop/delete 自动反映到编辑器
+  const syncRef = useRef<() => void>(() => {});
+  syncRef.current = () => { void syncFromServer(true); };
+  useEffect(() => { const t = setInterval(() => syncRef.current(), 6000); return () => clearInterval(t); }, []);
+
   const doBuild = async () => {
     if (!guard()) return;
     commitActive(); setStatus('waiting');
@@ -364,7 +390,7 @@ function Editor() {
         <button className="btn" onClick={doStart}>Start</button>
         <button className="btn" onClick={doStop}>Stop</button>
         <button className="btn danger" onClick={doDelete}>Delete</button>
-        <button className="btn" onClick={refreshStatus} title="刷新服务器管道状态">刷新状态</button>
+        <button className="btn" onClick={() => syncFromServer()} title="拉取服务器管道列表/运行态，并导入外部新建的管道">同步服务器</button>
         <button className="btn" onClick={() => { commitActive(); setView('preview'); }} title="查看运行/预览/证据/指标">预览 ▶</button>
         <button className="btn" onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}>{theme === 'dark' ? '☀' : '🌙'}</button>
       </div>

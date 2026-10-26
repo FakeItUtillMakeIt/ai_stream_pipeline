@@ -174,6 +174,22 @@ void ApiServer::handleSaveConfig(const httplib::Request& req, httplib::Response&
     }
 }
 
+void ApiServer::handleGetConfig(const httplib::Request& req, httplib::Response& res) {
+    const std::string id = req.get_param_value("id");
+    if (id.empty()) {
+        res.status = 400; res.set_content(R"({"error":"Missing id"})", "application/json"); return;
+    }
+    if (!reqlog_) {
+        res.status = 500; res.set_content(R"({"error":"RequestLog unavailable"})", "application/json"); return;
+    }
+    json cfg = reqlog_->loadConfig(reqlog_->configPath(id));
+    if (cfg.is_null() || !cfg.is_object() || !cfg.contains("graph")) {
+        res.status = 404; res.set_content(json{{"error", "config not found"}, {"id", id}}.dump(), "application/json");
+        return;
+    }
+    res.set_content(cfg.dump(), "application/json");
+}
+
 void ApiServer::extractMeta(const std::string& pipeline_id, const json& body) {
     PipelineMeta m;
     try {
@@ -374,6 +390,10 @@ void ApiServer::setupRoutes() {
     // 保存管道配置文件（编辑器"保存到服务器"）：写 <state>/pipelines/<id>.json
     server_.Post("/api/v1/pipeline/save-config", [this](const auto& req, auto& res) {
         handleSaveConfig(req, res);
+    });
+    // 读取已保存配置（编辑器"从服务器同步/导入"）
+    server_.Get("/api/v1/pipeline/get-config", [this](const auto& req, auto& res) {
+        handleGetConfig(req, res);
     });
     // 证据查看（预览页）
     server_.Get("/api/v1/evidence/list", [this](const auto& req, auto& res) {

@@ -65,6 +65,9 @@ export default function PreviewView({ settings, initialId, onBack }: {
   };
 
   useEffect(() => { refreshPipelines(); /* eslint-disable-next-line */ }, [settings.baseUrl, settings.token]);
+  // 定时轮询：外部 build/start/stop/delete 自动反映到下拉与运行态
+  const refreshRef = useRef(refreshPipelines); refreshRef.current = refreshPipelines;
+  useEffect(() => { const t = setInterval(() => refreshRef.current(), 4000); return () => clearInterval(t); }, []);
   // 管道/标签变化时拉对应数据
   useEffect(() => {
     if (!sel) return;

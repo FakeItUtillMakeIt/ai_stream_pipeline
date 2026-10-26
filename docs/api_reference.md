@@ -202,6 +202,11 @@
 
 ---
 
+## GET /api/v1/pipeline/get-config?id=<id>
+返回该管道**已保存的配置**（`build`/`save-config` 时落盘的 `{id, graph}`），供编辑器"从服务器同步/导入"外部（如 Apipost/平台）创建的管道。
+- 无配置：`404 {"error":"config not found","id":"..."}`。
+> 编辑器"同步服务器"按钮 + 每 6s 静默轮询：拉 `list` 刷新运行态，并把"服务器有、本地无"的管道用本接口导入。预览页每 4s 轮询 `list`。
+
 ## 证据与预览（预览页专用）
 
 实时预览（方案 A）：浏览器不能直接播 RTMP。`rtmp_sink` 推到外部媒体服务器（mediamtx / nginx-rtmp），由其转成 **HLS(.m3u8) 或 WebRTC**；把该播放地址填进 sink 节点的 `play_url`，前端预览页用 hls.js 播放。后端不转码，仅提供播放地址来源与证据文件。

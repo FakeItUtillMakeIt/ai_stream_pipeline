@@ -34,6 +34,7 @@ export const api = {
   list: (s: ApiSettings) => req(s, 'GET', '/api/v1/pipeline/list'),
   status: (s: ApiSettings, id: string) => req(s, 'POST', '/api/v1/pipeline/status', { id }),
   saveConfig: (s: ApiSettings, doc: PipelineDoc) => req(s, 'POST', '/api/v1/pipeline/save-config', doc),
+  getConfig: (s: ApiSettings, id: string) => req(s, 'GET', '/api/v1/pipeline/get-config?id=' + encodeURIComponent(id)),
   metrics: (s: ApiSettings) => req(s, 'GET', '/api/v1/metrics'),
   evidenceList: (s: ApiSettings, pipeline: string) =>
     req(s, 'GET', '/api/v1/evidence/list?pipeline=' + encodeURIComponent(pipeline)),

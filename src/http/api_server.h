@@ -69,6 +69,8 @@ private:
     void handlePipelineStatus(const httplib::Request& req, httplib::Response& res);
     // 保存管道配置文件到 <state>/pipelines/<id>.json（编辑器"保存到服务器"）
     void handleSaveConfig(const httplib::Request& req, httplib::Response& res);
+    // 读取某管道已保存的配置（编辑器"从服务器导入/同步"）
+    void handleGetConfig(const httplib::Request& req, httplib::Response& res);
     // 证据查看（预览页）：列目录 / 取文件（限制在该管道 evidence 目录内）
     void handleEvidenceList(const httplib::Request& req, httplib::Response& res);
     void handleEvidenceFile(const httplib::Request& req, httplib::Response& res);
