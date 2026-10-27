@@ -25,6 +25,15 @@ python tools/model_converter/nvidia/export_yoloe_e2e.py \
     --out models/yoloe/yoloe_v8s_child_wall_gate.onnx
 ```
 
+### engine导出
+```
+trtexec \
+        --onnx=onnx_model \
+        --saveEngine="${YOLOE_ONNX%.onnx}.engine" \
+        --builderOptimizationLevel=5 \
+        --fp16
+```
+
 ### 为什么需要这个包装脚本
 
 仓库里已有的检测模型（`models/sevncevision/*_nms.onnx`）输出的是 5 个张量，
