@@ -57,6 +57,7 @@ __pycache__/
 models/**
 !models/**/
 !models/**/README.md
+!/models/**/*.json
 
 config/**
 !config/**/
