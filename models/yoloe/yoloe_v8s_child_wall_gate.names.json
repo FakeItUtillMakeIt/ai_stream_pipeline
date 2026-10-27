@@ -1,0 +1,10 @@
+{
+ "names": [
+  "child",
+  "wall",
+  "gate"
+ ],
+ "note": "通道顺序 == 此顺序；detector_config.model_class_names 必须一致",
+ "source_weight": "yoloe-v8s-seg.pt",
+ "prompt_note": "set_classes 后文本嵌入已烤入图，engine 不可改类别"
+}
