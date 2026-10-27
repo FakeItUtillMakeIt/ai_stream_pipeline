@@ -93,7 +93,11 @@ bool TrtCore::loadEngine(const std::string& engine_path, const char* log_tag) {
 
     // 预分配 engine 静态最大 workspace 并绑定（覆盖全部 shape/profile），
     // 保证任意 enqueue（含 CUDA Graph 捕获）都不需要运行期 cudaMalloc。
+#if NV_TENSORRT_MAJOR >= 11
+    const size_t ws_size = static_cast<size_t>(impl_->engine->getDeviceMemorySizeV2());
+#else
     const size_t ws_size = static_cast<size_t>(impl_->engine->getDeviceMemorySize());
+#endif
     if (ws_size > 0) {
         cudaError_t err = cudaMalloc(&impl_->workspace, ws_size);
         if (err != cudaSuccess) {
@@ -203,7 +207,11 @@ bool TrtCore::synchronize() {
 
 size_t TrtCore::getDeviceMemorySize() const {
     if (!impl_->engine) return 0;
+#if NV_TENSORRT_MAJOR >= 11
+    return static_cast<size_t>(impl_->engine->getDeviceMemorySizeV2());
+#else
     return static_cast<size_t>(impl_->engine->getDeviceMemorySize());
+#endif
 }
 
 size_t TrtCore::updateDeviceMemorySizeForShapes() {
