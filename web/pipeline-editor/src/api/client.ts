@@ -40,6 +40,10 @@ export const api = {
     req(s, 'GET', '/api/v1/evidence/list?pipeline=' + encodeURIComponent(pipeline)),
   selfcheck: (s: ApiSettings, id: string) =>
     req(s, 'GET', '/api/v1/selfcheck?id=' + encodeURIComponent(id)),
+  templates: (s: ApiSettings) => req(s, 'GET', '/api/v1/templates'),
+  templateGet: (s: ApiSettings, name: string) => req(s, 'GET', '/api/v1/templates/get?name=' + encodeURIComponent(name)),
+  templateSave: (s: ApiSettings, tpl: unknown) => req(s, 'POST', '/api/v1/templates/save', tpl),
+  templateDelete: (s: ApiSettings, name: string) => req(s, 'POST', '/api/v1/templates/delete', { name }),
   evidenceFileUrl: (s: ApiSettings, pipeline: string, dir: number, name: string) =>
     s.baseUrl + `/api/v1/evidence/file?pipeline=${encodeURIComponent(pipeline)}&dir=${dir}&name=${encodeURIComponent(name)}`,
 };

@@ -13,7 +13,7 @@ import ImplConsole from './components/ImplConsole';
 import { defaultParams } from './schema/nodeSchema';
 import { toFlow, fromFlow } from './graph/flow';
 import { validate, hasErrors, Issue } from './graph/validation';
-import { PipelineDoc, NodeDef } from './types';
+import { PipelineDoc, NodeDef, detectOverrides, Overrides, TemplateDef } from './types';
 import { api, ApiSettings, waitState, deriveState } from './api/client';
 
 const nodeTypes = { pipelineNode: PipelineNode };
@@ -74,6 +74,7 @@ function Editor() {
   const [view, setView] = useState<ViewName>(viewFromHash);
   const [previewId, setPreviewId] = useState('');
   const [previewFrom, setPreviewFrom] = useState<'editor' | 'impl'>('editor');
+  const [pub, setPub] = useState<null | { name: string; version: string; description: string; ov: Overrides; expose: { source: boolean; push: boolean; alerts: boolean } }>(null);
   const [overwrite, setOverwrite] = useState<boolean>(() => load('editorOverwrite', true));
 
   const [settings, setSettings] = useState<ApiSettings>(() => load('apiSettings', { baseUrl: '', token: '' }));
@@ -327,6 +328,27 @@ function Editor() {
     if (r.ok) markSaved(activeId);
   };
 
+  const openPublish = () => {
+    if (!activeId) { appendLog('未选择管道，无法发布模板', 'error'); return; }
+    const doc = currentDoc();
+    const ov = detectOverrides(doc);
+    if (!ov.source_url && !ov.push && !ov.alerts) { appendLog('该管道未检测到可暴露字段（源/推流/告警），仍可发布但实施无法改配置', 'warn'); }
+    setPub({ name: activeId, version: '1', description: '', ov, expose: { source: !!ov.source_url, push: !!ov.push, alerts: !!ov.alerts } });
+  };
+  const doPublish = async () => {
+    if (!pub) return;
+    const name = pub.name.trim();
+    if (!name) { appendLog('模板名不能为空', 'error'); return; }
+    const ov: Overrides = {};
+    if (pub.expose.source && pub.ov.source_url) ov.source_url = pub.ov.source_url;
+    if (pub.expose.push && pub.ov.push) ov.push = pub.ov.push;
+    if (pub.expose.alerts && pub.ov.alerts) ov.alerts = pub.ov.alerts;
+    const tpl: TemplateDef = { name, version: pub.version.trim() || '1', description: pub.description, doc: currentDoc(), overrides: ov };
+    const r = await api.templateSave(settings, tpl);
+    appendLog(`发布模板 ${name} → ${r.status} ${JSON.stringify(r.json)}`, r.ok ? 'info' : 'error');
+    if (r.ok) setPub(null);
+  };
+
   const selectedNode: NodeDef | null = useMemo(() => {
     if (!selectedId) return null;
     const n = nodes.find((x) => x.id === selectedId);
@@ -408,6 +430,7 @@ function Editor() {
         <button className="btn" onClick={exportJson}>导出JSON</button>
         <button className="btn" onClick={doValidate}>校验</button>
         <button className="btn" onClick={doSave}>保存到服务器</button>
+        <button className="btn" onClick={openPublish} title="把当前管道发布为模板，供实施台选用">发布为模板</button>
         <label className="chk" title="已存在同 id 管道时，先停止并销毁再重建（改完配置直接 Build）">
           <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />覆盖重建
         </label>
@@ -466,6 +489,30 @@ function Editor() {
           </div>
         </div>
       </div>
+
+      {pub && (
+        <>
+          <div className="impl-mask" onClick={() => setPub(null)} />
+          <div className="impl-picker">
+            <div className="impl-dh"><span className="impl-name">发布为模板</span><div className="spacer" /><button className="btn sm ghost" onClick={() => setPub(null)}>✕</button></div>
+            <div className="impl-pkbody">
+              <div className="impl-field"><label>模板名称</label>
+                <input type="text" value={pub.name} onChange={(e) => setPub({ ...pub, name: e.target.value })} /></div>
+              <div className="impl-field"><label>版本</label>
+                <input type="text" value={pub.version} onChange={(e) => setPub({ ...pub, version: e.target.value })} /></div>
+              <div className="impl-field"><label>描述</label>
+                <input type="text" value={pub.description} onChange={(e) => setPub({ ...pub, description: e.target.value })} /></div>
+              <div className="impl-field"><label>暴露给实施的字段（其余锁定）</label>
+                <label className="chk"><input type="checkbox" disabled={!pub.ov.source_url} checked={pub.expose.source} onChange={(e) => setPub({ ...pub, expose: { ...pub.expose, source: e.target.checked } })} />拉流地址{!pub.ov.source_url && '（无源节点）'}</label>
+                <label className="chk"><input type="checkbox" disabled={!pub.ov.push} checked={pub.expose.push} onChange={(e) => setPub({ ...pub, expose: { ...pub.expose, push: e.target.checked } })} />是否推流{!pub.ov.push && '（无 rtmp_sink）'}</label>
+                <label className="chk"><input type="checkbox" disabled={!pub.ov.alerts} checked={pub.expose.alerts} onChange={(e) => setPub({ ...pub, expose: { ...pub.expose, alerts: e.target.checked } })} />告警项{pub.ov.alerts ? `（${pub.ov.alerts.types.length} 类）` : '（无 alert）'}</label>
+              </div>
+              <div className="impl-locknote">实施台从模板实例化：只能改上面勾选的字段，节点/模型/融合等锁定。</div>
+            </div>
+            <div className="impl-df"><button className="btn" onClick={() => setPub(null)}>取消</button><div className="spacer" /><button className="btn primary" onClick={doPublish}>发布</button></div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

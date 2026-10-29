@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { ApiSettings, api, listPipelines, PipelineInfo, deriveState, waitState } from '../api/client';
-import { PipelineDoc, NodeDef, getPath, setPath } from '../types';
+import { useEffect, useRef, useState } from 'react';
+import { ApiSettings, api, listPipelines, PipelineInfo, waitState } from '../api/client';
+import { PipelineDoc, getPath, setPath, Overrides, TemplateDef, detectOverrides } from '../types';
 
 const SOURCE_TYPES = ['file_source', 'rtsp_source'];
 const THRESH_KEYS = ['relation_threshold', 'conf_threshold', 'confidence_threshold', 'score_threshold'];
@@ -10,17 +10,28 @@ interface CheckItem { key: string; label: string; level: 'ok' | 'warn' | 'err' |
 interface Inst {
   id: string;
   info: PipelineInfo;
-  doc?: PipelineDoc;        // 从服务器 get-config 载入
-  baseDoc?: PipelineDoc;    // 原始（用于推流开关还原）
+  doc?: PipelineDoc;
+  baseDoc?: PipelineDoc;
   sourceUrl: string;
   rules: { type: string; params: Record<string, unknown> }[];
-  push: boolean;            // 是否含 rtmp_sink
+  push: boolean;
   loading: boolean;
-  sc?: CheckItem[];         // 后端 /selfcheck 结果
+  sc?: CheckItem[];
   scBusy?: boolean;
 }
 
-// 深拷贝
+interface EditState {
+  mode: 'edit' | 'new';
+  draft: PipelineDoc;        // 工作图（new=模板doc；edit=已载入管道doc）
+  origId: string;            // draft 原 id（new 时用于替换 url 里的实例名）
+  ov: Overrides;             // 可改字段契约
+  name: string;
+  url: string;
+  push: boolean;
+  rules: { type: string; params: Record<string, unknown> }[];
+  allRuleTypes: string[];    // 允许勾选的规则类型
+}
+
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v));
 
 // 从 doc 派生实施视图字段
@@ -30,41 +41,33 @@ function derive(doc: PipelineDoc) {
   const rules = (getPath(alert?.params || {}, 'rules') as any[]) || [];
   return {
     sourceUrl: String(src?.params?.url ?? ''),
-    rules: rules.map((r) => ({ type: r.type, params: r.params || {} })),
+    rules: rules.map((r) => ({ type: String(r.type), params: r.params || {} })),
     push: doc.graph.nodes.some((n) => n.type === 'rtmp_sink'),
   };
 }
 
-// 编辑：设置源地址
-function withSource(doc: PipelineDoc, url: string): PipelineDoc {
-  const d = clone(doc);
-  const src = d.graph.nodes.find((n) => SOURCE_TYPES.includes(n.type));
-  if (src) setPath(src.params, 'url', url);
-  return d;
-}
-// 编辑：推流开关（关=移除 rtmp_sink 及其边；开=用含 rtmp_sink 的 baseDoc）
-function withPush(doc: PipelineDoc, base: PipelineDoc, on: boolean): PipelineDoc {
-  if (on) {
-    const has = base.graph.nodes.some((n) => n.type === 'rtmp_sink');
-    return has ? clone(base) : clone(doc);
+// 按 overrides 把编辑值注入回 doc
+function applyOverrides(base: PipelineDoc, ov: Overrides, e: { url: string; push: boolean; rules: { type: string; params: Record<string, unknown> }[] }): PipelineDoc {
+  const d = clone(base);
+  const find = (id: string) => d.graph.nodes.find((n) => n.id === id);
+  if (ov.source_url) { const n = find(ov.source_url.node); if (n) setPath(n.params, ov.source_url.path, e.url); }
+  if (ov.alerts) { const n = find(ov.alerts.node); if (n) setPath(n.params, 'rules', e.rules); }
+  if (ov.push && !e.push) {
+    const sink = find(ov.push.node);
+    if (sink) {
+      const rm = sink.id;
+      d.graph.nodes = d.graph.nodes.filter((x) => x.id !== rm);
+      d.graph.edges = d.graph.edges.filter((x) => x.from !== rm && x.to !== rm);
+    }
   }
-  const d = clone(doc);
-  const sinkIds = new Set(d.graph.nodes.filter((n) => n.type === 'rtmp_sink').map((n) => n.id));
-  d.graph.nodes = d.graph.nodes.filter((n) => !sinkIds.has(n.id));
-  d.graph.edges = d.graph.edges.filter((e) => !sinkIds.has(e.from) && !sinkIds.has(e.to));
   return d;
 }
-// 编辑：规则集合（保留原有其它参数，仅增删规则 + 改阈值）
-function withRules(doc: PipelineDoc, rules: { type: string; params: Record<string, unknown> }[]): PipelineDoc {
-  const d = clone(doc);
-  const alert = d.graph.nodes.find((n) => n.type === 'alert');
-  if (alert) setPath(alert.params, 'rules', rules);
-  return d;
-}
-// 用新 id 克隆：替换 id + 各 URL 里出现的旧 id（推流/播放地址随实例名走）
-function reId(doc: PipelineDoc, newId: string): PipelineDoc {
+
+// 用新 id 克隆：替换 id + 各 URL 里出现的旧 id
+function reId(doc: PipelineDoc, newId: string, oldId: string): PipelineDoc {
   const d = clone(doc); d.id = newId;
-  const rep = (s: string) => s.split(doc.id).join(newId);
+  if (!oldId) return d;
+  const rep = (s: string) => s.split(oldId).join(newId);
   for (const n of d.graph.nodes) {
     for (const k of ['url', 'output_url', 'play_url']) {
       if (typeof (n.params as any)[k] === 'string') (n.params as any)[k] = rep((n.params as any)[k]);
@@ -79,10 +82,18 @@ export default function ImplConsole({ settings, onOpenPreview }: {
   const [insts, setInsts] = useState<Inst[]>([]);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState<Record<string, string>>({});
-  const [edit, setEdit] = useState<null | { mode: 'edit' | 'new'; base: Inst; draft: PipelineDoc; name: string; url: string; push: boolean; rules: Inst['rules'] }>(null);
+  const [edit, setEdit] = useState<null | EditState>(null);
   const [openDiag, setOpenDiag] = useState<Record<string, boolean>>({});
-  const [pick, setPick] = useState<Inst[] | null>(null);
+  const [tpls, setTpls] = useState<{ name: string; version: string; description: string }[]>([]);
+  const [pickTpl, setPickTpl] = useState<{ name: string; version: string; description: string }[] | null>(null);
   const timer = useRef<number | null>(null);
+
+  const loadTpls = async (): Promise<{ name: string; version: string; description: string }[]> => {
+    const r = await api.templates(settings);
+    const t = r.ok && Array.isArray(r.json?.templates) ? r.json.templates : [];
+    setTpls(t); return t;
+  };
+  useEffect(() => { loadTpls(); /* eslint-disable-next-line */ }, [settings.baseUrl, settings.token]);
 
   const fetchSc = async (id: string) => {
     setInsts((prev) => prev.map((p) => (p.id === id ? { ...p, scBusy: true } : p)));
@@ -132,40 +143,44 @@ export default function ImplConsole({ settings, onOpenPreview }: {
     setB(i.id, ''); applyList(true);
   };
 
-  const openEdit = (i: Inst) => setEdit({ mode: 'edit', base: i, draft: clone(i.doc || { id: i.id, graph: { nodes: [], edges: [] } }), name: i.id, url: i.sourceUrl, push: i.push, rules: clone(i.rules) });
-  const startNew = (base: Inst) => {
-    let n = 2; while (insts.some((i) => i.id === base.id + '_' + n)) n++;
-    setEdit({ mode: 'new', base, draft: clone(base.doc!), name: base.id + '_' + n, url: base.sourceUrl, push: base.push, rules: clone(base.rules) });
+  const openEdit = (i: Inst) => {
+    const doc = i.doc || { id: i.id, graph: { nodes: [], edges: [] } };
+    const ov = detectOverrides(doc);
+    const allRuleTypes = ov.alerts?.types || i.rules.map((r) => r.type);
+    setEdit({ mode: 'edit', draft: clone(doc), origId: i.id, ov, name: i.id, url: i.sourceUrl, push: i.push, rules: clone(i.rules), allRuleTypes });
   };
-  const openNew = () => {
-    const bases = insts.filter((i) => i.doc);
-    if (bases.length === 0) { setErr('没有可作为模板的现有管道（先在研发模式建一条并 Build）'); return; }
-    if (bases.length === 1) { startNew(bases[0]); return; }
-    setPick(bases);   // 多个 → 让用户选
+  const startNewFromTemplate = (tpl: TemplateDef) => {
+    const doc = tpl.doc; const dv = derive(doc); const ov = tpl.overrides || {};
+    const allRuleTypes = ov.alerts?.types || dv.rules.map((r) => r.type);
+    let name = tpl.name; let n = 1; while (insts.some((i) => i.id === name)) { n++; name = tpl.name + '_' + n; }
+    setEdit({ mode: 'new', draft: clone(doc), origId: doc.id, ov, name, url: dv.sourceUrl, push: dv.push, rules: clone(dv.rules), allRuleTypes });
+  };
+  const pickTemplate = async (name: string) => {
+    const r = await api.templateGet(settings, name);
+    if (!r.ok || !r.json?.doc?.graph) { setErr('读取模板失败: ' + name); return; }
+    startNewFromTemplate(r.json as TemplateDef);
+  };
+  const openNew = async () => {
+    const t = await loadTpls();
+    if (t.length === 0) { setErr('模板库为空，请先在研发模式「发布为模板」'); return; }
+    if (t.length === 1) { pickTemplate(t[0].name); return; }
+    setPickTpl(t);
   };
 
   const saveEdit = async () => {
     if (!edit) return;
-    let doc = clone(edit.draft);
-    doc = withSource(doc, edit.url);
-    doc = withRules(doc, edit.rules);
-    doc = withPush(doc, edit.base.baseDoc || doc, edit.push);
-    if (edit.mode === 'new') doc = reId(doc, edit.name.trim());
-    setBusy((b) => ({ ...b, [edit.name]: 'build' }));
-    const r = await api.build(settings, doc, true);
-    if (r.ok) { await api.saveConfig(settings, doc); await api.start(settings, doc.id); }
-    setBusy((b) => { const n = { ...b }; delete n[edit.name]; return n; });
-    if (r.ok) { setEdit(null); applyList(true); } else setErr('保存/重建失败: ' + JSON.stringify(r.json));
+    let doc = applyOverrides(edit.draft, edit.ov, edit);
+    if (edit.mode === 'new') doc = reId(doc, edit.name.trim(), edit.origId);
+    const r = await api.build(settings, doc, edit.mode === 'edit');
+    if (r.ok) { await api.saveConfig(settings, doc); await api.start(settings, doc.id); setEdit(null); applyList(true); }
+    else setErr('保存/重建失败: ' + JSON.stringify(r.json));
   };
 
-  // 编辑抽屉里对规则的操作
   const toggleRule = (type: string) => {
-    if (!edit) return;
     setEdit((e) => {
       if (!e) return e;
-      const has = e.rules.find((r) => r.type === type);
-      if (has) return { ...e, rules: e.rules.filter((r) => r.type !== type) };
-      const orig = (e.base.baseDoc ? derive(e.base.baseDoc).rules : []).find((r) => r.type === type);
+      if (e.rules.find((r) => r.type === type)) return { ...e, rules: e.rules.filter((r) => r.type !== type) };
+      const orig = derive(e.draft).rules.find((r) => r.type === type);
       return { ...e, rules: [...e.rules, orig ? clone(orig) : { type, params: { name: type } }] };
     });
   };
@@ -175,13 +190,6 @@ export default function ImplConsole({ settings, onOpenPreview }: {
       return { ...e, rules: e.rules.map((r) => { if (r.type !== type) return r; const p = { ...r.params }; const k = THRESH_KEYS.find((x) => typeof p[x] === 'number'); if (k) p[k] = val; return { ...r, params: p }; }) };
     });
   };
-
-  const allRuleTypes = useMemo(() => {
-    const s = new Set<string>();
-    insts.forEach((i) => (i.baseDoc ? derive(i.baseDoc).rules : []).forEach((r) => s.add(r.type)));
-    edit?.rules.forEach((r) => s.add(r.type));
-    return Array.from(s);
-  }, [insts, edit]);
 
   const RULE_LABEL: Record<string, string> = { person_intrusion: '人员入侵', person_loitering: '人员徘徊', child_near_boundary: '儿童靠近边界', fighting: '打架', climbing: '攀爬', falling: '跌倒' };
 
@@ -249,25 +257,20 @@ export default function ImplConsole({ settings, onOpenPreview }: {
         <div className="impl-add" onClick={openNew}><div className="impl-plus">＋</div><div>新增一路（基于现有模板）</div></div>
       </div>
 
-      {pick && (
+      {pickTpl && (
         <>
-          <div className="impl-mask" onClick={() => setPick(null)} />
+          <div className="impl-mask" onClick={() => setPickTpl(null)} />
           <div className="impl-picker">
-            <div className="impl-dh"><span className="impl-name">选择模板 / 基础管道</span><div className="spacer" /><button className="btn sm ghost" onClick={() => setPick(null)}>✕</button></div>
+            <div className="impl-dh"><span className="impl-name">选择模板</span><div className="spacer" /><button className="btn sm ghost" onClick={() => setPickTpl(null)}>✕</button></div>
             <div className="impl-pkbody">
-              {pick.map((b) => (
-                <div key={b.id} className="impl-pkitem" onClick={() => { startNew(b); setPick(null); }}>
-                  <div className="impl-pkname">{b.id}</div>
-                  <div className="impl-pkmeta">
-                    <span>源：{b.sourceUrl || '—'}</span>
-                    <span>告警 {b.rules.length} 项</span>
-                    <span>{b.push ? '推流开' : '推流关'}</span>
-                  </div>
-                  <div className="impl-pkchips">{b.rules.map((r) => <span key={r.type} className="impl-chip on">{RULE_LABEL[r.type] || r.type}</span>)}</div>
+              {pickTpl.map((t) => (
+                <div key={t.name} className="impl-pkitem" onClick={() => { pickTemplate(t.name); setPickTpl(null); }}>
+                  <div className="impl-pkname">{t.name} <span className="impl-pkver">v{t.version || '1'}</span></div>
+                  {t.description && <div className="impl-pkmeta"><span>{t.description}</span></div>}
                 </div>
               ))}
             </div>
-            <div className="impl-hint" style={{ padding: '0 16px 12px' }}>选择一路作为模板克隆，再改拉流地址/告警/推流即可新增。</div>
+            <div className="impl-hint" style={{ padding: '0 16px 12px' }}>选择模板实例化一路，再填拉流地址/告警/推流即可新增。</div>
           </div>
         </>
       )}
@@ -284,33 +287,39 @@ export default function ImplConsole({ settings, onOpenPreview }: {
               {edit.mode === 'new' && (
                 <div className="impl-field"><label>实例名称(管道 id)</label>
                   <input type="text" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} />
-                  <div className="impl-hint">将基于「{edit.base.id}」克隆，推流/播放地址里的实例名自动替换</div></div>
+                  <div className="impl-hint">基于模板「{edit.origId}」实例化，推流/播放地址里的实例名自动替换</div></div>
               )}
-              <div className="impl-field"><label>拉流地址</label>
-                <input type="text" value={edit.url} onChange={(e) => setEdit({ ...edit, url: e.target.value })} />
-                <div className="impl-hint">支持 rtsp:// / rtmp:// / file:///</div></div>
+              {edit.ov.source_url && (
+                <div className="impl-field"><label>{edit.ov.source_url.label || '拉流地址'}</label>
+                  <input type="text" value={edit.url} onChange={(e) => setEdit({ ...edit, url: e.target.value })} />
+                  <div className="impl-hint">支持 rtsp:// / rtmp:// / file:///</div></div>
+              )}
 
-              <div className="impl-field"><label>告警项（模板开放项）</label>
-                {allRuleTypes.map((t) => {
-                  const on = !!edit.rules.find((r) => r.type === t);
-                  const rule = edit.rules.find((r) => r.type === t);
-                  const tk = rule ? THRESH_KEYS.find((x) => typeof rule.params[x] === 'number') : undefined;
-                  return (
-                    <div key={t} className={'impl-rule' + (on ? '' : ' locked')}>
-                      <span className="impl-rn">{RULE_LABEL[t] || t}<div className="impl-rt">{t}{on ? '' : '（关）'}</div></span>
-                      {on && tk && <input type="range" min={0} max={1} step={0.05} value={Number(rule!.params[tk]) || 0} onChange={(e) => setThreshold(t, Number(e.target.value))} />}
-                      <span className={'impl-chip' + (on ? ' on' : '')} style={{ cursor: 'pointer' }} onClick={() => toggleRule(t)}>{on ? '开' : '关'}</span>
-                    </div>
-                  );
-                })}
-                <div className="impl-hint">灵敏度=阈值滑条；规则细节/区域/类别由模板锁定，如需增改请回研发模式。</div>
-              </div>
+              {edit.ov.alerts && (
+                <div className="impl-field"><label>{edit.ov.alerts.label || '告警项'}</label>
+                  {edit.allRuleTypes.map((t) => {
+                    const on = !!edit.rules.find((r) => r.type === t);
+                    const rule = edit.rules.find((r) => r.type === t);
+                    const tk = rule ? THRESH_KEYS.find((x) => typeof rule.params[x] === 'number') : undefined;
+                    return (
+                      <div key={t} className={'impl-rule' + (on ? '' : ' locked')}>
+                        <span className="impl-rn">{RULE_LABEL[t] || t}<div className="impl-rt">{t}{on ? '' : '（关）'}</div></span>
+                        {on && tk && <input type="range" min={0} max={1} step={0.05} value={Number(rule!.params[tk]) || 0} onChange={(e) => setThreshold(t, Number(e.target.value))} />}
+                        <span className={'impl-chip' + (on ? ' on' : '')} style={{ cursor: 'pointer' }} onClick={() => toggleRule(t)}>{on ? '开' : '关'}</span>
+                      </div>
+                    );
+                  })}
+                  <div className="impl-hint">灵敏度=阈值滑条；规则细节/区域/类别由模板锁定，如需增改请回研发模式。</div>
+                </div>
+              )}
 
-              <div className="impl-field"><label>是否推流</label>
-                <span className={'impl-sw big' + (edit.push ? ' on' : '')} onClick={() => setEdit({ ...edit, push: !edit.push })}>{edit.push ? '开（连接 RTMP，可实时预览）' : '关'}</span>
-                <div className="impl-hint">关闭则移除 RTMP 节点、不生成播放地址；仅保留证据。</div></div>
+              {edit.ov.push && (
+                <div className="impl-field"><label>{edit.ov.push.label || '是否推流'}</label>
+                  <span className={'impl-sw big' + (edit.push ? ' on' : '')} onClick={() => setEdit({ ...edit, push: !edit.push })}>{edit.push ? '开（连接 RTMP，可实时预览）' : '关'}</span>
+                  <div className="impl-hint">关闭则移除 RTMP 节点、不生成播放地址；仅保留证据。</div></div>
+              )}
 
-              <div className="impl-locknote">🔒 节点拓扑/模型/融合/上报由模板锁定，实施页不可修改。</div>
+              <div className="impl-locknote">🔒 未在本模板「可改字段」中开放的参数（节点拓扑/模型/融合/上报）均锁定，实施页不可修改。</div>
             </div>
             <div className="impl-df">
               <button className="btn" onClick={() => setEdit(null)}>取消</button>

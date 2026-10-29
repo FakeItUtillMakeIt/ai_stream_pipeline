@@ -349,6 +349,82 @@ void ApiServer::handleSelfcheck(const httplib::Request& req, httplib::Response& 
     res.set_content(out.dump(), "application/json");
 }
 
+// 模板名安全：非空、无路径分隔/..，仅允许常见文件名字符
+static bool scValidTemplateName(const std::string& n) {
+    if (n.empty() || n.size() > 128) return false;
+    if (n.find('/') != std::string::npos || n.find('\\') != std::string::npos || n.find("..") != std::string::npos)
+        return false;
+    for (char c : n) {
+        bool ok = std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-' || c == '.' ||
+                  static_cast<unsigned char>(c) >= 0x80;  // 允许 UTF-8 中文名
+        if (!ok) return false;
+    }
+    return true;
+}
+
+std::string ApiServer::templatesDir() const {
+    std::string base = reqlog_ ? reqlog_->stateDir() : std::string("api_state");
+    return base + "/templates";
+}
+
+void ApiServer::handleTemplatesList(const httplib::Request&, httplib::Response& res) {
+    json arr = json::array();
+    std::error_code ec;
+    fs::path dir(templatesDir());
+    fs::create_directories(dir, ec);
+    if (fs::is_directory(dir, ec)) {
+        for (const auto& e : fs::directory_iterator(dir, ec)) {
+            if (e.path().extension() != ".json") continue;
+            std::ifstream in(e.path()); json t;
+            try { in >> t; } catch (...) { continue; }
+            if (!t.is_object()) continue;
+            arr.push_back({
+                {"name", t.value("name", e.path().stem().string())},
+                {"version", t.value("version", "")},
+                {"description", t.value("description", "")},
+            });
+        }
+    }
+    res.set_content(json{{"templates", arr}}.dump(), "application/json");
+}
+
+void ApiServer::handleTemplatesGet(const httplib::Request& req, httplib::Response& res) {
+    const std::string name = req.get_param_value("name");
+    if (!scValidTemplateName(name)) { res.status = 400; res.set_content(R"({"error":"bad name"})", "application/json"); return; }
+    std::error_code ec; fs::path f = fs::path(templatesDir()) / (name + ".json");
+    std::ifstream in(f); if (!in) { res.status = 404; res.set_content(json{{"error", "template not found"}, {"name", name}}.dump(), "application/json"); return; }
+    json t; try { in >> t; } catch (...) { res.status = 500; res.set_content(R"({"error":"bad template json"})", "application/json"); return; }
+    res.set_content(t.dump(), "application/json");
+}
+
+void ApiServer::handleTemplatesSave(const httplib::Request& req, httplib::Response& res) {
+    json body; if (!parseJsonBody(req, res, body)) return;
+    try {
+        std::string name = body.value("name", "");
+        if (!scValidTemplateName(name)) { res.status = 400; res.set_content(R"({"error":"Missing or invalid template name"})", "application/json"); return; }
+        if (!body.contains("doc") || !body["doc"].is_object() || !body["doc"].contains("graph")) {
+            res.status = 400; res.set_content(R"({"error":"template.doc.graph required"})", "application/json"); return;
+        }
+        if (!body.contains("version")) body["version"] = "1";
+        std::error_code ec; fs::path dir(templatesDir()); fs::create_directories(dir, ec);
+        fs::path f = dir / (name + ".json");
+        std::ofstream out(f, std::ios::trunc);
+        if (!out) { res.status = 500; res.set_content(json{{"error", "write failed"}, {"path", f.string()}}.dump(), "application/json"); return; }
+        out << body.dump(2);
+        LOG_INFO_FMT("Template '{}' saved to {}", name, f.string());
+        res.set_content(json{{"status", "ok"}, {"name", name}, {"path", f.string()}}.dump(), "application/json");
+    } catch (const std::exception& e) { res.status = 500; res.set_content(json{{"error", e.what()}}.dump(), "application/json"); }
+}
+
+void ApiServer::handleTemplatesDelete(const httplib::Request& req, httplib::Response& res) {
+    json body; if (!parseJsonBody(req, res, body)) return;
+    std::string name = body.value("name", "");
+    if (!scValidTemplateName(name)) { res.status = 400; res.set_content(R"({"error":"bad name"})", "application/json"); return; }
+    std::error_code ec; fs::path f = fs::path(templatesDir()) / (name + ".json");
+    if (!fs::exists(f, ec) || !fs::remove(f, ec)) { res.status = 404; res.set_content(json{{"error", "template not found"}, {"name", name}}.dump(), "application/json"); return; }
+    res.set_content(json{{"status", "ok"}, {"name", name}}.dump(), "application/json");
+}
+
 void ApiServer::extractMeta(const std::string& pipeline_id, const json& body) {
     PipelineMeta m;
     try {
@@ -557,6 +633,19 @@ void ApiServer::setupRoutes() {
     // 实施页环境自检
     server_.Get("/api/v1/selfcheck", [this](const auto& req, auto& res) {
         handleSelfcheck(req, res);
+    });
+    // 模板库
+    server_.Get("/api/v1/templates", [this](const auto& req, auto& res) {
+        handleTemplatesList(req, res);
+    });
+    server_.Get("/api/v1/templates/get", [this](const auto& req, auto& res) {
+        handleTemplatesGet(req, res);
+    });
+    server_.Post("/api/v1/templates/save", [this](const auto& req, auto& res) {
+        handleTemplatesSave(req, res);
+    });
+    server_.Post("/api/v1/templates/delete", [this](const auto& req, auto& res) {
+        handleTemplatesDelete(req, res);
     });
     // 证据查看（预览页）
     server_.Get("/api/v1/evidence/list", [this](const auto& req, auto& res) {

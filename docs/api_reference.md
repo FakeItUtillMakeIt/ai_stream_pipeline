@@ -221,6 +221,26 @@
 ```
 > 探测含网络超时（TCP 1.5s、HTTP 3s），故编辑器仅在载入/手动"服务器同步"/"重新自检"时调用，6s 自动轮询只刷新状态不调用本接口。
 
+## 模板系统（研发发布 / 实施选用）
+模板存于 `<AI_STREAM_STATE_DIR>/templates/<name>.json`，结构：
+```json
+{ "name":"周界入侵", "version":"3", "description":"…",
+  "doc": { "id":"…", "graph": { "nodes":[…], "edges":[…] } },
+  "overrides": {
+    "source_url": { "node":"src1", "path":"params.url", "label":"拉流地址" },
+    "push":       { "node":"rtmp_sink", "label":"是否推流" },
+    "alerts":     { "node":"alert", "types":["person_intrusion","fighting"], "label":"告警项" }
+  } }
+```
+`overrides` 声明"暴露给实施"的字段，其余参数锁定；实施台从模板实例化时只按 overrides 渲染控件并注入值。
+
+- `GET /api/v1/templates` → `{"templates":[{name,version,description}]}`
+- `GET /api/v1/templates/get?name=<name>` → 完整模板 JSON；不存在 `404`
+- `POST /api/v1/templates/save` → 发布/更新（body 为模板对象，需 `name` + `doc.graph`）；名含 `/ \ ..` 或空 → `400`
+- `POST /api/v1/templates/delete` → body `{name}`；不存在 `404`
+
+> 前端：研发编辑器「发布为模板」（自动探测 源/rtmp_sink/alert 节点生成 overrides）；实施台「新增一路」从模板库选择并实例化。
+
 ## 证据与预览（预览页专用）
 
 实时预览（方案 A）：浏览器不能直接播 RTMP。`rtmp_sink` 推到外部媒体服务器（mediamtx / nginx-rtmp），由其转成 **HLS(.m3u8) 或 WebRTC**；把该播放地址填进 sink 节点的 `play_url`，前端预览页用 hls.js 播放。后端不转码，仅提供播放地址来源与证据文件。

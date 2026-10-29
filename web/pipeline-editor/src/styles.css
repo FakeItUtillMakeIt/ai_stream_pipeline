@@ -249,5 +249,6 @@ body { background: var(--bg); }
 .impl-pkitem { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; cursor: pointer; background: var(--panel2); }
 .impl-pkitem:hover { border-color: var(--primary); }
 .impl-pkname { font-weight: 600; font-size: 14px; }
+.impl-pkver { font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 20px; padding: 0 6px; margin-left: 4px; }
 .impl-pkmeta { display: flex; gap: 12px; flex-wrap: wrap; color: var(--muted); font-size: 11px; margin-top: 4px; }
 .impl-pkchips { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }

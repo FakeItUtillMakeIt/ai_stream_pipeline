@@ -73,6 +73,12 @@ private:
     void handleGetConfig(const httplib::Request& req, httplib::Response& res);
     // 实施页环境自检：探测 源/引擎文件/RTMP推流/播放地址/证据目录/运行状态
     void handleSelfcheck(const httplib::Request& req, httplib::Response& res);
+    // 模板库（研发发布 / 实施选用）：<state>/templates/<name>.json
+    void handleTemplatesList(const httplib::Request& req, httplib::Response& res);
+    void handleTemplatesGet(const httplib::Request& req, httplib::Response& res);
+    void handleTemplatesSave(const httplib::Request& req, httplib::Response& res);
+    void handleTemplatesDelete(const httplib::Request& req, httplib::Response& res);
+    std::string templatesDir() const;   // <state>/templates（不存在则创建）
     // 证据查看（预览页）：列目录 / 取文件（限制在该管道 evidence 目录内）
     void handleEvidenceList(const httplib::Request& req, httplib::Response& res);
     void handleEvidenceFile(const httplib::Request& req, httplib::Response& res);
