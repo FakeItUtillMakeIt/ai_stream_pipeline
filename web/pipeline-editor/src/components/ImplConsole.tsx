@@ -87,6 +87,7 @@ export default function ImplConsole({ settings, onOpenPreview, onOpenAlerts }: {
   const [tpls, setTpls] = useState<{ name: string; version: string; description: string }[]>([]);
   const [pickTpl, setPickTpl] = useState<{ name: string; version: string; description: string }[] | null>(null);
   const timer = useRef<number | null>(null);
+  const inflight = useRef(false);
 
   const loadTpls = async (): Promise<{ name: string; version: string; description: string }[]> => {
     const r = await api.templates(settings);
@@ -103,6 +104,8 @@ export default function ImplConsole({ settings, onOpenPreview, onOpenAlerts }: {
   };
 
   const applyList = async (probe = false) => {
+    if (inflight.current) return;   // 不重叠：上一次未完成就跳过，避免旧 ps 快照覆盖新状态
+    inflight.current = true;
     try {
       const ps = await listPipelines(settings);
       setErr('');
@@ -126,6 +129,7 @@ export default function ImplConsole({ settings, onOpenPreview, onOpenAlerts }: {
       }
       if (probe) for (const info of ps) fetchSc(info.id);   // 探测并发出（各自异步更新）
     } catch (e: any) { setErr('加载失败: ' + e.message); }
+    finally { inflight.current = false; }
   };
 
   useEffect(() => { applyList(true); /* eslint-disable-next-line */ }, [settings.baseUrl, settings.token]);
