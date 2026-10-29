@@ -10,6 +10,7 @@ add_executable(ai_stream_server
 target_link_libraries(ai_stream_server
     PRIVATE
     httplib::httplib
+    CURL::libcurl
 )
 
 # 子项目构建
@@ -28,6 +29,8 @@ if(TARGET ai_stream_core)
             -Wl,--no-as-needed
             ai_stream_nodes
             ai_stream_core
+            CURL::libcurl
+            -lcurl
             ${ALERT_RULE_OBJECTS}
             -Wl,--as-needed
     )

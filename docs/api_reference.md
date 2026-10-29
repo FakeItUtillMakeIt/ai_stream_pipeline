@@ -207,6 +207,20 @@
 - 无配置：`404 {"error":"config not found","id":"..."}`。
 > 编辑器"同步服务器"按钮 + 每 6s 静默轮询：拉 `list` 刷新运行态，并把"服务器有、本地无"的管道用本接口导入。预览页每 4s 轮询 `list`。
 
+## GET /api/v1/selfcheck?id=<id>
+实施页环境自检：后端真实探测该管道健康度，返回结构化 `checks`（每项 `key/label/level/detail`，`level ∈ ok|warn|err|idle`）。
+探测项：
+- `state` 运行状态（running/stopped/load_failed/…）
+- `source` 拉流地址：`file://` 查文件是否存在；`rtsp/rtmp` 做 TCP 连通探测
+- `model` 引擎/模型：递归扫描节点参数里的 `.engine/.onnx/.pth/.npz` 路径，按服务器 CWD 解析后查存在
+- `push` RTMP 推流：解析 `rtmp_sink.output_url` 的 host:port 做 TCP 探测（mediamtx 是否可达）
+- `play` 播放地址：对 `play_url` 发 HTTP(HEAD)，200→可播、404→无 publisher、连不上→err（CORS 属浏览器侧，服务端探不出）
+- `evidence` 证据目录：解析绝对路径 + 统计文件数（不存在→err，空→warn）
+```json
+{"id":"p1","checks":[{"key":"play","label":"播放地址","level":"warn","detail":"404 无 publisher（流没推上/路径不对）：http://…"}]}
+```
+> 探测含网络超时（TCP 1.5s、HTTP 3s），故编辑器仅在载入/手动"服务器同步"/"重新自检"时调用，6s 自动轮询只刷新状态不调用本接口。
+
 ## 证据与预览（预览页专用）
 
 实时预览（方案 A）：浏览器不能直接播 RTMP。`rtmp_sink` 推到外部媒体服务器（mediamtx / nginx-rtmp），由其转成 **HLS(.m3u8) 或 WebRTC**；把该播放地址填进 sink 节点的 `play_url`，前端预览页用 hls.js 播放。后端不转码，仅提供播放地址来源与证据文件。

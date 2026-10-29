@@ -15,6 +15,7 @@ target_link_libraries(http_server
         httplib::httplib          # FetchContent 提供的目标
         nlohmann_json::nlohmann_json
         spdlog::spdlog
+        CURL::libcurl             # api_server 的 selfcheck 播放地址探测用到 libcurl
 )
 
 target_include_directories(http_server

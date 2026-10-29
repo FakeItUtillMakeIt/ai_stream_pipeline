@@ -9,6 +9,7 @@ import Palette from './components/Palette';
 import PropertyPanel from './components/PropertyPanel';
 import PipelineNode from './components/PipelineNode';
 import PreviewView from './components/PreviewView';
+import ImplConsole from './components/ImplConsole';
 import { defaultParams } from './schema/nodeSchema';
 import { toFlow, fromFlow } from './graph/flow';
 import { validate, hasErrors, Issue } from './graph/validation';
@@ -23,6 +24,15 @@ interface LogEntry { ts: string; level: LogLevel; msg: string; }
 interface SrvInfo { running: boolean; state: string; }
 
 const sig = (d: unknown) => JSON.stringify(d);
+
+// URL(hash) 入口：#/impl=实施台，#/preview=预览，其余=研发编辑器
+type ViewName = 'editor' | 'preview' | 'impl';
+function viewFromHash(): ViewName {
+  const h = (location.hash || '').toLowerCase();
+  if (h.includes('impl')) return 'impl';
+  if (h.includes('preview')) return 'preview';
+  return 'editor';
+}
 
 // 深替换：把所有等于 oldId 的字符串值/对象键改成 newId（节点改名后修正引用）
 function replaceRefs(v: any, oldId: string, newId: string): any {
@@ -61,7 +71,9 @@ function Editor() {
 
   const [theme, setTheme] = useState<'light' | 'dark'>(() => load('editorTheme', 'dark'));
   const [status, setStatus] = useState<Status>('waiting');
-  const [view, setView] = useState<'editor' | 'preview'>('editor');
+  const [view, setView] = useState<ViewName>(viewFromHash);
+  const [previewId, setPreviewId] = useState('');
+  const [previewFrom, setPreviewFrom] = useState<'editor' | 'impl'>('editor');
   const [overwrite, setOverwrite] = useState<boolean>(() => load('editorOverwrite', true));
 
   const [settings, setSettings] = useState<ApiSettings>(() => load('apiSettings', { baseUrl: '', token: '' }));
@@ -75,6 +87,9 @@ function Editor() {
   useEffect(() => { localStorage.setItem('editorStore', JSON.stringify(store)); }, [store]);
   useEffect(() => { localStorage.setItem('editorSavedSig', JSON.stringify(savedSig)); }, [savedSig]);
   useEffect(() => { localStorage.setItem('editorOverwrite', JSON.stringify(overwrite)); }, [overwrite]);
+  // view ↔ URL 双向同步：#/editor #/impl #/preview 可直达/收藏/前进后退
+  useEffect(() => { const want = '#/' + view; if (location.hash !== want) location.hash = want; }, [view]);
+  useEffect(() => { const onHash = () => setView(viewFromHash()); window.addEventListener('hashchange', onHash); return () => window.removeEventListener('hashchange', onHash); }, []);
   useEffect(() => { setNodes((ns) => ns.map((n) => ({ ...n, data: { ...n.data, status } }))); }, [status, setNodes]);
   useEffect(() => { if (autoScroll && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [log, autoScroll, logOpen]);
 
@@ -281,7 +296,7 @@ function Editor() {
     const r = await api.start(settings, activeId);
     appendLog(`Start ${activeId} → ${r.status} ${JSON.stringify(r.json)}`, r.ok ? 'info' : 'error');
     setStatus(r.ok ? 'running' : 'error'); refreshStatus();
-    if (r.ok) setView('preview');
+    if (r.ok) { setPreviewFrom('editor'); setView('preview'); }
   };
   const doStop = async () => {
     if (!activeId) return;
@@ -351,11 +366,21 @@ function Editor() {
 
   const shownLog = log.filter((l) => levels[l.level]);
 
+  if (view === 'impl') {
+    return (
+      <div className={`app theme-${theme}`}>
+        <ImplConsole settings={settings}
+          onOpenPreview={(id) => { setPreviewId(id); setPreviewFrom('impl'); setView('preview'); }} />
+      </div>
+    );
+  }
+
   if (view === 'preview') {
     return (
       <div className={`app theme-${theme}`}>
-        <PreviewView settings={settings} initialId={activeId}
-          onBack={() => { setView('editor'); refreshStatus(); }} />
+        <PreviewView settings={settings} initialId={previewId || activeId}
+          backLabel={previewFrom === 'impl' ? '← 返回实施' : '← 返回编辑'}
+          onBack={() => { setView(previewFrom); setPreviewId(''); refreshStatus(); }} />
       </div>
     );
   }
@@ -391,7 +416,8 @@ function Editor() {
         <button className="btn" onClick={doStop}>Stop</button>
         <button className="btn danger" onClick={doDelete}>Delete</button>
         <button className="btn" onClick={() => syncFromServer()} title="拉取服务器管道列表/运行态，并导入外部新建的管道">同步服务器</button>
-        <button className="btn" onClick={() => { commitActive(); setView('preview'); }} title="查看运行/预览/证据/指标">预览 ▶</button>
+        <button className="btn" onClick={() => { commitActive(); setPreviewFrom('editor'); setView('preview'); }} title="查看运行/预览/证据/指标">预览 ▶</button>
+        <button className="btn" onClick={() => { commitActive(); setView('impl'); }} title="切换到实施控制台（受限视图）">实施台</button>
         <button className="btn" onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}>{theme === 'dark' ? '☀' : '🌙'}</button>
       </div>
 

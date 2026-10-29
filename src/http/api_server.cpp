@@ -10,6 +10,14 @@
 #include <cctype>
 #include <fstream>
 #include <sstream>
+#include <cerrno>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <poll.h>
+#include "utils/http_util.h"
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
@@ -188,6 +196,157 @@ void ApiServer::handleGetConfig(const httplib::Request& req, httplib::Response& 
         return;
     }
     res.set_content(cfg.dump(), "application/json");
+}
+
+// ===== selfcheck 辅助 =====
+static bool scEndsWith(const std::string& s, const std::string& suf) {
+    return s.size() >= suf.size() && s.compare(s.size() - suf.size(), suf.size(), suf) == 0;
+}
+static bool scParseHostPort(const std::string& url, std::string& host, int& port, int defPort) {
+    std::string rest = url;
+    auto p = url.find("://"); if (p != std::string::npos) rest = url.substr(p + 3);
+    auto slash = rest.find('/'); std::string hp = slash == std::string::npos ? rest : rest.substr(0, slash);
+    auto at = hp.find('@'); if (at != std::string::npos) hp = hp.substr(at + 1);
+    auto colon = hp.rfind(':');
+    if (colon == std::string::npos) { host = hp; port = defPort; return !host.empty(); }
+    host = hp.substr(0, colon);
+    try { port = std::stoi(hp.substr(colon + 1)); } catch (...) { port = defPort; }
+    return !host.empty() && port > 0;
+}
+static bool scTcpReachable(const std::string& host, int port, int timeoutMs) {
+    struct addrinfo hints{}, *res = nullptr;
+    hints.ai_family = AF_UNSPEC; hints.ai_socktype = SOCK_STREAM;
+    if (getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &res) != 0 || !res) return false;
+    bool ok = false;
+    for (struct addrinfo* a = res; a && !ok; a = a->ai_next) {
+        int fd = socket(a->ai_family, a->ai_socktype, a->ai_protocol);
+        if (fd < 0) continue;
+        fcntl(fd, F_SETFL, O_NONBLOCK);
+        int r = connect(fd, a->ai_addr, a->ai_addrlen);
+        if (r == 0) ok = true;
+        else if (errno == EINPROGRESS) {
+            struct pollfd pfd{}; pfd.fd = fd; pfd.events = POLLOUT;
+            if (poll(&pfd, 1, timeoutMs) > 0) {
+                int err = 0; socklen_t len = sizeof(err);
+                getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len); ok = (err == 0);
+            }
+        }
+        close(fd);
+    }
+    freeaddrinfo(res);
+    return ok;
+}
+static void scCollectModelFiles(const nlohmann::json& v, std::vector<std::string>& out) {
+    if (v.is_object()) { for (auto& kv : v.items()) scCollectModelFiles(kv.value(), out); }
+    else if (v.is_array()) { for (auto& e : v) scCollectModelFiles(e, out); }
+    else if (v.is_string()) {
+        std::string s = v.get<std::string>();
+        for (auto* suf : {".engine", ".onnx", ".pth", ".pt", ".npz"})
+            if (scEndsWith(s, suf)) { out.push_back(s); break; }
+    }
+}
+
+void ApiServer::handleSelfcheck(const httplib::Request& req, httplib::Response& res) {
+    const std::string id = req.get_param_value("id");
+    if (id.empty()) { res.status = 400; res.set_content(R"({"error":"Missing id"})", "application/json"); return; }
+    json checks = json::array();
+    auto add = [&](const std::string& k, const std::string& l, const std::string& lvl, const std::string& d) {
+        checks.push_back({{"key", k}, {"label", l}, {"level", lvl}, {"detail", d}});
+    };
+
+    // 运行状态
+    bool running = false; std::string state = "unknown";
+    if (async_mode_ && manager_) {
+        auto st = manager_->getPipelineLifecycleState(id);
+        state = core::AsyncPipelineManager::stateToString(st);
+        running = manager_->getPipelineState(id);
+    } else {
+        std::lock_guard<std::mutex> lk(pipelines_mutex_);
+        auto it = pipelines_.find(id);
+        if (it != pipelines_.end()) { running = it->second->isRunning(); state = running ? "running" : "stopped"; }
+    }
+    add("state", "运行状态", state == "load_failed" ? "err" : (running ? "ok" : "idle"), state);
+
+    // 载入配置
+    json cfg; if (reqlog_) cfg = reqlog_->loadConfig(reqlog_->configPath(id));
+    const bool hasCfg = cfg.is_object() && cfg.contains("graph") && cfg["graph"].contains("nodes");
+    std::string sourceUrl, rtmpOut; bool hasRtmp = false; std::vector<std::string> modelFiles;
+    if (hasCfg) {
+        for (const auto& n : cfg["graph"]["nodes"]) {
+            if (!n.is_object()) continue;
+            const std::string type = n.value("type", "");
+            json params = (n.contains("params") && n["params"].is_object()) ? n["params"] : json::object();
+            if ((type == "file_source" || type == "rtsp_source") && sourceUrl.empty() && params.contains("url") && params["url"].is_string())
+                sourceUrl = params["url"].get<std::string>();
+            if (type == "rtmp_sink") { hasRtmp = true; if (params.contains("output_url") && params["output_url"].is_string()) rtmpOut = params["output_url"].get<std::string>(); }
+            scCollectModelFiles(params, modelFiles);
+        }
+    }
+
+    // 源
+    if (sourceUrl.empty()) add("source", "拉流地址", hasCfg ? "warn" : "idle", hasCfg ? "配置中无源节点/未取到 url" : "未取到配置");
+    else if (sourceUrl.rfind("file://", 0) == 0) {
+        std::string path = sourceUrl.substr(7); std::error_code ec; bool ex = fs::exists(path, ec);
+        add("source", "拉流地址", ex ? "ok" : "err", (ex ? "本地文件存在: " : "本地文件不存在: ") + path);
+    } else {
+        std::string host; int port = 0;
+        int def = sourceUrl.rfind("rtsp", 0) == 0 ? 554 : (sourceUrl.rfind("rtmp", 0) == 0 ? 1935 : 0);
+        bool parsed = scParseHostPort(sourceUrl, host, port, def);
+        bool reach = parsed && scTcpReachable(host, port, 1500);
+        add("source", "拉流地址", reach ? "ok" : "err", (reach ? "TCP 可连接: " : "TCP 连不上: ") + host + ":" + std::to_string(port));
+    }
+
+    // 引擎/模型文件
+    if (!hasCfg) add("model", "引擎/模型", "idle", "未取到配置");
+    else if (modelFiles.empty()) add("model", "引擎/模型", "idle", "无模型文件引用");
+    else {
+        std::string miss; std::error_code ec; int nmiss = 0;
+        for (auto& f : modelFiles) { std::string abs = fs::absolute(f, ec).string(); if (!fs::exists(abs, ec)) { miss += f + " "; nmiss++; } }
+        add("model", "引擎/模型", nmiss == 0 ? "ok" : "err",
+            nmiss == 0 ? (std::to_string(modelFiles.size()) + " 个模型文件齐全") : ("缺失: " + miss));
+    }
+
+    // RTMP 推流目标
+    if (!hasRtmp) add("push", "RTMP推流", "idle", "未推流（无 rtmp_sink）");
+    else {
+        std::string host; int port = 0; bool parsed = scParseHostPort(rtmpOut, host, port, 1935);
+        bool reach = parsed && scTcpReachable(host, port, 1500);
+        add("push", "RTMP推流", reach ? "ok" : "err", (reach ? "推流目标可达: " : "推流目标连不上: ") + host + ":" + std::to_string(port));
+    }
+
+    // 播放地址（用 meta_ 的 play_url 实际 HTTP 探测）
+    std::string play;
+    { std::lock_guard<std::mutex> lk(meta_mutex_); auto it = meta_.find(id); if (it != meta_.end()) play = it->second.play_url; }
+    if (!hasRtmp) add("play", "播放地址", "idle", "未推流，无需播放地址");
+    else if (play.empty()) add("play", "播放地址", "warn", "推流开但未配置 play_url");
+    else {
+        auto r = ai_stream::utils::http::get(play, {}, 3000, 2000, true);
+        std::string lvl, det;
+        if (!r.err.empty()) { lvl = "err"; det = "连不上(" + r.err + ")：" + play; }
+        else if (r.status == 404) { lvl = "warn"; det = "404 无 publisher（流没推上/路径不对）：" + play; }
+        else if (r.status >= 200 && r.status < 300) { lvl = "ok"; det = "HTTP " + std::to_string(r.status) + " 可播：" + play; }
+        else { lvl = "warn"; det = "HTTP " + std::to_string(r.status) + "：" + play; }
+        add("play", "播放地址", lvl, det);
+    }
+
+    // 证据目录（用 meta_ 的 evidence_dirs，解析绝对路径 + 统计文件数）
+    std::vector<std::string> dirs;
+    { std::lock_guard<std::mutex> lk(meta_mutex_); auto it = meta_.find(id); if (it != meta_.end()) dirs = it->second.evidence_dirs; }
+    if (dirs.empty()) add("evidence", "证据目录", "warn", "未配置证据目录");
+    else {
+        std::error_code ec; int total = 0; bool anyExist = false; std::string missing, abslist;
+        for (auto& d : dirs) {
+            fs::path abs = fs::absolute(d, ec); abslist += abs.string() + " ";
+            if (fs::is_directory(abs, ec)) { anyExist = true; for (auto& e : fs::directory_iterator(abs, ec)) if (e.is_regular_file()) total++; }
+            else missing += d + " ";
+        }
+        std::string lvl = !anyExist ? "err" : (total > 0 ? "ok" : "warn");
+        std::string det = !anyExist ? ("目录不存在: " + missing) : (std::to_string(total) + " 个文件 · " + abslist);
+        add("evidence", "证据目录", lvl, det);
+    }
+
+    json out = {{"id", id}, {"checks", checks}};
+    res.set_content(out.dump(), "application/json");
 }
 
 void ApiServer::extractMeta(const std::string& pipeline_id, const json& body) {
@@ -394,6 +553,10 @@ void ApiServer::setupRoutes() {
     // 读取已保存配置（编辑器"从服务器同步/导入"）
     server_.Get("/api/v1/pipeline/get-config", [this](const auto& req, auto& res) {
         handleGetConfig(req, res);
+    });
+    // 实施页环境自检
+    server_.Get("/api/v1/selfcheck", [this](const auto& req, auto& res) {
+        handleSelfcheck(req, res);
     });
     // 证据查看（预览页）
     server_.Get("/api/v1/evidence/list", [this](const auto& req, auto& res) {

@@ -71,6 +71,8 @@ private:
     void handleSaveConfig(const httplib::Request& req, httplib::Response& res);
     // 读取某管道已保存的配置（编辑器"从服务器导入/同步"）
     void handleGetConfig(const httplib::Request& req, httplib::Response& res);
+    // 实施页环境自检：探测 源/引擎文件/RTMP推流/播放地址/证据目录/运行状态
+    void handleSelfcheck(const httplib::Request& req, httplib::Response& res);
     // 证据查看（预览页）：列目录 / 取文件（限制在该管道 evidence 目录内）
     void handleEvidenceList(const httplib::Request& req, httplib::Response& res);
     void handleEvidenceFile(const httplib::Request& req, httplib::Response& res);

@@ -80,6 +80,37 @@ inline Response postJson(const std::string& url, const std::string& json_body,
     return resp;
 }
 
+// GET（head_only=true 时只探测可达/状态码，不下载 body）。用于 selfcheck 探测播放地址。
+inline Response get(const std::string& url, const std::vector<std::string>& extra_headers,
+                    long timeout_ms, long connect_timeout_ms = 3000, bool head_only = true)
+{
+    ensureGlobalInit();
+    Response resp;
+    CURL* curl = curl_easy_init();
+    if (!curl) { resp.err = "curl_easy_init failed"; return resp; }
+
+    struct curl_slist* headers = nullptr;
+    for (const auto& h : extra_headers) headers = curl_slist_append(headers, h.c_str());
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    if (head_only) curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);  // HEAD
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp.body);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, timeout_ms);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, connect_timeout_ms);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+
+    CURLcode code = curl_easy_perform(curl);
+    if (code != CURLE_OK) resp.err = curl_easy_strerror(code);
+    else curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &resp.status);
+
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    return resp;
+}
+
 // 标准 base64（OpenAI image_url data url 用）。
 inline std::string base64Encode(const std::vector<unsigned char>& in)
 {

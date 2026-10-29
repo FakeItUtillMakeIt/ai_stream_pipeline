@@ -44,8 +44,8 @@ function LivePlayer({ url }: { url: string }) {
   );
 }
 
-export default function PreviewView({ settings, initialId, onBack }: {
-  settings: ApiSettings; initialId?: string; onBack: () => void;
+export default function PreviewView({ settings, initialId, onBack, backLabel = '← 返回编辑' }: {
+  settings: ApiSettings; initialId?: string; onBack: () => void; backLabel?: string;
 }) {
   const [pipelines, setPipelines] = useState<PipelineInfo[]>([]);
   const [sel, setSel] = useState(initialId || '');
@@ -82,7 +82,7 @@ export default function PreviewView({ settings, initialId, onBack }: {
   return (
     <div className="preview">
       <div className="pv-top">
-        <button className="btn" onClick={onBack}>← 返回编辑</button>
+        <button className="btn" onClick={onBack}>{backLabel}</button>
         <select value={sel} onChange={(e) => setSel(e.target.value)}>
           {pipelines.length === 0 && <option value="">（无运行管道）</option>}
           {pipelines.map((p) => (
