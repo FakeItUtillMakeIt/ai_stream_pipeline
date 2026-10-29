@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
+import { MediaImg, MediaVideo } from './Media';
 import { ApiSettings, api, listPipelines, PipelineInfo } from '../api/client';
 
 type Tab = 'preview' | 'evidence' | 'metrics' | 'status';
@@ -174,8 +175,8 @@ function EvGroup({ title, kind, files, open, setOpen, settings, sel }: {
                   <span className="ev-act">{isOpen ? '收起' : (kind === 'video' ? '播放' : '查看')}</span>
                 </div>
                 {isOpen && (kind === 'video'
-                  ? <video className="ev-media" src={u} controls autoPlay muted playsInline />
-                  : <img className="ev-media" src={u} alt={f.name} />)}
+                  ? <MediaVideo className="ev-media" url={u} token={settings.token} />
+                  : <MediaImg className="ev-media" url={u} token={settings.token} alt={f.name} />)}
               </li>
             );
           })}

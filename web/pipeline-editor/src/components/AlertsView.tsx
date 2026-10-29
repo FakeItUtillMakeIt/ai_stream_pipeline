@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ApiSettings, api, listPipelines, PipelineInfo } from '../api/client';
+import { MediaImg } from './Media';
 
 interface PreGate { triggered?: boolean; alert_name?: string; snapshot?: string; }
 interface PostGate { decision?: string; verdict?: boolean; confidence?: number; reason?: string; error?: string; pushed?: boolean; latency_ms?: number; model?: string; snapshot?: string; }
@@ -106,7 +107,7 @@ export default function AlertsView({ settings, initialPipeline, onBack, backLabe
             const g = a.post_gate;
             return (
               <div key={a.uid} className={'al-row' + (pr === 'new' ? ' unhandled' : '')}>
-                {snap && <img className="al-thumb" src={api.alertFileUrl(settings, snap)} alt="" loading="lazy"
+                {snap && <MediaImg className="al-thumb" url={api.alertFileUrl(settings, snap)} token={settings.token}
                   onClick={() => setDetail(detail === a.uid ? null : a.uid)} />}
                 <div className="al-main" onClick={() => setDetail(detail === a.uid ? null : a.uid)}>
                   <div className="al-h">

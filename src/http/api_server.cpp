@@ -537,11 +537,12 @@ void ApiServer::handleEvidenceFile(const httplib::Request& req, httplib::Respons
     if (absFull.compare(0, absBase.size(), absBase) != 0) {  // 越界防护
         res.status = 403; res.set_content(R"({"error":"forbidden"})", "application/json"); return;
     }
+    std::error_code eok;
+    if (!fs::exists(absFull, eok)) { res.status = 404; res.set_content(R"({"error":"not found"})", "application/json"); return; }
     std::ifstream in(absFull, std::ios::binary);
     if (!in) { res.status = 404; res.set_content(R"({"error":"not found"})", "application/json"); return; }
     std::stringstream ss; ss << in.rdbuf();
-    res.set_header("Accept-Ranges", "bytes");
-    res.set_content(ss.str(), evidenceMime(name));   // Range 由 httplib 自动处理(206/Content-Range)
+    res.set_content(ss.str(), evidenceMime(name));   // set_content 第一参数是"响应体"，须先把文件读进内存
 }
 
 void ApiServer::handleAlertsList(const httplib::Request& req, httplib::Response& res) {
@@ -585,11 +586,12 @@ void ApiServer::handleAlertsFile(const httplib::Request& req, httplib::Response&
     if (absN.compare(0, cwdN.size(), cwdN) != 0) {  // 只能取服务器运行目录内的文件
         res.status = 403; res.set_content(R"({"error":"forbidden"})", "application/json"); return;
     }
+    std::error_code eok;
+    if (!fs::exists(absN, eok)) { res.status = 404; res.set_content(R"({"error":"not found"})", "application/json"); return; }
     std::ifstream in(absN, std::ios::binary);
     if (!in) { res.status = 404; res.set_content(R"({"error":"not found"})", "application/json"); return; }
     std::stringstream ss; ss << in.rdbuf();
-    res.set_header("Accept-Ranges", "bytes");
-    res.set_content(ss.str(), evidenceMime(absN));   // Range 交给 httplib 自动处理(206/Content-Range)
+    res.set_content(ss.str(), evidenceMime(absN));   // set_content 第一参数是"响应体"，须先把文件读进内存
 }
 
 std::string ApiServer::roleOf(const httplib::Request& req) const {
@@ -624,11 +626,17 @@ void ApiServer::setupRoutes() {
             return httplib::Server::HandlerResponse::Handled;
         }
         // 仅保护 /api/ 业务接口；/health、/metrics、/api/v1/whoami 放行（whoami 需匿名可查以决定是否弹登录）
+        // 媒体取文件接口(<img>/<video> 无法带 Authorization)额外允许 ?t=<token> 查询参数鉴权。
         if ((!api_token_.empty() || !impl_token_.empty()) && req.path.rfind("/api/", 0) == 0 &&
             req.path != "/api/v1/whoami") {
-            const std::string auth = req.get_header_value("Authorization");
-            const bool ok = (!api_token_.empty() && auth == ("Bearer " + api_token_)) ||
-                            (!impl_token_.empty() && auth == ("Bearer " + impl_token_));
+            std::string tok = req.get_header_value("Authorization");
+            const std::string bearer = "Bearer ";
+            if (tok.rfind(bearer, 0) == 0) tok = tok.substr(bearer.size());
+            const bool isMedia = req.method == "GET" &&
+                (req.path == "/api/v1/evidence/file" || req.path == "/api/v1/alerts/file");
+            if (isMedia && req.has_param("t")) tok = req.get_param_value("t");
+            const bool ok = (!api_token_.empty() && tok == api_token_) ||
+                            (!impl_token_.empty() && tok == impl_token_);
             if (!ok) {
                 res.status = 401;
                 res.set_content(R"({"error":"Unauthorized"})", "application/json");

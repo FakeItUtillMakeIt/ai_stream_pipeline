@@ -110,7 +110,7 @@ void ReportSinkNode::processPacket(std::shared_ptr<core::BasePacket> packet)
                 json rec;
                 rec["uid"] = core::AlertStore::makeUid(pid, ev.alert_id, static_cast<int>(ev.alert_type), ev.detect_ms);
                 rec["pipeline"] = pid;
-                rec["ts"] = ev.detect_ms;
+                rec["ts"] = utils::TimeUtil::currentTimeMs();
                 rec["type"] = evj.value("alert_type_name", std::string());
                 rec["level"] = evj.value("level_name", std::string());
                 rec["description"] = ev.description;

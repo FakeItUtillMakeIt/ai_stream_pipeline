@@ -225,7 +225,7 @@ void EvidenceNode::recordHistory(const std::shared_ptr<core::InferenceResultPack
             nlohmann::json rec;
             rec["uid"] = core::AlertStore::makeUid(pid, ev.alert_id, static_cast<int>(ev.alert_type), ev.detect_ms);
             rec["pipeline"] = pid;
-            rec["ts"] = ev.detect_ms;
+            rec["ts"] = utils::TimeUtil::currentTimeMs();   // 墙钟时间(毫秒)；detect_ms 是相对时间不能当显示时间
             rec["type"] = evj.value("alert_type_name", std::string());
             rec["level"] = evj.value("level_name", std::string());
             rec["description"] = ev.description;
