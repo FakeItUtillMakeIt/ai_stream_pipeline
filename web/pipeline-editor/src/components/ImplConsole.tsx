@@ -209,7 +209,7 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
         <button className="btn sm" onClick={() => applyList(true)}>🔄 服务器同步</button>
         <button className="btn sm" onClick={openNew}>＋ 新增一路</button>
         <button className="btn sm ghost" onClick={() => setSettings({ ...settings, token: '' })} title="退出登录">退出</button>
-        {role === 'dev' && <button className="btn sm" onClick={onBackToDev} title="当前为研发 token，可进入编辑器">研发模式 →</button>}
+        {role === 'dev' && <button className="btn sm" onClick={onBackToDev} title="当前为研发 token，可进入编辑器">模板编辑 →</button>}
       </div>
       {err && <div className="impl-err">{err}</div>}
       <div className="impl-sum">
