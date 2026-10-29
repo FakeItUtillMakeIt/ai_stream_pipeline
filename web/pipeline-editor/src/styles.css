@@ -228,6 +228,24 @@ body { background: var(--bg); }
 .impl-add { border: 1px dashed var(--border); border-radius: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted); min-height: 180px; cursor: pointer; gap: 8px; }
 .impl-add:hover { border-color: var(--primary); color: var(--primary); }
 .impl-plus { font-size: 28px; }
+.impl-cfg { display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: var(--panel2); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.impl-cfg .cfg { background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 5px; padding: 5px 8px; font-size: 12px; width: 220px; }
+
+/* ===== 登录页 ===== */
+.login-splash { display: flex; align-items: center; justify-content: center; height: 100vh; color: var(--muted); }
+.login-wrap { display: flex; align-items: center; justify-content: center; height: 100vh; width: 100%; background: radial-gradient(1200px 600px at 50% -10%, #1a2233, var(--bg)); }
+.login-card { width: 360px; max-width: 92vw; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 22px 22px 18px; box-shadow: 0 20px 60px rgba(0,0,0,.45); }
+.login-brand { font-size: 18px; font-weight: 700; text-align: center; margin-bottom: 16px; }
+.login-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+.login-tab { flex: 1; padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel2); color: var(--dim); cursor: pointer; font-size: 13px; }
+.login-tab.on { border-color: #3a5a8c; color: #cfe0ff; background: rgba(76,141,255,.12); }
+.login-desc { font-size: 12px; color: var(--muted); margin-bottom: 14px; min-height: 32px; }
+.login-field { margin-bottom: 12px; }
+.login-field label { display: block; font-size: 12px; color: var(--dim); margin-bottom: 5px; }
+.login-field input { width: 100%; background: var(--panel2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 8px 10px; font-size: 13px; }
+.login-err { font-size: 12px; color: var(--danger); background: rgba(248,81,73,.1); border: 1px solid var(--danger); border-radius: 6px; padding: 7px 9px; margin-bottom: 10px; }
+.login-btn { width: 100%; padding: 9px; font-size: 14px; margin-top: 4px; }
+.login-foot { font-size: 11px; color: var(--muted); text-align: center; margin-top: 12px; }
 .impl-mask { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 9; }
 .impl-drawer { position: fixed; top: 0; right: 0; width: 440px; max-width: 92vw; height: 100%; background: var(--panel); border-left: 1px solid var(--border); box-shadow: -10px 0 40px rgba(0,0,0,.5); z-index: 10; display: flex; flex-direction: column; }
 .impl-dh { display: flex; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--border); }

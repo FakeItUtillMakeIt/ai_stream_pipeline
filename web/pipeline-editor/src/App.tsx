@@ -11,6 +11,7 @@ import PipelineNode from './components/PipelineNode';
 import PreviewView from './components/PreviewView';
 import ImplConsole from './components/ImplConsole';
 import AlertsView from './components/AlertsView';
+import LoginView from './components/LoginView';
 import { defaultParams } from './schema/nodeSchema';
 import { toFlow, fromFlow } from './graph/flow';
 import { validate, hasErrors, Issue } from './graph/validation';
@@ -76,6 +77,9 @@ function Editor() {
   const [view, setView] = useState<ViewName>(viewFromHash);
   const [previewId, setPreviewId] = useState('');
   const [previewFrom, setPreviewFrom] = useState<'editor' | 'impl'>('editor');
+  const [role, setRole] = useState<'dev' | 'impl' | 'anon' | 'unknown'>('unknown');
+  const [authEnabled, setAuthEnabled] = useState(false);
+  const [checked, setChecked] = useState(false);
   const [pub, setPub] = useState<null | { name: string; version: string; description: string; ov: Overrides; expose: { source: boolean; push: boolean; alerts: boolean } }>(null);
   const [overwrite, setOverwrite] = useState<boolean>(() => load('editorOverwrite', true));
 
@@ -93,6 +97,18 @@ function Editor() {
   // view ↔ URL 双向同步：#/editor #/impl #/preview 可直达/收藏/前进后退
   useEffect(() => { const want = '#/' + view; if (location.hash !== want) location.hash = want; }, [view]);
   useEffect(() => { const onHash = () => setView(viewFromHash()); window.addEventListener('hashchange', onHash); return () => window.removeEventListener('hashchange', onHash); }, []);
+  // 角色探测：非 dev 锁在实施台（后端对 dev-only 接口另有 403 兜底）
+  useEffect(() => {
+    let alive = true;
+    api.whoami(settings).then((r) => {
+      if (!alive) return;
+      setRole(r.ok && r.json?.role ? r.json.role : 'anon');
+      setAuthEnabled(!!(r.ok && r.json?.auth_enabled));
+      setChecked(true);
+    }).catch(() => { if (alive) { setRole('dev'); setAuthEnabled(false); setChecked(true); } });   // 服务不可达：不锁（离线开发）
+    return () => { alive = false; };
+  }, [settings.baseUrl, settings.token]);
+  useEffect(() => { if ((role === 'impl' || role === 'anon') && view === 'editor') setView('impl'); }, [role, view]);
   useEffect(() => { setNodes((ns) => ns.map((n) => ({ ...n, data: { ...n.data, status } }))); }, [status, setNodes]);
   useEffect(() => { if (autoScroll && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [log, autoScroll, logOpen]);
 
@@ -390,12 +406,18 @@ function Editor() {
 
   const shownLog = log.filter((l) => levels[l.level]);
 
+  // 登录 gate：未校验完不渲染任何业务界面；服务启用鉴权且未登录 → 登录页
+  if (!checked) return <div className={`app theme-${theme}`}><div className="login-splash">正在校验登录状态…</div></div>;
+  if (authEnabled && role !== 'dev' && role !== 'impl')
+    return <div className={`app theme-${theme}`}><LoginView settings={settings} setSettings={setSettings} /></div>;
+
   if (view === 'impl') {
     return (
       <div className={`app theme-${theme}`}>
-        <ImplConsole settings={settings}
+        <ImplConsole settings={settings} setSettings={setSettings} role={role}
           onOpenPreview={(id) => { setPreviewId(id); setPreviewFrom('impl'); setView('preview'); }}
-          onOpenAlerts={() => { setPreviewFrom('impl'); setView('alerts'); }} />
+          onOpenAlerts={() => { setPreviewFrom('impl'); setView('alerts'); }}
+          onBackToDev={() => { setView('editor'); refreshStatus(); }} />
       </div>
     );
   }
@@ -435,8 +457,6 @@ function Editor() {
           onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} title="当前管道 id，可改名" />
         <button className="btn tiny" onClick={newPipeline} title="新建管道">＋新建</button>
         <span className="dirty-flag" title={anyDirty ? '有改动未保存到服务器' : '已全部保存'}>{anyDirty ? '✎ 未保存' : '✓ 已保存'}</span>
-        <input className="cfg" value={settings.baseUrl} placeholder="API base(同源留空)" onChange={(e) => setSettings({ ...settings, baseUrl: e.target.value })} />
-        <input className="cfg" value={settings.token} type="password" placeholder="API Token" onChange={(e) => setSettings({ ...settings, token: e.target.value })} />
         <div className="spacer" />
         <button className="btn" onClick={() => fileRef.current?.click()}>导入</button>
         <input ref={fileRef} type="file" accept=".json" hidden onChange={(e) => e.target.files?.[0] && importJson(e.target.files[0])} />
@@ -455,6 +475,7 @@ function Editor() {
         <button className="btn" onClick={() => { commitActive(); setPreviewFrom('editor'); setView('preview'); }} title="查看运行/预览/证据/指标">预览 ▶</button>
         <button className="btn" onClick={() => { commitActive(); setPreviewFrom('editor'); setView('alerts'); }} title="告警历史/检索/确认">告警记录</button>
         <button className="btn" onClick={() => { commitActive(); setView('impl'); }} title="切换到实施控制台（受限视图）">实施台</button>
+        {authEnabled && <button className="btn" onClick={() => setSettings({ ...settings, token: '' })} title="退出登录">退出</button>}
         <button className="btn" onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}>{theme === 'dark' ? '☀' : '🌙'}</button>
       </div>
 

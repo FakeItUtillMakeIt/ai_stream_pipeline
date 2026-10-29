@@ -49,6 +49,8 @@ ApiServer::ApiServer(bool async_mode) : async_mode_(async_mode) {
             LOG_WARN("ApiServer API token auth enabled (AI_STREAM_API_TOKEN)");
         }
     }
+    if (const char* t = std::getenv("AI_STREAM_IMPL_TOKEN")) impl_token_ = t;
+    if (!impl_token_.empty()) LOG_WARN("Impl-role token enabled (AI_STREAM_IMPL_TOKEN)");
     // 请求持久化状态目录（默认 ./api_state，可用 AI_STREAM_STATE_DIR 覆盖）
     {
         const char* sd = std::getenv("AI_STREAM_STATE_DIR");
@@ -155,6 +157,7 @@ void ApiServer::recoverFromState() {
 }
 
 void ApiServer::handleSaveConfig(const httplib::Request& req, httplib::Response& res) {
+    if (roleOf(req) != "dev") { res.status = 403; res.set_content(R"({"error":"需要研发权限"})", "application/json"); return; }
     json body;
     if (!parseJsonBody(req, res, body)) return;
     try {
@@ -400,6 +403,7 @@ void ApiServer::handleTemplatesGet(const httplib::Request& req, httplib::Respons
 }
 
 void ApiServer::handleTemplatesSave(const httplib::Request& req, httplib::Response& res) {
+    if (roleOf(req) != "dev") { res.status = 403; res.set_content(R"({"error":"需要研发权限"})", "application/json"); return; }
     json body; if (!parseJsonBody(req, res, body)) return;
     try {
         std::string name = body.value("name", "");
@@ -419,6 +423,7 @@ void ApiServer::handleTemplatesSave(const httplib::Request& req, httplib::Respon
 }
 
 void ApiServer::handleTemplatesDelete(const httplib::Request& req, httplib::Response& res) {
+    if (roleOf(req) != "dev") { res.status = 403; res.set_content(R"({"error":"需要研发权限"})", "application/json"); return; }
     json body; if (!parseJsonBody(req, res, body)) return;
     std::string name = body.value("name", "");
     if (!scValidTemplateName(name)) { res.status = 400; res.set_content(R"({"error":"bad name"})", "application/json"); return; }
@@ -587,6 +592,22 @@ void ApiServer::handleAlertsFile(const httplib::Request& req, httplib::Response&
     res.set_content(ss.str(), evidenceMime(absN));   // Range 交给 httplib 自动处理(206/Content-Range)
 }
 
+std::string ApiServer::roleOf(const httplib::Request& req) const {
+    // 未配置任何 token → 开放，视为 dev（本地/无鉴权，向后兼容）
+    if (api_token_.empty() && impl_token_.empty()) return "dev";
+    const std::string auth = req.get_header_value("Authorization");
+    if (!api_token_.empty() && auth == ("Bearer " + api_token_)) return "dev";
+    if (!impl_token_.empty() && auth == ("Bearer " + impl_token_)) return "impl";
+    return "anon";
+}
+
+void ApiServer::handleWhoami(const httplib::Request& req, httplib::Response& res) {
+    json out;
+    out["role"] = roleOf(req);
+    out["auth_enabled"] = !(api_token_.empty() && impl_token_.empty());
+    res.set_content(out.dump(), "application/json");
+}
+
 void ApiServer::setupRoutes() {
     // 请求体上限与读写超时（防超大 body / 慢连接拖垮服务）
     server_.set_payload_max_length(16 * 1024 * 1024);  // 16 MB
@@ -602,9 +623,13 @@ void ApiServer::setupRoutes() {
             res.status = 204;
             return httplib::Server::HandlerResponse::Handled;
         }
-        // 仅保护 /api/ 业务接口；/health、/metrics 放行
-        if (!api_token_.empty() && req.path.rfind("/api/", 0) == 0) {
-            if (req.get_header_value("Authorization") != ("Bearer " + api_token_)) {
+        // 仅保护 /api/ 业务接口；/health、/metrics、/api/v1/whoami 放行（whoami 需匿名可查以决定是否弹登录）
+        if ((!api_token_.empty() || !impl_token_.empty()) && req.path.rfind("/api/", 0) == 0 &&
+            req.path != "/api/v1/whoami") {
+            const std::string auth = req.get_header_value("Authorization");
+            const bool ok = (!api_token_.empty() && auth == ("Bearer " + api_token_)) ||
+                            (!impl_token_.empty() && auth == ("Bearer " + impl_token_));
+            if (!ok) {
                 res.status = 401;
                 res.set_content(R"({"error":"Unauthorized"})", "application/json");
                 return httplib::Server::HandlerResponse::Handled;
@@ -669,6 +694,10 @@ void ApiServer::setupRoutes() {
     });
     server_.Get("/api/v1/alerts/file", [this](const auto& req, auto& res) {
         handleAlertsFile(req, res);
+    });
+    // 角色查询（前端据此决定能进哪些界面）
+    server_.Get("/api/v1/whoami", [this](const auto& req, auto& res) {
+        handleWhoami(req, res);
     });
     // 证据查看（预览页）
     server_.Get("/api/v1/evidence/list", [this](const auto& req, auto& res) {

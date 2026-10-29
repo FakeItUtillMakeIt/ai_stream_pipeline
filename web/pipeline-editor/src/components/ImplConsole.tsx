@@ -76,8 +76,9 @@ function reId(doc: PipelineDoc, newId: string, oldId: string): PipelineDoc {
   return d;
 }
 
-export default function ImplConsole({ settings, onOpenPreview, onOpenAlerts }: {
-  settings: ApiSettings; onOpenPreview: (id: string) => void; onOpenAlerts: () => void;
+export default function ImplConsole({ settings, setSettings, role, onOpenPreview, onOpenAlerts, onBackToDev }: {
+  settings: ApiSettings; setSettings: (s: ApiSettings) => void; role: 'dev' | 'impl' | 'anon' | 'unknown';
+  onOpenPreview: (id: string) => void; onOpenAlerts: () => void; onBackToDev: () => void;
 }) {
   const [insts, setInsts] = useState<Inst[]>([]);
   const [err, setErr] = useState('');
@@ -201,12 +202,14 @@ export default function ImplConsole({ settings, onOpenPreview, onOpenAlerts }: {
     <div className="impl">
       <div className="impl-top">
         <span className="impl-brand">监控实施台</span>
-        <span className="impl-role">实施模式</span>
+        <span className="impl-role">{role === 'dev' ? '研发模式' : role === 'impl' ? '实施模式' : role === 'anon' ? '未授权' : '连接中…'}</span>
         <div className="spacer" />
         <span className="impl-sub">自动同步 6s</span>
         <button className="btn sm" onClick={onOpenAlerts}>🔔 告警记录</button>
         <button className="btn sm" onClick={() => applyList(true)}>🔄 服务器同步</button>
         <button className="btn sm" onClick={openNew}>＋ 新增一路</button>
+        <button className="btn sm ghost" onClick={() => setSettings({ ...settings, token: '' })} title="退出登录">退出</button>
+        {role === 'dev' && <button className="btn sm" onClick={onBackToDev} title="当前为研发 token，可进入编辑器">研发模式 →</button>}
       </div>
       {err && <div className="impl-err">{err}</div>}
       <div className="impl-sum">

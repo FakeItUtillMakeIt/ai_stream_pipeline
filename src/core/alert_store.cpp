@@ -4,6 +4,8 @@
 #include <filesystem>
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
+#include <ctime>
 
 namespace fs = std::filesystem;
 using nlohmann::json;
@@ -27,16 +29,59 @@ void AlertStore::init(const std::string& state_dir) {
     if (inited_) return;
     std::error_code ec;
     fs::create_directories(state_dir, ec);
-    events_path_ = (fs::path(state_dir) / "alerts.jsonl").string();
+    state_dir_ = state_dir;
     proc_path_ = (fs::path(state_dir) / "alert_proc.json").string();
+    if (const char* e = std::getenv("AI_STREAM_ALERT_RETENTION_DAYS")) { int v = std::atoi(e); if (v > 0) retention_days_ = v; }
+    if (const char* e = std::getenv("AI_STREAM_ALERT_MAX_FILE_MB")) { int v = std::atoi(e); if (v > 0) max_file_bytes_ = (long)v * 1024 * 1024; }
+    if (const char* e = std::getenv("AI_STREAM_ALERT_LOAD_DAYS")) { int v = std::atoi(e); if (v > 0) load_days_ = v; }
     loadLocked();
+    pruneOldLocked();
     inited_ = true;
+}
+
+std::string AlertStore::todayStr() const {
+    std::time_t t = std::time(nullptr);
+    std::tm lt{};
+    localtime_r(&t, &lt);
+    char buf[16]; std::strftime(buf, sizeof(buf), "%Y%m%d", &lt);
+    return buf;
+}
+
+// 当天事件文件；跨天重置切片，超 max_file_bytes_ 则当天内 .N 递增
+std::string AlertStore::currentEventsFileLocked() {
+    std::string d = todayStr();
+    if (d != cur_date_) { cur_date_ = d; cur_slice_ = 0; }
+    auto mk = [&](int slice) -> std::string {
+        std::string name = slice == 0 ? ("alerts-" + d + ".jsonl")
+                                      : ("alerts-" + d + "." + std::to_string(slice) + ".jsonl");
+        return (fs::path(state_dir_) / name).string();
+    };
+    std::string path = mk(cur_slice_);
+    std::error_code ec;
+    while (fs::exists(path, ec) && fs::file_size(path, ec) > (std::uintmax_t)max_file_bytes_) {
+        cur_slice_++; path = mk(cur_slice_);
+    }
+    return path;
+}
+
+void AlertStore::pruneOldLocked() {
+    std::error_code ec;
+    std::time_t t = std::time(nullptr) - (std::time_t)retention_days_ * 86400;
+    std::tm lt{}; localtime_r(&t, &lt);
+    char buf[16]; std::strftime(buf, sizeof(buf), "%Y%m%d", &lt);
+    std::string cutoff = buf;
+    if (!fs::is_directory(state_dir_, ec)) return;
+    for (const auto& e : fs::directory_iterator(state_dir_, ec)) {
+        std::string fn = e.path().filename().string();
+        if (fn.rfind("alerts-", 0) != 0 || fn.size() < 15) continue;
+        std::string date = fn.substr(7, 8);
+        if (date < cutoff) fs::remove(e.path(), ec);
+    }
 }
 
 std::string AlertStore::uidOf(const json& r) {
     if (r.contains("uid") && r["uid"].is_string() && !r["uid"].get<std::string>().empty())
         return r["uid"].get<std::string>();
-    // 默认 uid = pipeline + alert_id（同一告警事件 occur/last/end 归并为一行）
     std::string p = r.value("pipeline", "");
     std::string a = r.contains("alert") && r["alert"].is_object() ? r["alert"].value("alert_id", "") : "";
     if (a.empty()) a = std::to_string(r.value("ts", 0));
@@ -46,69 +91,74 @@ std::string AlertStore::uidOf(const json& r) {
 void AlertStore::loadLocked() {
     recs_.clear(); proc_.clear();
     std::error_code ec;
-    // 处理状态
     if (fs::exists(proc_path_, ec)) {
-        std::ifstream in(proc_path_); json j; try { in >> j; if (j.is_object()) for (auto& kv : j.items()) proc_[kv.key()] = kv.value(); } catch (...) {}
+        std::ifstream in(proc_path_); json j;
+        try { in >> j; if (j.is_object()) for (auto& kv : j.items()) proc_[kv.key()] = kv.value(); } catch (...) {}
     }
-    // 事件（逐行 JSONL）
-    if (fs::exists(events_path_, ec)) {
-        std::ifstream in(events_path_);
-        std::string line;
-        std::vector<json> tmp;
-        while (std::getline(in, line)) {
-            if (line.empty()) continue;
-            try { json r = json::parse(line); tmp.push_back(std::move(r)); } catch (...) {}
+    // 收集 alerts-YYYYMMDD[.N].jsonl
+    std::vector<std::pair<std::string, std::string>> files;  // (date, path) 升序
+    if (fs::is_directory(state_dir_, ec)) {
+        for (const auto& e : fs::directory_iterator(state_dir_, ec)) {
+            std::string fn = e.path().filename().string();
+            if (fn.rfind("alerts-", 0) != 0 || fn.find(".jsonl") == std::string::npos) continue;
+            if (fn.size() < 15) continue;
+            files.push_back({fn.substr(7, 8), e.path().string()});
         }
-        // 按 uid merge_patch 归并（后出现的行把新字段并入已有记录，支持证据→闸门分阶段）
-        std::vector<json> merged;
-        for (auto& r : tmp) {
-            std::string uid = uidOf(r);
-            r["uid"] = uid;
-            bool done = false;
-            for (auto& m : merged) { if (m.value("uid", "") == uid) { m.merge_patch(r); done = true; break; } }
-            if (!done) merged.push_back(r);
-        }
-        // 新→旧：按 ts 降序
-        std::sort(merged.begin(), merged.end(), [](const json& a, const json& b) {
-            return a.value("ts", (int64_t)0) > b.value("ts", (int64_t)0);
-        });
-        if (merged.size() > cap_) merged.resize(cap_);
-        // 应用已保存的处理状态（缺省 new）
-        for (auto& r : merged) {
-            std::string uid = r.value("uid", "");
-            auto it = proc_.find(uid);
-            r["proc"] = (it != proc_.end() && it->second.contains("proc")) ? it->second["proc"].get<std::string>() : std::string("new");
-        }
-        recs_ = std::move(merged);
     }
+    std::sort(files.begin(), files.end());
+    // 只取最近 load_days_ 个不同日期
+    std::vector<std::string> dates;
+    for (auto it = files.rbegin(); it != files.rend(); ++it) {
+        if (dates.size() >= (size_t)load_days_) break;
+        if (std::find(dates.begin(), dates.end(), it->first) == dates.end()) dates.push_back(it->first);
+    }
+    // 旧→新读入选文件（保证同 uid 后读的行覆盖，merge 正确）
+    std::vector<json> tmp;
+    for (auto& f : files) {
+        if (std::find(dates.begin(), dates.end(), f.first) == dates.end()) continue;
+        std::ifstream in(f.second); std::string line;
+        while (std::getline(in, line)) { if (line.empty()) continue; try { tmp.push_back(json::parse(line)); } catch (...) {} }
+    }
+    std::vector<json> merged;
+    for (auto& r : tmp) {
+        std::string uid = uidOf(r); r["uid"] = uid;
+        bool done = false;
+        for (auto& m : merged) { if (m.value("uid", "") == uid) { m.merge_patch(r); done = true; break; } }
+        if (!done) merged.push_back(r);
+    }
+    std::sort(merged.begin(), merged.end(), [](const json& a, const json& b) {
+        return a.value("ts", (int64_t)0) > b.value("ts", (int64_t)0);
+    });
+    if (merged.size() > cap_) merged.resize(cap_);
+    for (auto& r : merged) {
+        std::string uid = r.value("uid", "");
+        auto it = proc_.find(uid);
+        r["proc"] = (it != proc_.end() && it->second.contains("proc")) ? it->second["proc"].get<std::string>() : std::string("new");
+    }
+    recs_ = std::move(merged);
+    cur_date_ = todayStr(); cur_slice_ = 0;
 }
 
 void AlertStore::append(json record) {
     std::lock_guard<std::mutex> lk(m_);
-    if (!record.contains("ts") || !record["ts"].is_number())
-        record["ts"] = (int64_t)0;
+    if (!record.contains("ts") || !record["ts"].is_number()) record["ts"] = (int64_t)0;
     std::string uid = uidOf(record);
     record["uid"] = uid;
-    // upsert：命中则 merge_patch 合并（保留已有字段与 proc，支持分阶段补充：证据→闸门）
+    json persisted;
     bool found = false;
     for (auto& r : recs_) {
-        if (r.value("uid", "") == uid) {
-            r.merge_patch(record);
-            found = true;
-            break;
-        }
+        if (r.value("uid", "") == uid) { r.merge_patch(record); persisted = r; found = true; break; }
     }
     if (!found) {
         record["proc"] = std::string("new");
-        recs_.insert(recs_.begin(), std::move(record));  // 新→旧
+        recs_.insert(recs_.begin(), record);
         if (recs_.size() > cap_) recs_.resize(cap_);
+        persisted = record;
     }
-    // 追加事件行（离线可重放；查询用内存）
-    if (!events_path_.empty()) {
-        std::error_code ec; fs::create_directories(fs::path(events_path_).parent_path(), ec);
-        std::ofstream out(events_path_, std::ios::app);
-        if (out) out << recs_.front().dump() << "\n";
-    }
+    std::string ef = currentEventsFileLocked();
+    std::error_code ec; fs::create_directories(fs::path(ef).parent_path(), ec);
+    std::ofstream out(ef, std::ios::app);
+    if (out) out << persisted.dump() << "\n";
 }
 
 static bool matchText(const json& r, const std::string& q) {

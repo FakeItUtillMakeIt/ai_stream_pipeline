@@ -25,11 +25,14 @@
 "queue": { "capacity": 64, "drop_policy": "drop_newest|drop_oldest|block", "push_timeout_ms": 10 }
 ```
 
-### 鉴权与请求限制
+### 鉴权与角色（研发 / 实施）
 
-- **可选鉴权**：启动前设置环境变量 `AI_STREAM_API_TOKEN=<token>`，之后所有 `/api/` 接口需携带
-  `Authorization: Bearer <token>`，否则返回 `401`；`/health`、`/metrics` 不鉴权（便于探活）。
-  未设置该变量则不启用鉴权（默认）。
+- **可选鉴权**：`AI_STREAM_API_TOKEN`=研发/管理员 token；`AI_STREAM_IMPL_TOKEN`=实施 token。设置任一即启用；所有 `/api/` 接口需带 `Authorization: Bearer <token>`，否则 `401`。都不设置则视为开放（角色=dev，向后兼容）。
+- **角色判定**：`GET /api/v1/whoami` → `{role: dev|impl|anon, auth_enabled}`。匹配 admin token→`dev`，匹配 impl token→`impl`。
+- **权限矩阵**：
+  - `impl` 允许：`pipeline/build|start|stop|delete|list|status|get-config`、`alerts/*`、`evidence/*`、`selfcheck`、`templates`(list/get)。即实施可实例化/启停/查历史，但**不能改模板与保存配置**。
+  - **dev-only（impl 调用返回 403）**：`pipeline/save-config`、`templates/save`、`templates/delete`。
+- 前端：`whoami` 返回非 dev 时，界面锁在实施台（进不去 `#/editor`，隐藏"发布为模板/保存到服务器"）；后端 403 为最终防线。
 - 请求体上限 **16 MB**，读超时 10s，写超时 60s。
 - 错误码约定：
 
@@ -37,6 +40,7 @@
 |---|---|
 | 400 | 参数缺失 / JSON 解析失败 / 配置非法 |
 | 401 | 未通过 token 鉴权 |
+| 403 | 角色权限不足（impl 调 dev-only 接口） |
 | 404 | 管道不存在 |
 | 409 | 管道 id 已存在 |
 | 413 | 请求体超过上限 |
@@ -246,7 +250,8 @@
 - **闸门之前**（`evidence` 节点，`pre_gate`）：所有触发的告警都记（不受 VLM 闸门判决影响），含 `triggered/alert_name/snapshot`。
 - **闸门之后**（`vlm_gate` 节点，`post_gate`）：判决 `decision(PUSH|HOLD|DROP|PASSTHROUGH)/verdict/confidence/reason/error/pushed/latency_ms/model/snapshot`。
 - `report` 节点在告警 PUSH 到平台时也会补 `snapshot/vlm`（可选，无 gate 时兜底）。
-存储：`<state>/alerts.jsonl`（事件，追加）+ `<state>/alert_proc.json`（处理状态）。记录字段：`uid/pipeline/ts/type/level/description/proc/pre_gate/post_gate/snapshot/vlm/alert`。
+存储：`<state>/alerts-YYYYMMDD[.N].jsonl`（事件，**按天轮转**，同天超 `AI_STREAM_ALERT_MAX_FILE_MB` 再切片）+ `<state>/alert_proc.json`（处理状态）。启动只加载最近 `AI_STREAM_ALERT_LOAD_DAYS` 天、内存裁 `cap`(5000) 条；删除超过 `AI_STREAM_ALERT_RETENTION_DAYS` 天的旧文件。记录字段：`uid/pipeline/ts/type/level/description/proc/pre_gate/post_gate/snapshot/vlm/alert`。
+> 环境变量：`AI_STREAM_ALERT_RETENTION_DAYS`(默认90)、`AI_STREAM_ALERT_MAX_FILE_MB`(默认50)、`AI_STREAM_ALERT_LOAD_DAYS`(默认90)。
 
 - `GET /api/v1/alerts?pipeline=&type=&proc=&from=&to=&q=&limit=&offset=` → `{total, items[]}`（新→旧）
   - `proc ∈ all|new|ack|dismiss|resolve`；`from/to` epoch 毫秒；`q` 匹配 描述/类型/管道。

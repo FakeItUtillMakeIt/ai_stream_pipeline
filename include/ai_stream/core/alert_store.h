@@ -47,13 +47,21 @@ private:
     void loadLocked();
     void persistProcLocked();
     std::string uidOf(const nlohmann::json& r);
+    std::string todayStr() const;                 // 本地 YYYYMMDD
+    std::string currentEventsFileLocked();        // 当天文件(必要时按量切片 .N)，必要时轮转
+    void pruneOldLocked();                        // 删除超过保留天数的旧文件
 
     std::mutex m_;
     std::vector<nlohmann::json> recs_;          // 新→旧
     std::map<std::string, nlohmann::json> proc_;// uid -> {proc,note,by,ts}
-    std::string events_path_, proc_path_;
+    std::string state_dir_, proc_path_;
+    std::string cur_date_;                       // 当前写入的日期串
+    int cur_slice_ = 0;                          // 当天第几个切片
     bool inited_ = false;
-    size_t cap_ = 5000;
+    size_t cap_ = 500;                          // 内存保留条数
+    long max_file_bytes_ = 50L * 1024 * 1024;    // 单文件上限(超出当天内切片)
+    int load_days_ = 90;                          // 启动加载最近 N 天（与保留期一致；内存由 cap 兜底）
+    int retention_days_ = 90;                    // 保留天数
 };
 
 } // namespace core

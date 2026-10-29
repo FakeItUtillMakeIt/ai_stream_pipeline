@@ -144,6 +144,11 @@ private:
 
     // 可选 bearer token 鉴权（环境变量 AI_STREAM_API_TOKEN，未设置则不启用）
     std::string api_token_;
+    // 实施角色 token（AI_STREAM_IMPL_TOKEN）：受限，禁改模板/保存配置
+    std::string impl_token_;
+    // 角色判定：无 token 配置=dev(开放)；匹配 admin=dev；匹配 impl=impl；否则 anon
+    std::string roleOf(const httplib::Request& req) const;
+    void handleWhoami(const httplib::Request& req, httplib::Response& res);
 };
 
 } // namespace http

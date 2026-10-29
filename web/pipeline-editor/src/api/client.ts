@@ -40,6 +40,7 @@ export const api = {
     req(s, 'GET', '/api/v1/evidence/list?pipeline=' + encodeURIComponent(pipeline)),
   selfcheck: (s: ApiSettings, id: string) =>
     req(s, 'GET', '/api/v1/selfcheck?id=' + encodeURIComponent(id)),
+  whoami: (s: ApiSettings) => req(s, 'GET', '/api/v1/whoami'),
   templates: (s: ApiSettings) => req(s, 'GET', '/api/v1/templates'),
   templateGet: (s: ApiSettings, name: string) => req(s, 'GET', '/api/v1/templates/get?name=' + encodeURIComponent(name)),
   templateSave: (s: ApiSettings, tpl: unknown) => req(s, 'POST', '/api/v1/templates/save', tpl),
