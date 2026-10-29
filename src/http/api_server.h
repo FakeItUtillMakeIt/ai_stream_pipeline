@@ -79,6 +79,11 @@ private:
     void handleTemplatesSave(const httplib::Request& req, httplib::Response& res);
     void handleTemplatesDelete(const httplib::Request& req, httplib::Response& res);
     std::string templatesDir() const;   // <state>/templates（不存在则创建）
+    // 告警历史：查询 / 确认 / 统计
+    void handleAlertsList(const httplib::Request& req, httplib::Response& res);
+    void handleAlertsAck(const httplib::Request& req, httplib::Response& res);
+    void handleAlertsStats(const httplib::Request& req, httplib::Response& res);
+    void handleAlertsFile(const httplib::Request& req, httplib::Response& res);  // 取告警快照(限 CWD 内 + Range)
     // 证据查看（预览页）：列目录 / 取文件（限制在该管道 evidence 目录内）
     void handleEvidenceList(const httplib::Request& req, httplib::Response& res);
     void handleEvidenceFile(const httplib::Request& req, httplib::Response& res);

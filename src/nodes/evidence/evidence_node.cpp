@@ -3,6 +3,9 @@
 #include "evidence_node.h"
 #include "registry/node_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
+#include "ai_stream/core/alert_store.h"
+#include "ai_stream/core/pipeline.h"
+#include <nlohmann/json.hpp>
 #ifdef WITH_FTP
 #include "ftp_uploader.h"
 #endif
@@ -212,8 +215,34 @@ void EvidenceNode::handleFrame(std::shared_ptr<core::VideoFramePacket> frame) {
     }
 }
 
+void EvidenceNode::recordHistory(const std::shared_ptr<core::InferenceResultPacket>& packet) {
+    if (!packet) return;
+    const std::string pid = pipeline_.lock() ? pipeline_.lock()->getId() : name_;
+    for (const auto& result : packet->alert_result) {
+        for (const auto& ev : result.alert_events) {
+            if (ev.status != rules::AlertStatus::ALERT_STATUS_OCCUR) continue;
+            nlohmann::json evj = ev.toJson();
+            nlohmann::json rec;
+            rec["uid"] = core::AlertStore::makeUid(pid, ev.alert_id, static_cast<int>(ev.alert_type), ev.detect_ms);
+            rec["pipeline"] = pid;
+            rec["ts"] = ev.detect_ms;
+            rec["type"] = evj.value("alert_type_name", std::string());
+            rec["level"] = evj.value("level_name", std::string());
+            rec["description"] = ev.description;
+            // 闸门之前（证据层）：已触发 + 快照（若已落）
+            nlohmann::json pre = {{"triggered", true}, {"alert_name", ev.alert_name}};
+            if (ev.extra_data.is_object() && ev.extra_data.contains("snapshot_path"))
+                pre["snapshot"] = ev.extra_data["snapshot_path"];
+            rec["pre_gate"] = std::move(pre);
+            core::AlertStore::instance().append(std::move(rec));
+        }
+    }
+}
+
 void EvidenceNode::handleAlertTrigger(std::shared_ptr<core::InferenceResultPacket> packet) {
     if (!packet) return;
+
+    recordHistory(packet);   // 闸门之前：先落基础告警历史（含类型/级别/描述）
 
     for (const auto& result : packet->alert_result) {
         for (const auto& event : result.alert_events) {
@@ -266,6 +295,7 @@ void EvidenceNode::trySavePendingSnapshot(std::shared_ptr<core::VideoFramePacket
                 }
             }
         }
+        recordHistory(packet);   // 快照已落 → merge 补 pre_gate.snapshot
         broadcast(packet);
     }
 }

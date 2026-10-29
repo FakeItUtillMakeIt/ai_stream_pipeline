@@ -10,6 +10,7 @@ import PropertyPanel from './components/PropertyPanel';
 import PipelineNode from './components/PipelineNode';
 import PreviewView from './components/PreviewView';
 import ImplConsole from './components/ImplConsole';
+import AlertsView from './components/AlertsView';
 import { defaultParams } from './schema/nodeSchema';
 import { toFlow, fromFlow } from './graph/flow';
 import { validate, hasErrors, Issue } from './graph/validation';
@@ -25,12 +26,13 @@ interface SrvInfo { running: boolean; state: string; }
 
 const sig = (d: unknown) => JSON.stringify(d);
 
-// URL(hash) 入口：#/impl=实施台，#/preview=预览，其余=研发编辑器
-type ViewName = 'editor' | 'preview' | 'impl';
+// URL(hash) 入口：#/impl=实施台，#/preview=预览，#/alerts=告警记录，其余=研发编辑器
+type ViewName = 'editor' | 'preview' | 'impl' | 'alerts';
 function viewFromHash(): ViewName {
   const h = (location.hash || '').toLowerCase();
   if (h.includes('impl')) return 'impl';
   if (h.includes('preview')) return 'preview';
+  if (h.includes('alert')) return 'alerts';
   return 'editor';
 }
 
@@ -392,7 +394,18 @@ function Editor() {
     return (
       <div className={`app theme-${theme}`}>
         <ImplConsole settings={settings}
-          onOpenPreview={(id) => { setPreviewId(id); setPreviewFrom('impl'); setView('preview'); }} />
+          onOpenPreview={(id) => { setPreviewId(id); setPreviewFrom('impl'); setView('preview'); }}
+          onOpenAlerts={() => { setPreviewFrom('impl'); setView('alerts'); }} />
+      </div>
+    );
+  }
+
+  if (view === 'alerts') {
+    return (
+      <div className={`app theme-${theme}`}>
+        <AlertsView settings={settings} initialPipeline={previewId}
+          backLabel={previewFrom === 'impl' ? '← 返回实施' : '← 返回编辑'}
+          onBack={() => { setView(previewFrom); refreshStatus(); }} />
       </div>
     );
   }
@@ -440,6 +453,7 @@ function Editor() {
         <button className="btn danger" onClick={doDelete}>Delete</button>
         <button className="btn" onClick={() => syncFromServer()} title="拉取服务器管道列表/运行态，并导入外部新建的管道">同步服务器</button>
         <button className="btn" onClick={() => { commitActive(); setPreviewFrom('editor'); setView('preview'); }} title="查看运行/预览/证据/指标">预览 ▶</button>
+        <button className="btn" onClick={() => { commitActive(); setPreviewFrom('editor'); setView('alerts'); }} title="告警历史/检索/确认">告警记录</button>
         <button className="btn" onClick={() => { commitActive(); setView('impl'); }} title="切换到实施控制台（受限视图）">实施台</button>
         <button className="btn" onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}>{theme === 'dark' ? '☀' : '🌙'}</button>
       </div>

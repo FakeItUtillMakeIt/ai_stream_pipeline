@@ -76,8 +76,8 @@ function reId(doc: PipelineDoc, newId: string, oldId: string): PipelineDoc {
   return d;
 }
 
-export default function ImplConsole({ settings, onOpenPreview }: {
-  settings: ApiSettings; onOpenPreview: (id: string) => void;
+export default function ImplConsole({ settings, onOpenPreview, onOpenAlerts }: {
+  settings: ApiSettings; onOpenPreview: (id: string) => void; onOpenAlerts: () => void;
 }) {
   const [insts, setInsts] = useState<Inst[]>([]);
   const [err, setErr] = useState('');
@@ -200,6 +200,7 @@ export default function ImplConsole({ settings, onOpenPreview }: {
         <span className="impl-role">实施模式</span>
         <div className="spacer" />
         <span className="impl-sub">自动同步 6s</span>
+        <button className="btn sm" onClick={onOpenAlerts}>🔔 告警记录</button>
         <button className="btn sm" onClick={() => applyList(true)}>🔄 服务器同步</button>
         <button className="btn sm" onClick={openNew}>＋ 新增一路</button>
       </div>

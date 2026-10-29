@@ -1,6 +1,7 @@
 // src/http/api_server.cpp
 #include "api_server.h"
 #include "ai_stream/core/metrics.h"
+#include "ai_stream/core/alert_store.h"
 #include "ai_stream/hal/backend_diagnostics.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 #include <nlohmann/json.hpp>
@@ -53,6 +54,7 @@ ApiServer::ApiServer(bool async_mode) : async_mode_(async_mode) {
         const char* sd = std::getenv("AI_STREAM_STATE_DIR");
         reqlog_ = std::make_unique<RequestLog>(sd && *sd ? sd : "./api_state");
     }
+    core::AlertStore::instance().init(reqlog_->stateDir());   // 告警历史持久化到同一状态目录
     hal::logAvailableBackends();
     setupRoutes();
 }
@@ -530,51 +532,59 @@ void ApiServer::handleEvidenceFile(const httplib::Request& req, httplib::Respons
     if (absFull.compare(0, absBase.size(), absBase) != 0) {  // 越界防护
         res.status = 403; res.set_content(R"({"error":"forbidden"})", "application/json"); return;
     }
-    std::ifstream in(absFull, std::ios::binary | std::ios::ate);
+    std::ifstream in(absFull, std::ios::binary);
     if (!in) { res.status = 404; res.set_content(R"({"error":"not found"})", "application/json"); return; }
-    const long long fsize = static_cast<long long>(in.tellg());
+    std::stringstream ss; ss << in.rdbuf();
     res.set_header("Accept-Ranges", "bytes");
+    res.set_content(ss.str(), evidenceMime(name));   // Range 由 httplib 自动处理(206/Content-Range)
+}
 
-    // 解析 Range: bytes=start-end（支持 mp4 播放/拖动；浏览器先发 bytes=0-）
-    long long start = 0, end = fsize - 1;
-    bool partial = false;
-    if (req.has_header("Range")) {
-        std::string r = req.get_header_value("Range");
-        const std::string pfx = "bytes=";
-        if (r.compare(0, pfx.size(), pfx) == 0) {
-            std::string spec = r.substr(pfx.size());
-            auto comma = spec.find(',');
-            if (comma != std::string::npos) spec = spec.substr(0, comma);  // 只取第一段
-            auto dash = spec.find('-');
-            std::string s1 = dash == std::string::npos ? spec : spec.substr(0, dash);
-            std::string s2 = dash == std::string::npos ? "" : spec.substr(dash + 1);
-            if (s1.empty() && !s2.empty()) {                 // bytes=-N（末尾 N 字节）
-                long long n = std::atoll(s2.c_str());
-                start = std::max<long long>(0, fsize - n); end = fsize - 1;
-            } else {
-                if (!s1.empty()) start = std::atoll(s1.c_str());
-                if (!s2.empty()) end = std::atoll(s2.c_str());
-            }
-            if (start > end || start >= fsize) {             // 越界
-                res.status = 416;
-                res.set_header("Content-Range", "bytes */" + std::to_string(fsize));
-                res.set_content("", "text/plain"); return;
-            }
-            end = std::min<long long>(end, fsize - 1);
-            partial = true;
-        }
+void ApiServer::handleAlertsList(const httplib::Request& req, httplib::Response& res) {
+    const std::string pipeline = req.get_param_value("pipeline");
+    const std::string type = req.get_param_value("type");
+    const std::string proc = req.get_param_value("proc");
+    const std::string q = req.get_param_value("q");
+    int64_t from = std::atoll(req.get_param_value("from").c_str());
+    int64_t to = std::atoll(req.get_param_value("to").c_str());
+    int limit = req.get_param_value("limit").empty() ? 50 : std::atoi(req.get_param_value("limit").c_str());
+    int offset = std::atoi(req.get_param_value("offset").c_str());
+    int total = 0;
+    json out = core::AlertStore::instance().query(pipeline, type, proc, from, to, q, limit, offset, total);
+    res.set_content(out.dump(), "application/json");
+}
+
+void ApiServer::handleAlertsAck(const httplib::Request& req, httplib::Response& res) {
+    json body; if (!parseJsonBody(req, res, body)) return;
+    const std::string uid = body.value("uid", "");
+    const std::string proc = body.value("proc", "ack");
+    if (uid.empty()) { res.status = 400; res.set_content(R"({"error":"Missing uid"})", "application/json"); return; }
+    if (proc != "new" && proc != "ack" && proc != "dismiss" && proc != "resolve") {
+        res.status = 400; res.set_content(R"({"error":"proc ∈ new|ack|dismiss|resolve"})", "application/json"); return;
     }
-    long long len = end - start + 1;
-    std::vector<char> buf(static_cast<size_t>(len));
-    in.seekg(start, std::ios::beg);
-    in.read(buf.data(), len);
-    buf.resize(static_cast<size_t>(in.gcount()));
-    if (partial) {
-        res.status = 206;
-        res.set_header("Content-Range",
-                       "bytes " + std::to_string(start) + "-" + std::to_string(end) + "/" + std::to_string(fsize));
+    bool ok = core::AlertStore::instance().setProc(uid, proc, body.value("note", ""), body.value("by", ""));
+    if (!ok) { res.status = 404; res.set_content(json{{"error", "alert not found"}, {"uid", uid}}.dump(), "application/json"); return; }
+    res.set_content(json{{"status", "ok"}, {"uid", uid}, {"proc", proc}}.dump(), "application/json");
+}
+
+void ApiServer::handleAlertsStats(const httplib::Request& req, httplib::Response& res) {
+    res.set_content(core::AlertStore::instance().stats(req.get_param_value("pipeline")).dump(), "application/json");
+}
+
+void ApiServer::handleAlertsFile(const httplib::Request& req, httplib::Response& res) {
+    const std::string p = req.get_param_value("path");
+    if (p.empty()) { res.status = 400; res.set_content(R"({"error":"Missing path"})", "application/json"); return; }
+    std::error_code ec;
+    fs::path cwd = fs::current_path(ec);
+    fs::path abs = fs::absolute(p, ec).lexically_normal();
+    std::string absN = abs.string(), cwdN = cwd.lexically_normal().string();
+    if (absN.compare(0, cwdN.size(), cwdN) != 0) {  // 只能取服务器运行目录内的文件
+        res.status = 403; res.set_content(R"({"error":"forbidden"})", "application/json"); return;
     }
-    res.set_content(std::string(buf.data(), buf.size()), evidenceMime(name));
+    std::ifstream in(absN, std::ios::binary);
+    if (!in) { res.status = 404; res.set_content(R"({"error":"not found"})", "application/json"); return; }
+    std::stringstream ss; ss << in.rdbuf();
+    res.set_header("Accept-Ranges", "bytes");
+    res.set_content(ss.str(), evidenceMime(absN));   // Range 交给 httplib 自动处理(206/Content-Range)
 }
 
 void ApiServer::setupRoutes() {
@@ -646,6 +656,19 @@ void ApiServer::setupRoutes() {
     });
     server_.Post("/api/v1/templates/delete", [this](const auto& req, auto& res) {
         handleTemplatesDelete(req, res);
+    });
+    // 告警历史
+    server_.Get("/api/v1/alerts", [this](const auto& req, auto& res) {
+        handleAlertsList(req, res);
+    });
+    server_.Post("/api/v1/alerts/ack", [this](const auto& req, auto& res) {
+        handleAlertsAck(req, res);
+    });
+    server_.Get("/api/v1/alerts/stats", [this](const auto& req, auto& res) {
+        handleAlertsStats(req, res);
+    });
+    server_.Get("/api/v1/alerts/file", [this](const auto& req, auto& res) {
+        handleAlertsFile(req, res);
     });
     // 证据查看（预览页）
     server_.Get("/api/v1/evidence/list", [this](const auto& req, auto& res) {

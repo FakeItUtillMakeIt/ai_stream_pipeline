@@ -3,6 +3,8 @@
 #include "registry/node_factory.h"
 #include "utils/http_util.h"
 #include "utils/time_util.h"
+#include "ai_stream/core/alert_store.h"
+#include "ai_stream/core/pipeline.h"
 
 #include <nlohmann/json.hpp>
 #include <opencv2/core.hpp>
@@ -84,12 +86,14 @@ void ReportSinkNode::processPacket(std::shared_ptr<core::BasePacket> packet)
         broadcast(packet);   // 终端节点也需把 STREAM_END 透传（本无下游则空转）
         return;
     }
-    if (packet->type != core::PacketType::META_DATA || !cfg_.enabled)
+    if (packet->type != core::PacketType::META_DATA)
         return;
 
     auto infer = std::static_pointer_cast<core::InferenceResultPacket>(packet);
     if (!infer)
         return;
+
+    const std::string pid = pipeline_.lock() ? pipeline_.lock()->getId() : name_;
 
     std::vector<std::string> headers = cfg_.headers;
     if (!cfg_.api_key.empty())
@@ -99,6 +103,26 @@ void ReportSinkNode::processPacket(std::shared_ptr<core::BasePacket> packet)
         for (const auto& ev : result.alert_events) {
           try {
             // 到这里的事件已是"可上报"的（无 gate 时为全部告警，有 gate 时为判真告警）
+
+            // 落本地告警历史（与是否上报平台无关）；按 uid=pipeline#alert_id upsert 归并
+            {
+                json evj = ev.toJson();
+                json rec;
+                rec["uid"] = core::AlertStore::makeUid(pid, ev.alert_id, static_cast<int>(ev.alert_type), ev.detect_ms);
+                rec["pipeline"] = pid;
+                rec["ts"] = ev.detect_ms;
+                rec["type"] = evj.value("alert_type_name", std::string());
+                rec["level"] = evj.value("level_name", std::string());
+                rec["description"] = ev.description;
+                rec["alert"] = evj;
+                if (ev.extra_data.is_object()) {
+                    if (ev.extra_data.contains("snapshot_path")) rec["snapshot"] = ev.extra_data["snapshot_path"];
+                    if (ev.extra_data.contains("vlm")) rec["vlm"] = ev.extra_data["vlm"];
+                }
+                core::AlertStore::instance().append(std::move(rec));
+            }
+            if (!cfg_.enabled) continue;   // 未开启平台上报：仅记历史，不 POST
+
             json payload;
             payload["source"] = cfg_.source;
             payload["report_ts_ms"] = utils::TimeUtil::currentTimeMs();

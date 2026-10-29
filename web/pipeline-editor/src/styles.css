@@ -252,3 +252,43 @@ body { background: var(--bg); }
 .impl-pkver { font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 20px; padding: 0 6px; margin-left: 4px; }
 .impl-pkmeta { display: flex; gap: 12px; flex-wrap: wrap; color: var(--muted); font-size: 11px; margin-top: 4px; }
 .impl-pkchips { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+
+/* ===== 告警记录页 ===== */
+.alerts { display: flex; flex-direction: column; width: 100%; height: 100vh; color: var(--text); }
+.al-top { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--topbar); color: var(--topbar-fg); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.al-title { font-weight: 700; }
+.al-top select, .al-q { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 4px 8px; font-size: 13px; }
+.al-q { width: 180px; }
+.al-stat { font-size: 12px; color: var(--dim); }
+.al-stat b { color: var(--text); }
+.al-err { padding: 8px 12px; color: var(--danger); background: rgba(255,80,80,.08); }
+.al-body { flex: 1; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.al-empty { color: var(--muted); text-align: center; padding: 32px; }
+.al-row { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+.al-row.unhandled { border-left: 3px solid var(--err); }
+.al-thumb { width: 120px; height: 72px; object-fit: cover; border-radius: 6px; background: #000; cursor: pointer; flex: none; }
+.al-main { flex: 1 1 200px; min-width: 0; cursor: pointer; }
+.al-h { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.al-proc { font-size: 11px; padding: 1px 8px; border-radius: 20px; border: 1px solid var(--border); color: var(--dim); }
+.al-proc.new { color: #ff9c96; border-color: #5a2b2b; background: rgba(248,81,73,.1); }
+.al-proc.ack { color: #9cc2ff; border-color: #3a5a8c; background: rgba(76,141,255,.1); }
+.al-proc.dismiss { color: var(--muted); }
+.al-proc.resolve { color: #7ee2a0; border-color: #2f5d38; background: rgba(63,185,80,.1); }
+.al-type { font-weight: 600; }
+.al-level { font-size: 11px; color: var(--warn); }
+.al-level.critical { color: var(--err); } .al-level.error { color: var(--err); } .al-level.info { color: var(--dim); }
+.al-pipe { font-size: 11px; color: var(--muted); }
+.al-desc { margin-top: 4px; font-size: 13px; color: var(--text); word-break: break-word; }
+.al-time { margin-top: 2px; font-size: 11px; color: var(--muted); }
+.al-layers { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 5px; }
+.al-layer { font-size: 11px; padding: 1px 8px; border-radius: 20px; border: 1px solid var(--border); color: var(--dim); }
+.al-layer.pre { color: #9cc2ff; border-color: #3a5a8c; }
+.al-layer.post.PUSH { color: #7ee2a0; border-color: #2f5d38; background: rgba(63,185,80,.1); }
+.al-layer.post.HOLD { color: #e8c46a; border-color: #6a5a2a; background: rgba(210,153,34,.1); }
+.al-layer.post.DROP { color: var(--muted); }
+.al-layer.post.PASSTHROUGH { color: var(--dim); }
+.al-layer.post.none { color: var(--muted); border-style: dashed; }
+.al-acts { display: flex; gap: 5px; flex-wrap: wrap; justify-content: flex-end; max-width: 220px; }
+.al-detail { flex-basis: 100%; }
+.al-json { background: var(--log-bg); color: var(--log-fg); padding: 10px; border-radius: 6px; overflow: auto; font-size: 12px; max-height: 320px; }
+.al-foot { padding: 8px 12px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; background: var(--panel); }

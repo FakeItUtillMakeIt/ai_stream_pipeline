@@ -3,6 +3,8 @@
 #include "registry/node_factory.h"
 #include "utils/http_util.h"
 #include "utils/time_util.h"
+#include "ai_stream/core/alert_store.h"
+#include "ai_stream/core/pipeline.h"
 
 #include <nlohmann/json.hpp>
 #include <opencv2/core.hpp>
@@ -273,6 +275,26 @@ void VlmGateNode::touchCooldown(const std::string& key, long long now_ms)
 void VlmGateNode::appendAudit(const core::InferenceResultPacket& pkt, const rules::AlertEvent& ev,
                               const std::string& snap_path, const Verdict& v)
 {
+    // 闸门之后：把判决 merge 进告警历史（与证据层同一 uid），便于前后对比。不受 review 开关限制。
+    {
+        const std::string pid = pipeline_.lock() ? pipeline_.lock()->getId() : name_;
+        json pg;
+        pg["decision"] = v.decision;
+        pg["verdict"] = v.verdict;
+        pg["confidence"] = v.confidence;
+        pg["reason"] = v.reason;
+        pg["error"] = v.error;
+        pg["pushed"] = v.pushed;
+        pg["latency_ms"] = v.latency_ms;
+        pg["model"] = cfg_.model;
+        if (!snap_path.empty()) pg["snapshot"] = snap_path;
+        json rec;
+        rec["uid"] = core::AlertStore::makeUid(pid, ev.alert_id, static_cast<int>(ev.alert_type), ev.detect_ms);
+        rec["pipeline"] = pid;
+        rec["post_gate"] = std::move(pg);
+        core::AlertStore::instance().append(std::move(rec));
+    }
+
     if (review_path_.empty())
         return;
     json rec;

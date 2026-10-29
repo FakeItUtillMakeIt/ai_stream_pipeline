@@ -241,6 +241,22 @@
 
 > 前端：研发编辑器「发布为模板」（自动探测 源/rtmp_sink/alert 节点生成 overrides）；实施台「新增一路」从模板库选择并实例化。
 
+## 告警历史（记录 / 检索 / 确认）
+**分层记录**，按 `uid = pipeline#alert_id` merge 归并（同一告警一行，前后对比）：
+- **闸门之前**（`evidence` 节点，`pre_gate`）：所有触发的告警都记（不受 VLM 闸门判决影响），含 `triggered/alert_name/snapshot`。
+- **闸门之后**（`vlm_gate` 节点，`post_gate`）：判决 `decision(PUSH|HOLD|DROP|PASSTHROUGH)/verdict/confidence/reason/error/pushed/latency_ms/model/snapshot`。
+- `report` 节点在告警 PUSH 到平台时也会补 `snapshot/vlm`（可选，无 gate 时兜底）。
+存储：`<state>/alerts.jsonl`（事件，追加）+ `<state>/alert_proc.json`（处理状态）。记录字段：`uid/pipeline/ts/type/level/description/proc/pre_gate/post_gate/snapshot/vlm/alert`。
+
+- `GET /api/v1/alerts?pipeline=&type=&proc=&from=&to=&q=&limit=&offset=` → `{total, items[]}`（新→旧）
+  - `proc ∈ all|new|ack|dismiss|resolve`；`from/to` epoch 毫秒；`q` 匹配 描述/类型/管道。
+- `POST /api/v1/alerts/ack` → `{uid, proc, note?, by?}`；非法 proc `400`，不存在 `404`。
+- `GET /api/v1/alerts/stats?pipeline=` → `{new,ack,dismiss,resolve,total}`
+- `GET /api/v1/alerts/file?path=` → 取告警快照（限服务器运行目录内，越界 `403`；Range 由 httplib 处理）
+
+> 前端 `#/alerts`：时间线 + 过滤(管道/类型/处理状态/**闸门判决**/时间/搜索) + 每行显示「① 触发(证据) / ② 闸门(PUSH/HOLD/DROP+conf)」前后对比 + 缩略图 + 确认/误报/已解决 + 详情 JSON。
+> 注：需 `evidence` 节点记录闸门之前；有 `vlm_gate` 才有 `post_gate`。这样即使闸门 HOLD/DROP（report 收不到）也能在历史里看到并对比。
+
 ## 证据与预览（预览页专用）
 
 实时预览（方案 A）：浏览器不能直接播 RTMP。`rtmp_sink` 推到外部媒体服务器（mediamtx / nginx-rtmp），由其转成 **HLS(.m3u8) 或 WebRTC**；把该播放地址填进 sink 节点的 `play_url`，前端预览页用 hls.js 播放。后端不转码，仅提供播放地址来源与证据文件。

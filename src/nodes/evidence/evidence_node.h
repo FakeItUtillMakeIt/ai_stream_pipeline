@@ -35,6 +35,7 @@ protected:
 private:
     void handleFrame(std::shared_ptr<core::VideoFramePacket> frame);
     void handleAlertTrigger(std::shared_ptr<core::InferenceResultPacket> packet);
+    void recordHistory(const std::shared_ptr<core::InferenceResultPacket>& packet);
 
     void startRecording(const rules::AlertEvent& event);
     void stopRecording();
