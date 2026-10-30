@@ -445,7 +445,8 @@ function Editor() {
   return (
     <div className={`app theme-${theme}`}>
       <div className="topbar">
-        <span className="title">Pipeline Editor</span>
+        <div className="brand"><span className="logo" />Pipeline Editor</div>
+        <div className="sep" />
         <select className="pid" value={activeId} onChange={(e) => switchTo(e.target.value)} title="切换已加载的管道">
           <option value="">（选择管道）</option>
           {pipelineIds.map((id) => (
@@ -455,28 +456,39 @@ function Editor() {
         <input className="pid" value={idDraft} placeholder="管道 id（改名）"
           onChange={(e) => setIdDraft(e.target.value)} onBlur={(e) => renameActive(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} title="当前管道 id，可改名" />
-        <button className="btn tiny" onClick={newPipeline} title="新建管道">＋新建</button>
-        <span className="dirty-flag" title={anyDirty ? '有改动未保存到服务器' : '已全部保存'}>{anyDirty ? '✎ 未保存' : '✓ 已保存'}</span>
+        <button className="btn" onClick={newPipeline} title="新建管道">＋新建</button>
+        <span className={'pill ' + (anyDirty ? 'dirty' : 'saved')} title={anyDirty ? '有改动未保存到服务器' : '已全部保存'}>{anyDirty ? '✎ 未保存' : '✓ 已保存'}</span>
+
+        <div className="sep" />
+        <div className="group">
+          <span className="glabel">设计</span>
+          <button className="btn" onClick={() => fileRef.current?.click()}><span className="ic">⭳</span>导入</button>
+          <input ref={fileRef} type="file" accept=".json" hidden onChange={(e) => e.target.files?.[0] && importJson(e.target.files[0])} />
+          <button className="btn" onClick={exportJson}><span className="ic">⭱</span>导出</button>
+          <button className="btn" onClick={doValidate}><span className="ic">✓</span>校验</button>
+          <button className="btn" onClick={doSave}><span className="ic">⤓</span>保存到服务器</button>
+          <button className="btn ok" onClick={openPublish} title="把当前管道发布为模板，供实施台选用"><span className="ic">◆</span>发布为模板</button>
+        </div>
+
+        <div className="sep" />
+        <div className="group">
+          <span className="glabel">调试</span>
+          <button className="btn primary" onClick={doBuild}><span className="ic">🛠</span>Build</button>
+          <button className="btn ok" onClick={doStart}><span className="ic">▶</span>Start</button>
+          <button className="btn warn" onClick={doStop}><span className="ic">⏸</span>Stop</button>
+          <button className="btn danger" onClick={doDelete}><span className="ic">🗑</span>Delete</button>
+        </div>
+
         <div className="spacer" />
-        <button className="btn" onClick={() => fileRef.current?.click()}>导入</button>
-        <input ref={fileRef} type="file" accept=".json" hidden onChange={(e) => e.target.files?.[0] && importJson(e.target.files[0])} />
-        <button className="btn" onClick={exportJson}>导出JSON</button>
-        <button className="btn" onClick={doValidate}>校验</button>
-        <button className="btn" onClick={doSave}>保存到服务器</button>
-        <button className="btn" onClick={openPublish} title="把当前管道发布为模板，供实施台选用">发布为模板</button>
-        <label className="chk" title="已存在同 id 管道时，先停止并销毁再重建（改完配置直接 Build）">
-          <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />覆盖重建
-        </label>
-        <button className="btn primary" onClick={doBuild}>Build</button>
-        <button className="btn" onClick={doStart}>Start</button>
-        <button className="btn" onClick={doStop}>Stop</button>
-        <button className="btn danger" onClick={doDelete}>Delete</button>
-        <button className="btn" onClick={() => syncFromServer()} title="拉取服务器管道列表/运行态，并导入外部新建的管道">同步服务器</button>
-        <button className="btn" onClick={() => { commitActive(); setPreviewFrom('editor'); setView('preview'); }} title="查看运行/预览/证据/指标">预览 ▶</button>
-        <button className="btn" onClick={() => { commitActive(); setPreviewFrom('editor'); setView('alerts'); }} title="告警历史/检索/确认">告警记录</button>
-        <button className="btn" onClick={() => { commitActive(); setView('impl'); }} title="切换到实施控制台（受限视图）">实施台</button>
-        {authEnabled && <button className="btn" onClick={() => setSettings({ ...settings, token: '' })} title="退出登录">退出</button>}
-        <button className="btn" onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}>{theme === 'dark' ? '☀' : '🌙'}</button>
+        <label className={'switch' + (overwrite ? ' on' : '')} onClick={() => setOverwrite(!overwrite)} title="已存在同 id 时先停止销毁再重建"><span className="track" />覆盖重建</label>
+        <button className="btn ghost icon" onClick={() => syncFromServer()} title="同步服务器（拉运行态并导入外部新建管道）">⟳</button>
+        <div className="seg">
+          <button className="on" onClick={() => setView('editor')}>编辑器</button>
+          <button onClick={() => { commitActive(); setView('impl'); }}>实施台</button>
+          <button onClick={() => { commitActive(); setPreviewFrom('editor'); setView('preview'); }}>预览</button>
+        </div>
+        <button className="btn ghost icon" onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))} title="主题">{theme === 'dark' ? '☀' : '🌙'}</button>
+        {authEnabled && <button className="btn ghost icon" onClick={() => setSettings({ ...settings, token: '' })} title="退出登录">⏻</button>}
       </div>
 
       <div className="main">

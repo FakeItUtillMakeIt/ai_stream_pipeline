@@ -4,6 +4,13 @@ import { PipelineDoc, getPath, setPath, Overrides, TemplateDef, detectOverrides 
 
 const SOURCE_TYPES = ['file_source', 'rtsp_source'];
 const THRESH_KEYS = ['relation_threshold', 'conf_threshold', 'confidence_threshold', 'score_threshold'];
+// 常用摄像头预设（按需修改）；下拉里还会自动带上"模板自带地址"
+const PRESET_SOURCE_URLS = [
+  'rtsp://192.168.1.101:554/',
+  'rtsp://192.168.1.102:554/',
+  'rtsp://192.168.1.103:554/',
+  'rtsp://192.168.1.104:554/',
+];
 
 interface CheckItem { key: string; label: string; level: 'ok' | 'warn' | 'err' | 'idle'; detail: string; }
 
@@ -299,8 +306,17 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
               )}
               {edit.ov.source_url && (
                 <div className="impl-field"><label>{edit.ov.source_url.label || '拉流地址'}</label>
-                  <input type="text" value={edit.url} onChange={(e) => setEdit({ ...edit, url: e.target.value })} />
-                  <div className="impl-hint">支持 rtsp:// / rtmp:// / file:///</div></div>
+                  {(() => {
+                    const tplUrl = derive(edit.draft).sourceUrl;
+                    const opts = [...(tplUrl ? [tplUrl] : []), ...PRESET_SOURCE_URLS.filter((u) => u !== tplUrl)];
+                    const val = opts.includes(edit.url) ? edit.url : (opts[0] || '');
+                    return (
+                      <select value={val} onChange={(e) => setEdit({ ...edit, url: e.target.value })}>
+                        {opts.map((u) => <option key={u} value={u}>{u}</option>)}
+                      </select>
+                    );
+                  })()}
+                </div>
               )}
 
               {edit.ov.alerts && (
