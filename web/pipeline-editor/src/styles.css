@@ -223,7 +223,7 @@ body { background: var(--bg); }
 .impl-grid { flex: 1; overflow: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; padding: 16px; align-content: start; }
 .impl-empty { grid-column: 1/-1; color: var(--muted); padding: 24px; text-align: center; }
 .impl-card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
-.impl-card.err { border-color: #5a2b2b; } .impl-card.warn { border-color: #5a4a1f; }
+.impl-card.st-err { border-color: #5a2b2b; } .impl-card.st-warn { border-color: #5a4a1f; }
 .impl-ch { display: flex; align-items: center; gap: 8px; padding: 12px 14px 8px; }
 .impl-name { font-weight: 700; font-size: 15px; }
 .impl-tpl { color: var(--muted); font-size: 11px; }
@@ -252,6 +252,34 @@ body { background: var(--bg); }
 .impl-diagbox { margin: 0 14px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); padding: 9px 11px; font-size: 12px; }
 .impl-diagitem { display: flex; gap: 8px; align-items: center; padding: 3px 0; color: var(--dim); }
 .impl-copyc { color: var(--primary); cursor: pointer; }
+
+/* 卡片实时预览 */
+.pcv { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; border-bottom: 1px solid var(--border); }
+.pcv-live { position: absolute; inset: 0; }
+.pcv-video { width: 100%; height: 100%; object-fit: cover; background: #000; }
+.pcv-ph { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: var(--muted); font-size: 12px; background: repeating-linear-gradient(45deg, #0c0f14, #0c0f14 10px, #10141b 10px, #10141b 20px); }
+.pcv-play { font-size: 22px; color: var(--dim); }
+.pcv-err { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--err); background: rgba(0,0,0,.55); font-size: 13px; z-index: 2; }
+
+/* 实施台 视图切换 + 列表 */
+.impl-top .seg { display: inline-flex; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 2px; }
+.impl-top .seg button { border: none; background: transparent; color: var(--dim); padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+.impl-top .seg button.on { background: var(--primary); color: #fff; }
+.impl-filter { display: flex; align-items: center; gap: 10px; padding: 8px 16px; border-bottom: 1px solid var(--border); background: #10151c; }
+.impl-filter select, .impl-fq { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 5px 8px; font-size: 12px; }
+.impl-fq { width: 220px; }
+.impl-list { flex: 1; overflow: auto; }
+.iltbl { width: 100%; border-collapse: separate; border-spacing: 0; }
+.iltbl thead th { position: sticky; top: 0; z-index: 2; background: var(--panel); text-align: left; font-size: 11px; letter-spacing: .4px; text-transform: uppercase; color: var(--muted); padding: 9px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.iltbl tbody td { padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.iltbl tbody tr:hover { background: #1b2230; }
+.iltbl tbody tr.bad td:first-child { box-shadow: inset 3px 0 0 var(--err); }
+.ilc-chk { width: 34px; }
+.ilc-act { text-align: right; }
+.ilacts { display: flex; gap: 4px; justify-content: flex-end; flex-wrap: wrap; }
+.iltbl .impl-url { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; }
+.ilbulk { position: sticky; bottom: 0; display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: #182233; border-top: 1px solid #3a5a8c; color: #cfe0ff; font-size: 12px; }
+.ilbulk b { color: #fff; }
 .impl-cf { display: flex; gap: 6px; padding: 10px 14px; border-top: 1px solid var(--border); background: #141821; flex-wrap: wrap; margin-top: auto; }
 .impl-add { border: 1px dashed var(--border); border-radius: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted); min-height: 180px; cursor: pointer; gap: 8px; }
 .impl-add:hover { border-color: var(--primary); color: var(--primary); }

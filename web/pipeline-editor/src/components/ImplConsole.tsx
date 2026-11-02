@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiSettings, api, listPipelines, PipelineInfo, waitState } from '../api/client';
 import { PipelineDoc, getPath, setPath, Overrides, TemplateDef, detectOverrides } from '../types';
+import { LivePlayer } from './Media';
 
 const SOURCE_TYPES = ['file_source', 'rtsp_source'];
 const THRESH_KEYS = ['relation_threshold', 'conf_threshold', 'confidence_threshold', 'score_threshold'];
@@ -83,6 +84,24 @@ function reId(doc: PipelineDoc, newId: string, oldId: string): PipelineDoc {
   return d;
 }
 
+// 卡片实时预览：进入视口才挂载 hls 播放器（视口天然限制并发），滚出即销毁
+function CardPreview({ url }: { url: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [vis, setVis] = useState(false);
+  useEffect(() => {
+    const el = ref.current; if (!el) return;
+    const io = new IntersectionObserver(([e]) => setVis(e.isIntersecting), { threshold: 0.15 });
+    io.observe(el); return () => io.disconnect();
+  }, []);
+  return (
+    <div className="pcv" ref={ref}>
+      {vis && url
+        ? <LivePlayer url={url} compact />
+        : <div className="pcv-ph"><span className="pcv-play">▶</span><span>预览</span></div>}
+    </div>
+  );
+}
+
 export default function ImplConsole({ settings, setSettings, role, onOpenPreview, onOpenAlerts, onBackToDev }: {
   settings: ApiSettings; setSettings: (s: ApiSettings) => void; role: 'dev' | 'impl' | 'anon' | 'unknown';
   onOpenPreview: (id: string) => void; onOpenAlerts: () => void; onBackToDev: () => void;
@@ -94,7 +113,13 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
   const [openDiag, setOpenDiag] = useState<Record<string, boolean>>({});
   const [tpls, setTpls] = useState<{ name: string; version: string; description: string }[]>([]);
   const [pickTpl, setPickTpl] = useState<{ name: string; version: string; description: string }[] | null>(null);
+  const [viewMode, setViewMode] = useState<'card' | 'list'>(() => (localStorage.getItem('implViewMode') === 'list' ? 'list' : 'card'));
+  const [fStatus, setFStatus] = useState('all');   // all|running|load_failed|pending
+  const [fPush, setFPush] = useState('all');        // all|on|off
+  const [fQ, setFQ] = useState('');
+  const [sel, setSel] = useState<Record<string, boolean>>({});
   const timer = useRef<number | null>(null);
+  useEffect(() => { localStorage.setItem('implViewMode', viewMode); }, [viewMode]);
   const inflight = useRef(false);
 
   const loadTpls = async (): Promise<{ name: string; version: string; description: string }[]> => {
@@ -205,6 +230,28 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
 
   const RULE_LABEL: Record<string, string> = { person_intrusion: '人员入侵', person_loitering: '人员徘徊', child_near_boundary: '儿童靠近边界', fighting: '打架', climbing: '攀爬', falling: '跌倒' };
 
+  const shown = insts.filter((i) => {
+    if (fStatus === 'running' && i.info.state !== 'running') return false;
+    if (fStatus === 'load_failed' && i.info.state !== 'load_failed') return false;
+    if (fStatus === 'pending' && (i.info.state === 'running' || i.info.state === 'load_failed')) return false;
+    if (fPush === 'on' && !i.push) return false;
+    if (fPush === 'off' && i.push) return false;
+    if (fQ) { const q = fQ.toLowerCase(); if (!(i.id.toLowerCase().includes(q) || (i.sourceUrl || '').toLowerCase().includes(q))) return false; }
+    return true;
+  });
+  const selIds = Object.keys(sel).filter((k) => sel[k]);
+  const allSel = shown.length > 0 && shown.every((i) => sel[i.id]);
+  const bulk = async (kind: 'build' | 'start' | 'stop' | 'del') => {
+    for (const id of selIds) {
+      const it = insts.find((x) => x.id === id); if (!it) continue;
+      if (kind === 'start') await doStart(id);
+      else if (kind === 'stop') await doStop(id);
+      else if (kind === 'del') await doDel(id);
+      else if (kind === 'build') await doBuild(it);
+    }
+    setSel({});
+  };
+
   return (
     <div className="impl">
       <div className="impl-top">
@@ -212,6 +259,10 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
         <span className="impl-role">{role === 'dev' ? '研发模式' : role === 'impl' ? '实施模式' : role === 'anon' ? '未授权' : '连接中…'}</span>
         <div className="spacer" />
         <span className="impl-sub">自动同步 6s</span>
+        <div className="seg">
+          <button className={viewMode === 'card' ? 'on' : ''} onClick={() => setViewMode('card')}>▦ 卡片</button>
+          <button className={viewMode === 'list' ? 'on' : ''} onClick={() => setViewMode('list')}>☰ 列表</button>
+        </div>
         <button className="btn sm" onClick={onOpenAlerts}>🔔 告警记录</button>
         <button className="btn sm" onClick={() => applyList(true)}>🔄 服务器同步</button>
         <button className="btn sm" onClick={openNew}>＋ 新增一路</button>
@@ -226,17 +277,32 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
         待部署 <b style={{ color: 'var(--muted)' }}>{insts.filter((i) => i.info.state !== 'running' && i.info.state !== 'load_failed').length}</b>
       </div>
 
+      <div className="impl-filter">
+        <select value={fStatus} onChange={(e) => setFStatus(e.target.value)}>
+          <option value="all">全部状态</option><option value="running">运行中</option>
+          <option value="load_failed">异常</option><option value="pending">待部署/停止</option>
+        </select>
+        <select value={fPush} onChange={(e) => setFPush(e.target.value)}>
+          <option value="all">全部推流</option><option value="on">推流开</option><option value="off">推流关</option>
+        </select>
+        <input className="impl-fq" placeholder="搜索 名称/地址" value={fQ} onChange={(e) => setFQ(e.target.value)} />
+        <div className="spacer" />
+        <span className="impl-sub">显示 {shown.length} / {insts.length}</span>
+      </div>
+
+      {viewMode === 'card' && (
       <div className="impl-grid">
-        {insts.length === 0 && <div className="impl-empty">服务器暂无管道。可在研发模式 Build，或点「＋新增一路」。</div>}
-        {insts.map((i) => {
+        {shown.length === 0 && <div className="impl-empty">无匹配管道。可点「＋新增一路」从模板实例化。</div>}
+        {shown.map((i) => {
           const sc = i.sc || [];
           const b = busy[i.id];
           return (
-            <div key={i.id} className={'impl-card' + (i.info.state === 'load_failed' ? ' err' : sc.some((x) => x.level === 'err') ? ' err' : sc.some((x) => x.level === 'warn') ? ' warn' : '')}>
+            <div key={i.id} className={'impl-card' + (i.info.state === 'load_failed' ? ' st-err' : sc.some((x) => x.level === 'err') ? ' st-err' : sc.some((x) => x.level === 'warn') ? ' st-warn' : '')}>
               <div className="impl-ch">
                 <div><div className="impl-name">{i.id}</div><div className="impl-tpl">child_intrusion_fighting_fusion</div></div>
                 <span className={'impl-st ' + i.info.state}><span className="impl-dot" />{b ? b + '…' : stateText(i.info.state)}</span>
               </div>
+              {i.info.state === 'running' && i.push && i.info.play_url && <CardPreview url={i.info.play_url} />}
               <div className="impl-cb">
                 <div className="impl-kv"><span className="impl-k">拉流</span><span className="impl-url">{i.loading ? '载入中…' : (i.sourceUrl || '—')}</span></div>
                 <div className="impl-kv"><span className="impl-k">告警</span><div className="impl-chips">
@@ -271,6 +337,62 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
         })}
         <div className="impl-add" onClick={openNew}><div className="impl-plus">＋</div><div>新增一路（基于现有模板）</div></div>
       </div>
+      )}
+
+      {viewMode === 'list' && (
+        <div className="impl-list">
+          <table className="iltbl">
+            <thead><tr>
+              <th className="ilc-chk"><input type="checkbox" checked={allSel} onChange={(e) => setSel(e.target.checked ? Object.fromEntries(shown.map((i) => [i.id, true])) : {})} /></th>
+              <th style={{ width: 110 }}>状态</th>
+              <th style={{ width: 170 }}>名称</th>
+              <th style={{ width: 230 }}>拉流地址</th>
+              <th>告警项</th>
+              <th style={{ width: 60 }}>推流</th>
+              <th style={{ width: 110 }}>自检</th>
+              <th className="ilc-act">操作</th>
+            </tr></thead>
+            <tbody>
+              {shown.length === 0 && <tr><td colSpan={8} className="impl-empty">无匹配管道</td></tr>}
+              {shown.map((i) => {
+                const sc = i.sc || []; const b = busy[i.id];
+                const bad = i.info.state === 'load_failed' || sc.some((x) => x.level === 'err');
+                return (
+                  <tr key={i.id} className={bad ? 'bad' : ''}>
+                    <td className="ilc-chk"><input type="checkbox" checked={!!sel[i.id]} onChange={(e) => setSel((s) => ({ ...s, [i.id]: e.target.checked }))} /></td>
+                    <td><span className={'impl-st ' + i.info.state}><span className="impl-dot" />{b ? b + '…' : stateText(i.info.state)}</span></td>
+                    <td><div className="impl-name">{i.id}</div></td>
+                    <td><span className="impl-url">{i.loading ? '载入中…' : (i.sourceUrl || '—')}</span></td>
+                    <td><div className="impl-chips">{i.rules.length ? i.rules.map((r) => <span key={r.type} className="impl-chip on">{RULE_LABEL[r.type] || r.type}</span>) : <span className="impl-chip">—</span>}</div></td>
+                    <td><span className={'impl-sw' + (i.push ? ' on' : '')}>{i.push ? '开' : '关'}</span></td>
+                    <td><span className="impl-dots">{sc.map((x, k) => <span key={k} className={'impl-m ' + x.level} title={x.label + '：' + x.detail} />)}</span></td>
+                    <td className="ilc-act"><div className="ilacts">
+                      {i.info.state === 'running'
+                        ? <button className="btn sm" onClick={() => doStop(i.id)}>停止</button>
+                        : <button className="btn sm primary" onClick={() => i.doc ? doStart(i.id) : doBuild(i)}>{i.info.state === 'stopped' ? 'Start' : 'Build'}</button>}
+                      <button className="btn sm" onClick={() => openEdit(i)} disabled={!i.doc}>配置</button>
+                      {i.push && <button className="btn sm" onClick={() => onOpenPreview(i.id)}>预览</button>}
+                      <button className="btn sm" onClick={() => onOpenPreview(i.id)}>证据</button>
+                      {i.info.state !== 'running' && <button className="btn sm danger" onClick={() => doDel(i.id)}>删除</button>}
+                    </div></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {selIds.length > 0 && (
+            <div className="ilbulk">
+              <span>已选 <b>{selIds.length}</b> 项</span>
+              <button className="btn sm primary" onClick={() => bulk('build')}>批量 Build</button>
+              <button className="btn sm" onClick={() => bulk('start')}>批量 Start</button>
+              <button className="btn sm" onClick={() => bulk('stop')}>批量 Stop</button>
+              <button className="btn sm danger" onClick={() => bulk('del')}>批量删除</button>
+              <div className="spacer" />
+              <button className="btn sm ghost" onClick={() => setSel({})}>取消选择</button>
+            </div>
+          )}
+        </div>
+      )}
 
       {pickTpl && (
         <>

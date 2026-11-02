@@ -1,49 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import Hls from 'hls.js';
-import { MediaImg, MediaVideo } from './Media';
+import { MediaImg, MediaVideo, LivePlayer } from './Media';
 import { ApiSettings, api, listPipelines, PipelineInfo } from '../api/client';
 
 type Tab = 'preview' | 'evidence' | 'metrics' | 'status';
 
 interface EvFile { dir_index: number; name: string; kind: string; size: number; }
-
-// 实时预览播放器：HLS(.m3u8) 用 hls.js，原生 mp4/webm 用 <video>，其余提示
-function LivePlayer({ url }: { url: string }) {
-  const ref = useRef<HTMLVideoElement>(null);
-  const [error, setError] = useState('');
-  useEffect(() => {
-    const v = ref.current; setError('');
-    if (!v || !url) return;
-    let hls: Hls | null = null;
-    const isHls = url.includes('.m3u8');
-    if (isHls && Hls.isSupported()) {
-      hls = new Hls({ lowLatencyMode: true, enableWorker: true });
-      hls.loadSource(url);
-      hls.attachMedia(v);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => { v.play().catch(() => { /* 自动播放可能被拦 */ }); });
-      hls.on(Hls.Events.ERROR, (_e, data) => {
-        if (!data.fatal) return;
-        let msg = `HLS ${data.type}/${data.details}`;
-        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) msg += '（网络/CORS：确认媒体服务器已开放跨源，或用 ffplay 验证地址可达）';
-        else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) { msg += '（媒体错误：尝试恢复）'; hls?.recoverMediaError(); }
-        else if (data.type === Hls.ErrorTypes.OTHER_ERROR) msg += '（无法加载清单，检查 URL/是否 404）';
-        setError(msg);
-      });
-    } else if (/\.(mp4|webm|ogg)$/i.test(url) || (isHls && v.canPlayType('application/vnd.apple.mpegurl'))) {
-      v.src = url; v.play().catch(() => {});
-    } else {
-      setError(`无法播放该地址：预览目前支持 HLS(.m3u8) 与 mp4/webm。若这是 WebRTC(WHEP) 地址，请改用同一路的 .m3u8。`);
-    }
-    return () => { hls?.destroy(); };
-  }, [url]);
-  if (!url) return <div className="pv-empty">该管道未配置 play_url（在 sink 节点填"播放地址"）</div>;
-  return (
-    <div className="pv-player">
-      {error && <div className="pv-play-err">{error}</div>}
-      <video ref={ref} controls autoPlay muted playsInline className="pv-video" />
-    </div>
-  );
-}
 
 export default function PreviewView({ settings, initialId, onBack, backLabel = '← 返回编辑' }: {
   settings: ApiSettings; initialId?: string; onBack: () => void; backLabel?: string;

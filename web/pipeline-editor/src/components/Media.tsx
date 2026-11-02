@@ -1,4 +1,51 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import Hls from 'hls.js';
+
+// 实时预览播放器：HLS(.m3u8) 用 hls.js，原生 mp4/webm 用 <video>，其余提示
+export function LivePlayer({ url, compact = false }: { url: string; compact?: boolean }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    const v = ref.current; setError('');
+    if (!v || !url) return;
+    let hls: Hls | null = null;
+    const isHls = url.includes('.m3u8');
+    if (isHls && Hls.isSupported()) {
+      hls = new Hls({ lowLatencyMode: true, enableWorker: true });
+      hls.loadSource(url);
+      hls.attachMedia(v);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => { v.play().catch(() => { /* 自动播放可能被拦 */ }); });
+      hls.on(Hls.Events.ERROR, (_e, data) => {
+        if (!data.fatal) return;
+        let msg = `HLS ${data.type}/${data.details}`;
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) msg += '（网络/CORS：确认媒体服务器已开放跨源，或用 ffplay 验证地址可达）';
+        else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) { msg += '（媒体错误：尝试恢复）'; hls?.recoverMediaError(); }
+        else if (data.type === Hls.ErrorTypes.OTHER_ERROR) msg += '（无法加载清单，检查 URL/是否 404）';
+        setError(msg);
+      });
+    } else if (/\.(mp4|webm|ogg)$/i.test(url) || (isHls && v.canPlayType('application/vnd.apple.mpegurl'))) {
+      v.src = url; v.play().catch(() => {});
+    } else {
+      setError('无法播放该地址：预览目前支持 HLS(.m3u8) 与 mp4/webm。');
+    }
+    return () => { hls?.destroy(); };
+  }, [url]);
+  if (!url) return <div className="pv-empty">该管道未配置 play_url（在 sink 节点填"播放地址"）</div>;
+  if (compact) {
+    return (
+      <div className="pcv-live">
+        {error && <div className="pcv-err">无信号</div>}
+        <video ref={ref} autoPlay muted playsInline className="pcv-video" />
+      </div>
+    );
+  }
+  return (
+    <div className="pv-player">
+      {error && <div className="pv-play-err">{error}</div>}
+      <video ref={ref} controls autoPlay muted playsInline className="pv-video" />
+    </div>
+  );
+}
 
 // 用 fetch + Authorization 拉取受保护媒体为 Blob URL（绕开 <img>/<video> 无法带头、
 // 以及本版本 httplib 对开区间 Range 生成畸形 Content-Range 的问题）。
