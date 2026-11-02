@@ -14,6 +14,7 @@ import AlertsView from './components/AlertsView';
 import LoginView from './components/LoginView';
 import { defaultParams } from './schema/nodeSchema';
 import { toFlow, fromFlow } from './graph/flow';
+import { layoutDAG } from './graph/layout';
 import { validate, hasErrors, Issue } from './graph/validation';
 import { PipelineDoc, NodeDef, detectOverrides, Overrides, TemplateDef } from './types';
 import { api, ApiSettings, waitState, deriveState } from './api/client';
@@ -126,8 +127,12 @@ function Editor() {
   const buildDoc = (id: string): PipelineDoc => fromFlow(id, nodes, edges, paramsById);
   const currentDoc = (): PipelineDoc => buildDoc(activeId);
 
-  const loadDoc = (doc: PipelineDoc) => {
+  const loadDoc = (doc: PipelineDoc, lay = false) => {
     const f = toFlow(doc);
+    if (lay) {
+      const pos = layoutDAG(doc.graph.nodes.map((n) => n.id), doc.graph.edges);
+      f.nodes.forEach((n) => { if (pos[n.id]) n.position = pos[n.id]; });
+    }
     const info = serverState[doc.id];
     const st: Status = info?.running ? 'running' : info?.state === 'load_failed' ? 'error' : 'waiting';
     setNodes(f.nodes.map((n) => ({ ...n, data: { ...n.data, status: st } })));
@@ -230,6 +235,11 @@ function Editor() {
     appendLog(`校验: ${e} 错误 / ${w} 警告`, e ? 'error' : w ? 'warn' : 'info');
     return iss;
   };
+  const autoLayout = () => {
+    const pos = layoutDAG(nodes.map((n) => n.id), edges.map((e) => ({ from: e.source, to: e.target })));
+    setNodes((ns) => ns.map((n) => ({ ...n, position: pos[n.id] ?? n.position })));
+    appendLog('已按数据流自动布局（拓扑分层）');
+  };
   const exportJson = () => {
     const doc = currentDoc();
     const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' });
@@ -245,8 +255,8 @@ function Editor() {
         if (store[doc.id] && !window.confirm(`管道 ${doc.id} 已存在，覆盖？`)) return;
         commitActive();
         setStore((s) => ({ ...s, [doc.id]: doc }));
-        loadDoc(doc);
-        appendLog(`导入 ${doc.id}：${doc.graph.nodes.length} 节点 / ${doc.graph.edges.length} 边`);
+        loadDoc(doc, true);
+        appendLog(`导入 ${doc.id}：${doc.graph.nodes.length} 节点 / ${doc.graph.edges.length} 边（已自动布局）`);
       } catch (e: any) { appendLog('导入失败: ' + e.message, 'error'); }
     });
   };
@@ -466,6 +476,7 @@ function Editor() {
           <input ref={fileRef} type="file" accept=".json" hidden onChange={(e) => e.target.files?.[0] && importJson(e.target.files[0])} />
           <button className="btn" onClick={exportJson}><span className="ic">⭱</span>导出</button>
           <button className="btn" onClick={doValidate}><span className="ic">✓</span>校验</button>
+          <button className="btn" onClick={autoLayout} title="按数据流拓扑分层重排节点"><span className="ic"></span>自动布局</button>
           <button className="btn" onClick={doSave}><span className="ic">⤓</span>保存到服务器</button>
           <button className="btn ok" onClick={openPublish} title="把当前管道发布为模板，供实施台选用"><span className="ic">◆</span>发布为模板</button>
         </div>
