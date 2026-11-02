@@ -700,6 +700,9 @@ void ApiServer::setupRoutes() {
     server_.Get("/api/v1/alerts/stats", [this](const auto& req, auto& res) {
         handleAlertsStats(req, res);
     });
+    server_.Get("/api/v1/alerts/recent", [](const auto&, auto& res) {
+        res.set_content(core::AlertStore::instance().recent().dump(), "application/json");
+    });
     server_.Get("/api/v1/alerts/file", [this](const auto& req, auto& res) {
         handleAlertsFile(req, res);
     });

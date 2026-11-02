@@ -51,6 +51,7 @@ export const api = {
     req(s, 'POST', '/api/v1/alerts/ack', { uid, proc, note, by }),
   alertsStats: (s: ApiSettings, pipeline = '') =>
     req(s, 'GET', '/api/v1/alerts/stats?pipeline=' + encodeURIComponent(pipeline)),
+  alertsRecent: (s: ApiSettings) => req(s, 'GET', '/api/v1/alerts/recent'),
   alertFileUrl: (s: ApiSettings, path: string) => s.baseUrl + '/api/v1/alerts/file?path=' + encodeURIComponent(path),
   evidenceFileUrl: (s: ApiSettings, pipeline: string, dir: number, name: string) =>
     s.baseUrl + `/api/v1/evidence/file?pipeline=${encodeURIComponent(pipeline)}&dir=${dir}&name=${encodeURIComponent(name)}`,

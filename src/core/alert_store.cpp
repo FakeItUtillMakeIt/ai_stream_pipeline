@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <ctime>
+#include <chrono>
 
 namespace fs = std::filesystem;
 using nlohmann::json;
@@ -233,6 +234,29 @@ json AlertStore::stats(const std::string& pipeline) {
         if (s.contains(p)) s[p] = s[p].get<int>() + 1;
     }
     return s;
+}
+
+json AlertStore::recent() {
+    std::lock_guard<std::mutex> lk(m_);
+    int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::system_clock::now().time_since_epoch()).count();
+    const int64_t day = 86400000LL;
+    json out = json::object();
+    for (const auto& r : recs_) {  // 新→旧，首个即该管道最近一条
+        std::string p = r.value("pipeline", "");
+        if (p.empty()) continue;
+        int64_t ts = r.value("ts", (int64_t)0);
+        if (!out.contains(p)) {
+            json e;
+            e["ts"] = ts;
+            e["type"] = r.value("type", "");
+            e["level"] = r.value("level", "");
+            e["count24h"] = 0;
+            out[p] = e;
+        }
+        if (now - ts <= day) out[p]["count24h"] = out[p]["count24h"].get<int>() + 1;
+    }
+    return out;
 }
 
 } // namespace core

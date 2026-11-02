@@ -416,7 +416,7 @@ function Editor() {
       <div className={`app theme-${theme}`}>
         <ImplConsole settings={settings} setSettings={setSettings} role={role}
           onOpenPreview={(id) => { setPreviewId(id); setPreviewFrom('impl'); setView('preview'); }}
-          onOpenAlerts={() => { setPreviewFrom('impl'); setView('alerts'); }}
+          onOpenAlerts={(id) => { setPreviewId(id || ''); setPreviewFrom('impl'); setView('alerts'); }}
           onBackToDev={() => { setView('editor'); refreshStatus(); }} />
       </div>
     );

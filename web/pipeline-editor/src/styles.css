@@ -280,6 +280,14 @@ body { background: var(--bg); }
 .iltbl .impl-url { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; }
 .ilbulk { position: sticky; bottom: 0; display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: #182233; border-top: 1px solid #3a5a8c; color: #cfe0ff; font-size: 12px; }
 .ilbulk b { color: #fff; }
+
+/* 最近告警徽标 */
+.impl-alert { display: flex; align-items: center; gap: 6px; margin: 0 14px 8px; padding: 6px 10px; border-radius: 7px; font-size: 12px; color: var(--muted); background: var(--panel-2); border: 1px solid var(--border); cursor: pointer; }
+.impl-alert:hover { border-color: var(--muted); }
+.impl-alert.hot { color: #e8c46a; border-color: #6a5a2a; background: rgba(210,153,34,.08); }
+.il-last { font-size: 12px; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.il-last.hot { color: #e8c46a; }
+.il-last:hover { text-decoration: underline; }
 .impl-cf { display: flex; gap: 6px; padding: 10px 14px; border-top: 1px solid var(--border); background: #141821; flex-wrap: wrap; margin-top: auto; }
 .impl-add { border: 1px dashed var(--border); border-radius: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted); min-height: 180px; cursor: pointer; gap: 8px; }
 .impl-add:hover { border-color: var(--primary); color: var(--primary); }

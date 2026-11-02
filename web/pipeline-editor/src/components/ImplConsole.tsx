@@ -26,6 +26,7 @@ interface Inst {
   loading: boolean;
   sc?: CheckItem[];
   scBusy?: boolean;
+  last?: { ts: number; type: string; level: string; count24h: number };
 }
 
 interface EditState {
@@ -84,6 +85,16 @@ function reId(doc: PipelineDoc, newId: string, oldId: string): PipelineDoc {
   return d;
 }
 
+// 相对时间
+function relTime(ts: number): string {
+  if (!ts) return '';
+  const d = Date.now() - ts;
+  if (d < 60000) return '刚刚';
+  if (d < 3600000) return Math.floor(d / 60000) + '分钟前';
+  if (d < 86400000) return Math.floor(d / 3600000) + '小时前';
+  return Math.floor(d / 86400000) + '天前';
+}
+
 // 卡片实时预览：进入视口才挂载 hls 播放器（视口天然限制并发），滚出即销毁
 function CardPreview({ url }: { url: string }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -104,7 +115,7 @@ function CardPreview({ url }: { url: string }) {
 
 export default function ImplConsole({ settings, setSettings, role, onOpenPreview, onOpenAlerts, onBackToDev }: {
   settings: ApiSettings; setSettings: (s: ApiSettings) => void; role: 'dev' | 'impl' | 'anon' | 'unknown';
-  onOpenPreview: (id: string) => void; onOpenAlerts: () => void; onBackToDev: () => void;
+  onOpenPreview: (id: string) => void; onOpenAlerts: (id?: string) => void; onBackToDev: () => void;
 }) {
   const [insts, setInsts] = useState<Inst[]>([]);
   const [err, setErr] = useState('');
@@ -160,6 +171,9 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
           setInsts((prev) => prev.map((p) => (p.id === info.id ? { ...p, loading: false } : p)));
         }
       }
+      const rr = await api.alertsRecent(settings);
+      const recent = (rr.ok && rr.json) ? rr.json : {};
+      setInsts((prev) => prev.map((p) => ({ ...p, last: recent[p.id] })));
       if (probe) for (const info of ps) fetchSc(info.id);   // 探测并发出（各自异步更新）
     } catch (e: any) { setErr('加载失败: ' + e.message); }
     finally { inflight.current = false; }
@@ -263,7 +277,7 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
           <button className={viewMode === 'card' ? 'on' : ''} onClick={() => setViewMode('card')}>▦ 卡片</button>
           <button className={viewMode === 'list' ? 'on' : ''} onClick={() => setViewMode('list')}>☰ 列表</button>
         </div>
-        <button className="btn sm" onClick={onOpenAlerts}>🔔 告警记录</button>
+        <button className="btn sm" onClick={() => onOpenAlerts()}>🔔 告警记录</button>
         <button className="btn sm" onClick={() => applyList(true)}>🔄 服务器同步</button>
         <button className="btn sm" onClick={openNew}>＋ 新增一路</button>
         <button className="btn sm ghost" onClick={() => setSettings({ ...settings, token: '' })} title="退出登录">退出</button>
@@ -303,6 +317,9 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
                 <span className={'impl-st ' + i.info.state}><span className="impl-dot" />{b ? b + '…' : stateText(i.info.state)}</span>
               </div>
               {i.info.state === 'running' && i.push && i.info.play_url && <CardPreview url={i.info.play_url} />}
+              <div className={'impl-alert' + (i.last ? ' hot' : '')} onClick={() => onOpenAlerts(i.id)} title="查看该管道告警记录">
+                {i.last ? <>🔔 最近：{i.last.type} · {relTime(i.last.ts)} · 今日 {i.last.count24h}</> : <>🔕 最近告警：无</>}
+              </div>
               <div className="impl-cb">
                 <div className="impl-kv"><span className="impl-k">拉流</span><span className="impl-url">{i.loading ? '载入中…' : (i.sourceUrl || '—')}</span></div>
                 <div className="impl-kv"><span className="impl-k">告警</span><div className="impl-chips">
@@ -350,10 +367,11 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
               <th>告警项</th>
               <th style={{ width: 60 }}>推流</th>
               <th style={{ width: 110 }}>自检</th>
+              <th style={{ width: 160 }}>最近告警</th>
               <th className="ilc-act">操作</th>
             </tr></thead>
             <tbody>
-              {shown.length === 0 && <tr><td colSpan={8} className="impl-empty">无匹配管道</td></tr>}
+              {shown.length === 0 && <tr><td colSpan={9} className="impl-empty">无匹配管道</td></tr>}
               {shown.map((i) => {
                 const sc = i.sc || []; const b = busy[i.id];
                 const bad = i.info.state === 'load_failed' || sc.some((x) => x.level === 'err');
@@ -366,6 +384,7 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
                     <td><div className="impl-chips">{i.rules.length ? i.rules.map((r) => <span key={r.type} className="impl-chip on">{RULE_LABEL[r.type] || r.type}</span>) : <span className="impl-chip">—</span>}</div></td>
                     <td><span className={'impl-sw' + (i.push ? ' on' : '')}>{i.push ? '开' : '关'}</span></td>
                     <td><span className="impl-dots">{sc.map((x, k) => <span key={k} className={'impl-m ' + x.level} title={x.label + '：' + x.detail} />)}</span></td>
+                    <td><span className={'il-last' + (i.last ? ' hot' : '')} onClick={() => onOpenAlerts(i.id)}>{i.last ? `${i.last.type} · ${relTime(i.last.ts)} · 今日${i.last.count24h}` : '无'}</span></td>
                     <td className="ilc-act"><div className="ilacts">
                       {i.info.state === 'running'
                         ? <button className="btn sm" onClick={() => doStop(i.id)}>停止</button>

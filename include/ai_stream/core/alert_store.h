@@ -42,6 +42,9 @@ public:
     // 各处理状态计数：{new, ack, dismiss, resolve}
     nlohmann::json stats(const std::string& pipeline);
 
+    // 每管道最近一条告警摘要：{ pipeline: {ts,type,level,count24h} }
+    nlohmann::json recent();
+
 private:
     AlertStore() = default;
     void loadLocked();
