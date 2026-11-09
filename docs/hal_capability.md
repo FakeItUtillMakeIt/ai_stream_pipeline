@@ -15,8 +15,9 @@
 |---|---|---|---|---|---|---|
 | 推理（通用） | TensorRT ✅ | ❌（OpenVINO 仅实现检测） | RKNN ✅ | ❌ | BPU ✅ | OpenCV DNN ✅ |
 | 检测 | TensorRT ✅ | OpenVINO ✅（CPU 已验证；iGPU/NPU 需 compute runtime） | RKNN ✅ | **ACL ✅**（`.om`，310P3 已验证） | BPU ✅ | ❌（节点 mock 兜底） |
-| 姿态估计 | TensorRT ✅ | ❌ | **RKNN ✅** | ❌ | BPU ✅ | ❌（节点 mock 兜底） |
+| 姿态估计 | TensorRT ✅ | ❌ | **RKNN ✅** | **ACL ✅**（YOLO-Pose `.om`，310P3 已验证） | BPU ✅ | ❌（节点 mock 兜底） |
 | 动作识别 | TensorRT ✅ | ❌ | RKNN ✅ | **ACL ✅**（`.om`，310P3 已验证） | BPU ✅ | ❌ |
+| 视觉关系 | TensorRT ✅ | ❌ | ❌ | **ACL ✅**（RelateAnything `.om`，310P3 已验证） | ❌ | ❌ |
 | 解码 | NVDEC ✅ | VAAPI ✅（需 `/dev/dri/renderD*` 权限） | MPP ⚠️ | **DVPP ✅**（H264/H265，310P3 已验证） | VPU(sp 硬解) ✅ | FFmpeg ✅ |
 | 编码 | → FFmpeg(nvenc) | VAAPI ✅（h264_vaapi） | MPP ⚠️ | **DVPP VENC ✅**（H.264，310P3 已验证） | VPU(sp 硬编) ✅ | FFmpeg ✅ |
 | 图像加速（预处理/绘制/NMS） | NPP+CUDA ✅ | OpenCV（CPU） | RGA ⚠️ | **DVPP VPC resize ✅**（NMS/绘制 CPU） | OpenCV ✅ | OpenCV ✅ |
@@ -37,23 +38,30 @@
 > `<root>/x86_64-linux/{include,lib64}` 布局，`WITH_ASCEND=ON` 可找到并链接
 > `libascendcl` / `libacl_dvpp`。当前已实现：
 > **ACL 检测推理**（`.om`，ATC 转换；输出 5 张量契约）、**ACL 动作识别**
-> （VideoMAE `.om`，softmax/argmax）、**DVPP VDEC 硬解**（H264/H265；AVCC 自动转 AnnexB）、
+> （VideoMAE `.om`，softmax/argmax）、**ACL 姿态估计**（YOLO-Pose `.om`，
+> 输出 `[1,8400,56]`，引擎也兼容 `[1,56,8400]` 并自动转置）、
+> **ACL 视觉关系**（RelateAnything `.om`，4/5 输入 OM 均可，谓词表 W/alpha 作为图输入）、
+> **DVPP VDEC 硬解**（H264/H265；AVCC 自动转 AnnexB）、
 > **DVPP VPC resize**（BGR888 进/出，归一化在 CPU）与 **DVPP VENC H.264 硬编**
 > （open 时编码一帧灰图提取 SPS/PPS，首个真实帧强制 IDR）。运行前置：服务用户在
 > `HwHiAiUser` 组（可访问 `/dev/davinci*`）。构建产物已通过 RPATH 指向 CANN
 > lib64/driver 目录，通常无需手动 `source set_env.sh`；CANN 安装位置变化时再 source。
 > DVPP 没有 NMS/绘制算子，NMS 与 OSD 绘制仍走 CPU；VENC 目前只支持 H.264。
-> 检测节点配置 `"backend": "ascend"` + `.om`，AUTO 也会按 `.om` 扩展名选择 ACL 后端；
-> 动作识别节点按 `.om` 自动选 Ascend；sink/evidence 写 `"hw_encoder": true` 时 AUTO
-> 会选 `dvpp_h264`。未显式设置 `output_width/output_height` 时，sink 用首帧输入宽高。
+> 检测/姿态节点配置 `"backend": "ascend"` + `.om`，AUTO 也会按 `.om` 扩展名选择 ACL 后端；
+> 动作识别节点按 `.om` 自动选 Ascend；关系节点配置 `"backend": "ascend"` 或直接给 `.om`；
+> sink/evidence 写 `"hw_encoder": true` 时 AUTO 会选 `dvpp_h264`。未显式设置
+> `output_width/output_height` 时，sink 用首帧输入宽高。
 > 注意：DVPP VDEC 使用回调 + `aclrtProcessReport`，节点当前仍是“一包一帧”
 > 消费模型，遇到 B 帧重排/深流水时会丢帧（与 FFmpeg 软解路径同一限制）。
+> 模型转换：通用 4D/5D ONNX 用 `tools/model_converter/ascend/convert_onnx_to_om.sh`；
+> YOLO-Pose 必须用 `convert_pose_to_om.py`（原始 ONNX 的 opset 18 会让 ATC 段错误）；
+> RelateAnything 必须用 `convert_relation_to_om.py`（需内联 9 个 `If` 子图并静态化 shape）。
 
 ## 注册与选择
 
 每个能力由根目录工厂（`inference_engine_factory` / `detection_inference_engine_factory` /
-`pose_estimation_factory` / `action_recognition_factory` / `video_decoder_factory` /
-`video_encoder_factory` / `image_accelerator_factory`）持有后端注册表：
+`pose_estimation_factory` / `action_recognition_factory` / `relation_factory` /
+`video_decoder_factory` / `video_encoder_factory` / `image_accelerator_factory`）持有后端注册表：
 
 - 后端在编译期按 `WITH_*` 选项编入，运行期通过静态注册宏注册到工厂
 - `AUTO` 模式按固定优先级选择第一个 `isAvailable()` 为真的后端
@@ -80,7 +88,7 @@
 
 ```
 src/hal/
-├── ascend/       # ACL 进程级初始化辅助（检测推理 / DVPP 解码编码共用）
+├── ascend/       # ACL 进程级初始化辅助（推理 / DVPP 解码编码共用）
 ├── infer/        {nvidia, intel, rk, ascend, horizon, cpu}   推理引擎
 ├── encode/       {rk, vaapi, ascend, horizon, cpu}            编码（MPP / VAAPI / DVPP / VPU / FFmpeg）
 ├── decode/       {nvidia, vaapi, rk, ascend, horizon, cpu}   解码
@@ -96,6 +104,8 @@ include/ai_stream/hal/                        抽象接口 + 共享工具
 
 - 检测：5 张量 `det_boxes[cxcywh] / det_scores / det_classes / det_batch_ids / det_num_dets`
 - 姿态：`[num_persons, 8400, 56]`（4 box + 1 score + 51 kpt，输入 640 坐标系）
+- 关系：`pred_logits[pairs, vocab] / pair_logits[pairs] / sub_idx / obj_idx / valid_mask`，
+  节点层按谓词表与阈值解码成业务 `Relation`
 - 编码：全部 HAL 编码器输出 **AnnexB 包 + AnnexB extradata**，AVCDecoderConfigurationRecord
   由 muxer（容器）生成
 
@@ -121,5 +131,5 @@ include/ai_stream/hal/                        抽象接口 + 共享工具
 | 地平线硬件 resize（VPU VPS / `hbVPResize`） | VPS 仅支持等比下采样（如 1280×720→640×360），且需 `sp_module_bind(decoder→vps)` 拉流架构 + ION 物理内存；当前为 CPU letterbox | 解码侧改 SP 拉流 + ION 零拷贝 |
 | 地平线硬件绘制（OSD） | 仅有 `sp_display_draw_rect`（画到 SP 显示层）；RTMP/evidence 输出无硬件绘制路径 | 无（改用 GPU 需上传/下载，不划算） |
 | 独立 NVENC HAL（`encode/nvidia/`） | 当前 NVENC 经 FFmpeg（`h264_nvenc`）实现；独立直驱 NvEncodeAPI 用于 GPU 帧零拷贝输入。**暂缓**：sink 编码输入为 OSD 输出的 host BGR，零拷贝输入需 OSD 输出留显存（卡在 GPU 文字渲染） | NVIDIA Video Codec SDK 头文件 + OSD GPU 化 |
-| Ascend 姿态/通用推理 | CANN 推理引擎补齐（检测/动作识别已实现） | 昇腾设备 + CANN SDK |
+| Ascend 通用推理 | 通用 `IInferenceEngine` 的 ACL 实现（当前检测/动作/姿态/关系均已有专用实现） | 昇腾设备 + CANN SDK |
 | CPU 检测/姿态后端 | 补全 CPU 矩阵（当前节点 mock 兜底） | 低优先级 |

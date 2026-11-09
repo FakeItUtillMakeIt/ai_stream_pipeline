@@ -39,8 +39,23 @@ bool PoseInferNode::loadModel(const std::string& model_path) {
         return false;
     }
 
-    engine_ = hal::PoseEstimationFactory::instance().create(
-        hal::PoseEstimationBackend::AUTO);
+    auto& factory = hal::PoseEstimationFactory::instance();
+    hal::PoseEstimationBackend selected = hal::PoseEstimationBackend::AUTO;
+    const auto ends_with = [&](const char* ext) {
+        const std::string e(ext);
+        return model_path.size() >= e.size() &&
+               model_path.compare(model_path.size() - e.size(), e.size(), e) == 0;
+    };
+    if (ends_with(".om")) {
+        if (factory.isBackendAvailable(hal::PoseEstimationBackend::ASCEND)) {
+            selected = hal::PoseEstimationBackend::ASCEND;
+        }
+    } else if (ends_with(".engine")) {
+        if (factory.isBackendAvailable(hal::PoseEstimationBackend::TENSORRT)) {
+            selected = hal::PoseEstimationBackend::TENSORRT;
+        }
+    }
+    engine_ = factory.create(selected);
     if (!engine_) {
         LOG_ERROR("[PoseInfer] No pose estimation backend available "
                   "(check WITH_TENSORRT/WITH_RKNN/WITH_ASCEND build options)");
@@ -58,8 +73,15 @@ bool PoseInferNode::loadModel(const std::string& model_path) {
     if (!engine_->loadModel(cfg)) {
         LOG_ERROR_FMT("[PoseInfer] Failed to load model via HAL backend: {}", model_path);
         engine_.reset();
+        // AUTO（如旧配置仍指向 .engine，但本机只有 Ascend）降级为不推理，不阻断管道
+        if (selected == hal::PoseEstimationBackend::AUTO) {
+            LOG_WARN("[PoseInfer] Running without pose inference");
+            return true;
+        }
         return false;
     }
+    LOG_INFO_FMT("[PoseInfer] Pose model loaded: {} (backend: {})",
+                 model_path, engine_->getBackendName());
     return true;
 }
 

@@ -103,7 +103,8 @@ ai_stream_pipeline 是一个模块化的视频流 AI 处理框架：以 **节点
 |---|---|---|
 | `IInferenceEngine` / `IDetectionInferenceEngine` | 通用/检测推理 | TensorRT、RKNN、Ascend、地平线 BPU、OpenVINO（Intel） |
 | `IActionRecognition` | 动作识别推理 | TensorRT (VideoMAE)、RKNN、Ascend（VideoMAE `.om`） |
-| `IPoseEstimationEngine` | 姿态估计推理（host/设备输入/GPU 端到端三路径） | TensorRT (YOLO-Pose) |
+| `IPoseEstimationEngine` | 姿态估计推理（host/设备输入/GPU 端到端三路径） | TensorRT (YOLO-Pose)、RKNN、Ascend (YOLO-Pose `.om`) |
+| `IRelationEngine` | 视觉关系推理（图像 + 候选框 → 关系三元组） | TensorRT、Ascend (RelateAnything `.om`) |
 | `IImageAccelerator` | 预处理/绘制/NMS 加速 | CUDA、NPP、RGA、DVPP（Ascend resize）、CPU |
 | `IVideoDecoder` | 视频解码 | FFmpeg、NVDEC、VAAPI（Intel/AMD）、MPP、DVPP（Ascend）、地平线 VPU(sp 硬解) |
 | `IVideoEncoder` | 视频编码 | FFmpeg、VAAPI（Intel/AMD）、MPP、DVPP VENC（Ascend H.264）、地平线 VPU |
@@ -127,7 +128,8 @@ ai_stream_pipeline 是一个模块化的视频流 AI 处理框架：以 **节点
 | FFmpegDecodeNode | `ffmpeg_decode` | QueuedNode |
 | ResizeNormalizeNode | `resize_normalize` | QueuedNode，通过 HAL 图像加速器选择 CPU/RGA/DVPP/NPP 路径 |
 | DetectionInferNode | `detection_infer` | QueuedNode（worker 内批次收集，`onIdle` 超时 flush；动态 batch + CUDA Graph） |
-| PoseInferNode | `pose_infer` | QueuedNode（推理走 HAL `IPoseEstimationEngine`，CPU/CUDA/RKNN 后端） |
+| PoseInferNode | `pose_infer` | QueuedNode（推理走 HAL `IPoseEstimationEngine`，TensorRT/RKNN/Ascend 后端） |
+| RelationRecognitionNode | `relation_recognition` | QueuedNode（推理走 HAL `IRelationEngine`，TensorRT/Ascend `.om`） |
 | ActionRecognitionVideoMAENode | `action_recognition_videomae` | QueuedNode |
 | DetectionPostProcessNode | `detection_post` | QueuedNode，NMS 通过 HAL 图像加速器执行 |
 | TrackerNode（OCSort/ByteTrack） | `tracker` | QueuedNode |

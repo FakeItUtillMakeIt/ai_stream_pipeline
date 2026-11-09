@@ -30,3 +30,36 @@ tools/model_converter/ascend/convert_onnx_to_om.sh \
 
 VideoMAE 输入是 5D `[1,T,3,H,W]`，脚本会自动省略 `--input_format`；
 输出的 `[1,3]` logits 由 `AscendActionRecognition` 做 softmax/argmax。
+
+### 4.Ascend YOLO-Pose ONNX → OM
+
+原始 `yolov8n_pose.onnx` 是 opset 18，直接喂 ATC 会在
+`libops_all_onnx_plugin.so` 里段错误。专用脚本会先 `onnxsim` 固定
+`[1,3,640,640]`，把 Resize 的 opset-18 属性和 Split 的 sizes 输入降级到
+opset 13，再调用 ATC：
+
+```bash
+python3 tools/model_converter/ascend/convert_pose_to_om.py \
+    models/yolov8n/yolov8n_pose.trans.onnx \
+    --output models/yolov8n/yolov8n_pose
+```
+
+推荐 `*_pose.trans.onnx`（输出 `[1,8400,56]`）。`.om` 供 `pose_infer`
+使用；节点 AUTO 会按 `.om` 扩展名选择 Ascend 后端。
+
+### 5.Ascend RelateAnything ONNX → OM
+
+原始 `relateanything.onnx` 包含 9 个 `If` 子图，ATC 能编译但运行期 shape
+inference 报 `[1,1568,0] cannot broadcast`。专用脚本按当前导出语义内联
+`If` 分支，用 `onnxsim` 固定 `image/boxes/box_counts/W/alpha`，再调用 ATC：
+
+```bash
+python3 tools/model_converter/ascend/convert_relation_to_om.py \
+    models/relateanything/relateanything.onnx \
+    --output models/relateanything/relateanything
+```
+
+生成的 `.om` 供 `relation_recognition` 使用，配置
+`"backend": "ascend"` + `"model_path": "*.om"`，谓词表仍用
+`predicate_bank.json`。脚本依赖 `onnx` / `onnxsim`（`pip install --user` 即可），
+并会自动把 CANN 的 `python/site-packages` 与驱动库路径注入 ATC 子进程。

@@ -1,0 +1,70 @@
+{
+  "id": "ascend_pose",
+  "graph": {
+    "nodes": [
+      {
+        "id": "src",
+        "type": "file_source",
+        "params": {
+          "url": "tests/data/sample_5s.mp4",
+          "loop": false,
+          "realtime": true
+        }
+      },
+      {
+        "id": "decode",
+        "type": "ffmpeg_decode",
+        "params": {
+          "output_bgr": true,
+          "hw_decoder": true,
+          "hw_decoder_type": "dvpp"
+        }
+      },
+      {
+        "id": "preprocess",
+        "type": "resize_normalize",
+        "params": {
+          "output_width": 640,
+          "output_height": 640,
+          "keep_aspect_ratio": true
+        }
+      },
+      {
+        "id": "detect",
+        "type": "detection_infer",
+        "params": {
+          "detector_config": {
+            "backend": "ascend",
+            "model_path": "models/sevncevision/20260921_sevnce_9_cls_nms_trans_640.om",
+            "conf_threshold": 0.3,
+            "nms_threshold": 0.45,
+            "input_size": { "width": 640, "height": 640 },
+            "batch_size": 1,
+            "model_class_names": [
+              "person", "head", "helmet", "work_clothes", "phone",
+              "smoking", "fall_down", "safety_belt", "sleeping"
+            ]
+          }
+        }
+      },
+      {
+        "id": "pose",
+        "type": "pose_infer",
+        "params": {
+          "detector_config": {
+            "model_path": "models/yolov8n/yolov8n_pose.om",
+            "input_size": { "width": 640, "height": 640 },
+            "batch_size": 8,
+            "model_class_names": ["person"]
+          }
+        }
+      }
+    ],
+    "edges": [
+      { "from": "src", "to": "decode" },
+      { "from": "decode", "to": "preprocess" },
+      { "from": "preprocess", "to": "detect" },
+      { "from": "detect", "to": "pose" }
+    ]
+  }
+}

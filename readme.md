@@ -70,7 +70,7 @@ cmake --build build -j$(nproc)
 | VAAPI | `WITH_VAAPI` | Intel/AMD 核显/独显硬件解码/编码（默认 ON） |
 | OpenVINO | `WITH_OPENVINO` | Intel CPU/iGPU/NPU 检测推理（ONNX/IR） |
 | RKNN | `WITH_RKNN` | 瑞芯微 RK3588 推理 |
-| Ascend CANN | `WITH_ASCEND` | 华为昇腾：ACL 检测/动作识别（.om）+ DVPP H264/H265 硬解 + VENC 硬编 + VPC resize |
+| Ascend CANN | `WITH_ASCEND` | 华为昇腾：ACL 检测/动作识别/姿态/关系推理（.om）+ DVPP H264/H265 硬解 + VENC 硬编 + VPC resize |
 | 地平线 BPU / VPU | `WITH_HORIZON` | 地平线 RDK S100P：BPU 推理 + VPU 硬解/硬编 |
 | CPU fallback | `WITH_CPU_FALLBACK` | 无 GPU 时 CPU 实现（默认开启） |
 

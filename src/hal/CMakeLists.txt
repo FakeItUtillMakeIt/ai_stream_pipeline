@@ -95,6 +95,8 @@ if(WITH_ASCEND)
         encode/ascend/dvpp_video_encoder.cpp
         infer/ascend/ascend_action_recognition.cpp
         infer/ascend/ascend_detection_engine.cpp
+        infer/ascend/ascend_pose_estimation.cpp
+        infer/ascend/ascend_relation.cpp
     )
 endif()
 

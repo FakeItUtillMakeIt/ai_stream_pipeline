@@ -78,6 +78,7 @@ bool RelationRecognitionNode::configureImpl(const std::string& node_id,
         if (params.contains("backend")) {
             const std::string b = params["backend"].get<std::string>();
             if (b == "tensorrt") backend_ = hal::RelationBackend::TENSORRT;
+            else if (b == "ascend") backend_ = hal::RelationBackend::ASCEND;
             else if (b == "onnxruntime") backend_ = hal::RelationBackend::ONNXRUNTIME;
             else if (b == "cpu") backend_ = hal::RelationBackend::CPU;
             else backend_ = hal::RelationBackend::AUTO;
@@ -90,10 +91,33 @@ bool RelationRecognitionNode::configureImpl(const std::string& node_id,
 }
 
 bool RelationRecognitionNode::loadEngine() {
-    engine_ = hal::RelationFactory::instance().create(backend_);
+    auto& factory = hal::RelationFactory::instance();
+    hal::RelationBackend selected = backend_;
+    const auto ends_with = [&](const char* ext) {
+        const std::string e(ext);
+        return cfg_.model_path.size() >= e.size() &&
+               cfg_.model_path.compare(cfg_.model_path.size() - e.size(), e.size(), e) == 0;
+    };
+    if (selected == hal::RelationBackend::AUTO) {
+        if (ends_with(".om")) {
+            if (factory.isBackendAvailable(hal::RelationBackend::ASCEND)) {
+                selected = hal::RelationBackend::ASCEND;
+            }
+        } else if (ends_with(".engine")) {
+            if (factory.isBackendAvailable(hal::RelationBackend::TENSORRT)) {
+                selected = hal::RelationBackend::TENSORRT;
+            }
+        }
+    }
+
+    engine_ = factory.create(selected);
     if (!engine_) {
         LOG_ERROR("[Relation] no relation backend available "
-                  "(check WITH_TENSORRT build option)");
+                  "(check WITH_TENSORRT/WITH_ASCEND build options)");
+        if (selected == hal::RelationBackend::AUTO) {
+            LOG_WARN("[Relation] running without relation inference");
+            return true;
+        }
         return false;
     }
 
@@ -113,6 +137,11 @@ bool RelationRecognitionNode::loadEngine() {
     if (!engine_->loadModel(hc)) {
         LOG_ERROR_FMT("[Relation] failed to load model: {}", cfg_.model_path);
         engine_.reset();
+        // AUTO（如旧配置仍指向 .engine，但本机只有 Ascend）降级为不做关系，不阻断管道
+        if (selected == hal::RelationBackend::AUTO) {
+            LOG_WARN("[Relation] running without relation inference");
+            return true;
+        }
         return false;
     }
     image_size_ = cfg_.image_size > 0 ? cfg_.image_size : engine_->getInputSize().first;

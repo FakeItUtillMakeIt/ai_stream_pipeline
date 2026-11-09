@@ -18,6 +18,7 @@ namespace hal {
 enum class RelationBackend {
     AUTO,        // 自动选择可用后端
     TENSORRT,    // NVIDIA TensorRT
+    ASCEND,      // Huawei Ascend OM
     ONNXRUNTIME, // 跨平台兜底
     CPU          // CPU 参考实现
 };

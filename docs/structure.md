@@ -60,7 +60,7 @@ ai_stream_pipeline/
 │   │   ├── infer/nvidia/          # TensorRT（通用/检测/姿态/动作 + trt_core + kernels）
 │   │   ├── infer/intel/           # OpenVINO（Intel CPU/iGPU/NPU，检测 5 张量契约）
 │   │   ├── infer/rk/              # RKNN（通用/检测/姿态/动作，dlopen librknnrt）
-│   │   ├── infer/ascend/          # 昇腾 ACL（检测 .om；动作识别占位）
+│   │   ├── infer/ascend/          # 昇腾 ACL（检测/动作识别/姿态/关系 .om）
 │   │   ├── infer/horizon/         # 地平线 BPU（通用/检测/姿态/动作，dlopen libdnn）
 │   │   ├── infer/cpu/             # CPU fallback（OpenCV DNN 推理）
 │   │   ├── encode/rk/ encode/vaapi/ encode/ascend/ encode/cpu/ encode/horizon/
@@ -80,7 +80,8 @@ ai_stream_pipeline/
 │   │   ├── decode/                # ffmpeg_decode / decoder_pool
 │   │   ├── preprocess/            # resize_normalize（HAL 统一入口）
 │   │   ├── infer/                 # detection_infer / pose_infer /
-│   │   │                          # action_recognition_videomae / int8_calibrator
+│   │   │                          # action_recognition_videomae /
+│   │   │                          # relation_recognition / int8_calibrator
 │   │   ├── postprocess/           # detection_post（HAL NMS）
 │   │   ├── track/                 # tracker_node（类别跃迁 + ID 缝合）+ ocsort/bytetrack 适配器 + GPU Kalman
 │   │   ├── alert/                 # alert_node（规则容器，并行/串行）

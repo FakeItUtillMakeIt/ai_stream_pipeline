@@ -20,6 +20,7 @@ RelationEnginePtr RelationFactory::create(RelationBackend type) {
     if (type == RelationBackend::AUTO) {
         std::vector<RelationBackend> priority = {
             RelationBackend::TENSORRT,
+            RelationBackend::ASCEND,
             RelationBackend::ONNXRUNTIME,
             RelationBackend::CPU
         };

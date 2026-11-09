@@ -1,0 +1,75 @@
+{
+  "id": "ascend_relation",
+  "graph": {
+    "nodes": [
+      {
+        "id": "src",
+        "type": "file_source",
+        "params": {
+          "url": "tests/data/sample_5s.mp4",
+          "loop": false,
+          "realtime": true
+        }
+      },
+      {
+        "id": "decode",
+        "type": "ffmpeg_decode",
+        "params": {
+          "output_bgr": true,
+          "hw_decoder": true,
+          "hw_decoder_type": "dvpp"
+        }
+      },
+      {
+        "id": "preprocess",
+        "type": "resize_normalize",
+        "params": {
+          "output_width": 640,
+          "output_height": 640,
+          "keep_aspect_ratio": true
+        }
+      },
+      {
+        "id": "detect",
+        "type": "detection_infer",
+        "params": {
+          "detector_config": {
+            "backend": "ascend",
+            "model_path": "models/sevncevision/20260921_sevnce_9_cls_nms_trans_640.om",
+            "conf_threshold": 0.3,
+            "nms_threshold": 0.45,
+            "input_size": { "width": 640, "height": 640 },
+            "batch_size": 1,
+            "model_class_names": [
+              "person", "head", "helmet", "work_clothes", "phone",
+              "smoking", "fall_down", "safety_belt", "sleeping"
+            ]
+          }
+        }
+      },
+      {
+        "id": "relation",
+        "type": "relation_recognition",
+        "params": {
+          "backend": "ascend",
+          "model_path": "models/relateanything/relateanything.om",
+          "predicate_bank": "models/relateanything/predicate_bank.json",
+          "img_size": 448,
+          "max_boxes": 16,
+          "box_confidence": 0.25,
+          "score_threshold": 0.15,
+          "max_relations": 20,
+          "predicates": ["beside", "in front of", "behind"],
+          "boundary_classes": ["person"],
+          "run_every_n_frames": 1
+        }
+      }
+    ],
+    "edges": [
+      { "from": "src", "to": "decode" },
+      { "from": "decode", "to": "preprocess" },
+      { "from": "preprocess", "to": "detect" },
+      { "from": "detect", "to": "relation" }
+    ]
+  }
+}

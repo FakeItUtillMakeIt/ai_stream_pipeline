@@ -98,6 +98,15 @@ cmake -B build -DWITH_ASCEND=ON
 #   INPUT_SHAPE="input:1,16,3,224,224" \
 #   tools/model_converter/ascend/convert_onnx_to_om.sh \
 #       models/action_recognition/action_recognition.onnx input 224 224
+# YOLO-Pose 用专用脚本（原始 ONNX 是 opset 18，通用 ATC 会段错误）：
+#   python3 tools/model_converter/ascend/convert_pose_to_om.py \
+#       models/yolov8n/yolov8n_pose.trans.onnx \
+#       --output models/yolov8n/yolov8n_pose
+# RelateAnything 用专用脚本（需内联 If 子图并静态化 shape）：
+#   python3 tools/model_converter/ascend/convert_relation_to_om.py \
+#       models/relateanything/relateanything.onnx \
+#       --output models/relateanything/relateanything
+# 转换脚本依赖 onnx / onnxsim / numpy（pip install --user 即可）。
 
 # 地平线 RDK S100P（板端本机编译）
 cmake -B build -DWITH_HORIZON=ON
