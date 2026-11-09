@@ -250,7 +250,10 @@ body { background: var(--bg); }
 .impl-m.ok { background: var(--ok); } .impl-m.warn { background: var(--warn); } .impl-m.err { background: var(--err); } .impl-m.idle { background: var(--off); }
 .impl-diag { margin-left: auto; font-size: 11px; color: var(--primary); cursor: pointer; }
 .impl-diagbox { margin: 0 14px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); padding: 9px 11px; font-size: 12px; }
-.impl-diagitem { display: flex; gap: 8px; align-items: center; padding: 3px 0; color: var(--dim); }
+.impl-diagitem { display: flex; gap: 8px; align-items: flex-start; padding: 3px 0; color: var(--dim); }
+.impl-diagitem .impl-dot { margin-top: 5px; flex: none; }
+.idi-label { flex: none; width: 64px; color: var(--muted); }
+.idi-val { flex: 1; min-width: 0; word-break: break-all; color: var(--text-dim); }
 .impl-copyc { color: var(--primary); cursor: pointer; }
 
 /* 卡片实时预览 */

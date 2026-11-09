@@ -334,7 +334,7 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
               {openDiag[i.id] && (
                 <div className="impl-diagbox">
                   {sc.length === 0 && <div className="impl-diagitem">点「重新自检」探测该行健康度</div>}
-                  {sc.map((x, k) => <div key={k} className="impl-diagitem"><span className={'impl-dot ' + x.level} />{x.label}：{x.detail}</div>)}
+                  {sc.map((x, k) => <div key={k} className="impl-diagitem"><span className={'impl-dot ' + x.level} /><span className="idi-label">{x.label}</span><span className="idi-val">{x.detail}</span></div>)}
                   <div className="impl-diagitem"><span className="impl-copyc" onClick={() => fetchSc(i.id)}>↻ 重新自检</span></div>
                 </div>
               )}
