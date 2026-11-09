@@ -141,6 +141,9 @@ hal::IImageAccelerator* ResizeNormalizeNode::getCpuAccelerator() {
     }
 
     for (auto backend : candidates) {
+        if (!factory.isBackendAvailable(backend)) {
+            continue;
+        }
         auto accel = factory.create(backend);
         if (accel) {
             cpu_backend_selected_ = backend;

@@ -57,7 +57,8 @@
 
 - 后端在编译期按 `WITH_*` 选项编入，运行期通过静态注册宏注册到工厂
 - `AUTO` 模式按固定优先级选择第一个 `isAvailable()` 为真的后端
-  （TensorRT > RKNN > Ascend > 地平线 BPU > OpenVINO > CPU）
+  （TensorRT > RKNN > Ascend > 地平线 BPU > OpenVINO > CPU；解码
+  NVDEC > NVV4L2 > V4L2 > MPP > DVPP > VAAPI > HORIZON > FFMPEG）
 - 硬件后端（RKNN/NVDEC/MPP/VPU…）通过 **dlopen 惰性加载**：x86 编译主机
   无对应库时 `isAvailable()` 返回 false，自动回退下一优先级；VAAPI 由 FFmpeg 内部
   加载 libva/驱动，本工程不直接链接 libva；OpenVINO 启用时链接 `libopenvino_c`（C ABI）

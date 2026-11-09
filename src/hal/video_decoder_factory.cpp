@@ -19,15 +19,16 @@ void VideoDecoderFactory::registerBackend(VideoDecoderBackend type, Creator crea
 VideoDecoderPtr VideoDecoderFactory::create(VideoDecoderBackend type) {
     if (type == VideoDecoderBackend::AUTO) {
         // 优先级：NVDEC(cuvid) > NVV4L2(GStreamer/Jetson) > V4L2(裸/Jetson)
-        //         > MPP > VAAPI(Intel/AMD) > HORIZON > DVPP > FFmpeg
+        //         > MPP > DVPP(Ascend) > VAAPI(Intel/AMD) > HORIZON > FFmpeg
+        // DVPP 放在 VAAPI 前：Ascend 机器上直接选 DVPP，避免先探测 VAAPI
         std::vector<VideoDecoderBackend> priority = {
             VideoDecoderBackend::NVDEC,
             VideoDecoderBackend::NVV4L2,
             VideoDecoderBackend::V4L2,
             VideoDecoderBackend::MPP,
+            VideoDecoderBackend::DVPP,
             VideoDecoderBackend::VAAPI,
             VideoDecoderBackend::HORIZON,
-            VideoDecoderBackend::DVPP,
             VideoDecoderBackend::FFMPEG
         };
         for (auto backend : priority) {

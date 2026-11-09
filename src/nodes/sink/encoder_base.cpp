@@ -4,6 +4,7 @@
 #include "3rd_party/log_mgr/log_mgr.h"
 
 #include <cstring>
+#include <dlfcn.h>
 #include <vector>
 
 extern "C" {
@@ -16,6 +17,16 @@ extern "C" {
 
 namespace ai_stream {
 namespace nodes {
+
+namespace {
+bool cudaDriverAvailable() {
+    void* handle = dlopen("libcuda.so.1", RTLD_LAZY);
+    if (!handle) handle = dlopen("libcuda.so", RTLD_LAZY);
+    if (!handle) return false;
+    dlclose(handle);
+    return true;
+}
+} // namespace
 
 // ============================================================
 // EncoderBase 实现
@@ -180,9 +191,17 @@ bool EncoderBase::openVideoCodec() {
     // 2. 名称映射：mpp_h264 → mpp；nvenc/nvv4l2 → 优先 Jetson GStreamer nvv4l2
     //    硬编（本机可用），桌面平台该后端未注册会回退 legacy avcodec；其余 → ffmpeg 后端
     std::string backend = "auto";
-    if (configEncoderName_.find("nvenc") != std::string::npos ||
-        configEncoderName_.find("nvv4l2") != std::string::npos) {
+    if (configEncoderName_.find("nvv4l2") != std::string::npos) {
         backend = "nvv4l2_h264";
+    } else if (configEncoderName_.find("nvenc") != std::string::npos) {
+#if defined(__aarch64__)
+        // Jetson 优先 GStreamer nvv4l2
+        backend = "nvv4l2_h264";
+#else
+        // x86：有 libcuda 时直接走 FFmpeg nvenc；没有则走平台 AUTO
+        // （Ascend DVPP / Intel VAAPI），避免先探测 nvv4l2/nvenc 造成噪音。
+        backend = cudaDriverAvailable() ? "ffmpeg_h264" : "auto";
+#endif
     } else if (configEncoderName_.find("mpp") != std::string::npos) {
         backend = "mpp_h264";
     } else if (configEncoderName_.find("vaapi") != std::string::npos ||
@@ -209,12 +228,16 @@ bool EncoderBase::openVideoCodec() {
     cfg.gop = codec_ctx_->gop_size;
     cfg.codec_name = video_codec_ ? video_codec_->name : "libx264";
 
-    hal_encoder_ = hal::VideoEncoderFactory::instance().create(backend);
-    if (hal_encoder_ && hal_encoder_->isAvailable() && hal_encoder_->open(cfg)) {
+    auto try_hal = [&](const std::string& name) -> bool {
+        auto enc = hal::VideoEncoderFactory::instance().create(name);
+        if (!enc || !enc->isAvailable() || !enc->open(cfg)) {
+            return false;
+        }
         // 序列头交给封装载体（FLV/MP4 需要 AVCC extradata）
         size_t ed_size = 0;
-        const uint8_t* ed = hal_encoder_->getExtradata(ed_size);
+        const uint8_t* ed = enc->getExtradata(ed_size);
         if (ed && ed_size > 0) {
+            av_freep(&codec_ctx_->extradata);
             codec_ctx_->extradata = static_cast<uint8_t*>(
                 av_mallocz(ed_size + AV_INPUT_BUFFER_PADDING_SIZE));
             memcpy(codec_ctx_->extradata, ed, ed_size);
@@ -222,9 +245,15 @@ bool EncoderBase::openVideoCodec() {
         }
         if (avcodec_parameters_from_context(video_stream_->codecpar, codec_ctx_) < 0) {
             LOG_ERROR("[EncoderBase] avcodec_parameters_from_context failed");
+            enc->close();
             return false;
         }
-        LOG_INFO("[EncoderBase] HAL encoder active");
+        hal_encoder_ = std::move(enc);
+        LOG_INFO_FMT("[EncoderBase] HAL encoder active: {}", hal_encoder_->getName());
+        return true;
+    };
+
+    if (try_hal(backend)) {
         return true;
     }
     LOG_WARN_FMT("[EncoderBase] HAL encoder '{}' unavailable, falling back to legacy avcodec",
@@ -284,12 +313,27 @@ bool EncoderBase::openVideoCodec() {
         return false;
     }
     const int bitrate_bps = codec_ctx_->bit_rate;
-    if (open_legacy(video_codec_->name, bitrate_bps)) {
+    const bool wants_nvenc = configEncoderName_.find("nvenc") != std::string::npos;
+    // 没有 libcuda 时直接跳过 legacy nvenc，避免无意义的 "Cannot load libcuda.so.1"
+    if ((!wants_nvenc || cudaDriverAvailable()) &&
+        open_legacy(video_codec_->name, bitrate_bps)) {
         return true;
     }
     if (strcmp(video_codec_->name, "libx264") == 0) {
         return false;
     }
+
+    // 显式配置的是厂商硬编码（如 h264_nvenc），但本机没有对应硬件：
+    // 先尝试平台 AUTO 硬件后端（Ascend DVPP / Intel VAAPI 等），再降级 libx264。
+    // NVIDIA 机器上 legacy nvenc 通常已成功，不会走到这里。
+    if (backend != "auto" && backend != "ffmpeg_h264") {
+        LOG_INFO("[EncoderBase] Explicit hardware encoder unavailable, trying platform AUTO backend");
+        if (try_hal("auto")) {
+            LOG_INFO("[EncoderBase] Falling back to platform AUTO hardware encoder");
+            return true;
+        }
+    }
+
     LOG_WARN_FMT("[EncoderBase] Encoder '{}' unavailable, falling back to libx264",
                  video_codec_->name);
     if (!open_legacy("libx264", bitrate_bps)) {

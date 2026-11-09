@@ -11,6 +11,7 @@
 #include <cstring>
 #include <mutex>
 #include <memory>
+#include <unistd.h>
 
 #ifndef MPP_ALIGN
 #define MPP_ALIGN(x, a) (((x) + (a) - 1) & ~((a) - 1))
@@ -143,6 +144,11 @@ MppVideoEncoder::~MppVideoEncoder() {
 }
 
 bool MppVideoEncoder::isAvailable() const {
+    // x86/非 RK 平台没有 MPP 设备节点：直接返回 false，避免 dlopen 失败刷警告
+    if (access("/dev/mpp_service", F_OK) != 0 &&
+        access("/dev/rkvenc", F_OK) != 0) {
+        return false;
+    }
     return load_mpp_lib();
 }
 
