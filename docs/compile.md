@@ -4,7 +4,7 @@
 
 - CMake >= 3.16，C++17 编译器（GCC/Clang）
 - 必需：FFmpeg（avcodec/avformat/avutil/swscale）、OpenCV（core/imgproc/videoio）、spdlog、nlohmann_json
-- 可选：CUDA Toolkit、TensorRT、RKNN（RK3588）、Ascend CANN、地平线 DNN（RDK S100P）、Eigen3（跟踪）、libcurl（FTP）、GTest（测试）
+- 可选：CUDA Toolkit、TensorRT、RKNN（RK3588）、Ascend CANN、地平线 DNN（RDK S100P）、OpenVINO（Intel CPU/iGPU/NPU）、Eigen3（跟踪）、libcurl（FTP）、GTest（测试）
 
 依赖解析策略：
 
@@ -43,6 +43,8 @@ cmake -LH build   # 查看全部选项及说明
 | `WITH_CUDA` | OFF | GPU 加速（解码/预处理/绘制），启用 CUDA 语言 |
 | `WITH_TENSORRT` | OFF | TensorRT 推理后端 |
 | `WITH_NPP` | OFF | 已废弃 no-op（NPP 由 `WITH_CUDA` 一并启用） |
+| `WITH_VAAPI` | ON | Intel/AMD VAAPI 硬件解码/编码（FFmpeg hwaccel，无需 libva-dev） |
+| `WITH_OPENVINO` | OFF | Intel OpenVINO 检测推理（CPU/iGPU/NPU，C API；需 `OPENVINO_ROOT` 或系统安装） |
 | `WITH_RKNN` | OFF | RK3588 推理后端 |
 | `WITH_ASCEND` | OFF | 昇腾 CANN 推理后端 |
 | `WITH_HORIZON` | OFF | 地平线 RDK S100P 后端（BPU 推理 + VPU 编解码） |
@@ -66,6 +68,13 @@ cmake -B build -DWITH_CUDA=ON -DWITH_TENSORRT=ON \
 # x86 纯 CPU
 cmake -B build
 
+# x86 + Intel/AMD iGPU（VAAPI 硬解/硬编 + OpenVINO 推理）
+# OpenVINO 可用官方 Runtime、系统包或 pip wheel；也可用 OPENVINO_ROOT 指定根目录
+cmake -B build -DWITH_VAAPI=ON -DWITH_OPENVINO=ON \
+      -DOPENVINO_ROOT=/opt/intel/openvino/runtime
+# 运行时确保服务用户可访问 /dev/dri/renderD128：
+#   sudo usermod -aG render $USER   （重新登录后生效）
+
 # RK3588（本机编译，板上有完整工具链与依赖时）
 cmake -B build -DWITH_RKNN=ON
 
@@ -78,6 +87,17 @@ cmake -B build-rk3588 \
 
 # 昇腾
 cmake -B build -DWITH_ASCEND=ON
+# CANN 默认在 /usr/local/Ascend/ascend-toolkit/latest；
+# 非默认路径用 -DASCEND_HOME=/path/to/cann 或 source set_env.sh 后使用 ASCEND_HOME_PATH。
+# 运行前确认服务用户在 HwHiAiUser 组（可访问 /dev/davinci*），并 source：
+#   source /usr/local/Ascend/ascend-toolkit/set_env.sh
+# 检测模型先转为 .om：
+#   tools/model_converter/ascend/convert_onnx_to_om.sh \
+#       models/sevncevision/20260921_sevnce_9_cls_nms_trans_640.onnx images 640 640
+# 动作识别 VideoMAE 也转 .om（5D 输入，需显式 INPUT_SHAPE）：
+#   INPUT_SHAPE="input:1,16,3,224,224" \
+#   tools/model_converter/ascend/convert_onnx_to_om.sh \
+#       models/action_recognition/action_recognition.onnx input 224 224
 
 # 地平线 RDK S100P（板端本机编译）
 cmake -B build -DWITH_HORIZON=ON

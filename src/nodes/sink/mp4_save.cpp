@@ -59,9 +59,15 @@ bool MP4SaveNode::onStartup() {
         path_str += ".mp4";
     }
 
-    if (!initFileWriter()) {
-        LOG_ERROR("[MP4Save] Failed to initialize file writer");
-        return false;
+    // 未显式设置 output_width/output_height 时，延迟到首帧再初始化，
+    // 用输入视频的真实宽高（避免默认 1920x1080 与输入不一致）。
+    if (output_width_ > 0 && output_height_ > 0) {
+        if (!initFileWriter(output_width_, output_height_)) {
+            LOG_ERROR("[MP4Save] Failed to initialize file writer");
+            return false;
+        }
+    } else {
+        LOG_INFO("[MP4Save] Output size not set, will use first frame dimensions");
     }
 
     next_pts_ = 0;
@@ -88,14 +94,28 @@ void MP4SaveNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
     auto frame = std::static_pointer_cast<core::VideoFramePacket>(packet);
     if (!frame || !frame->mat || frame->mat->empty()) return;
 
+    // 延迟初始化：没有显式 output_size 时取首帧宽高
+    if (!encoder_) {
+        const int w = frame->mat->cols;
+        const int h = frame->mat->rows;
+        if (!initFileWriter(w, h)) {
+            LOG_ERROR("[MP4Save] Failed to initialize file writer on first frame");
+            return;
+        }
+    }
+
     encoder_->encodeFrame(frame->mat->data,
-                          frame->width, frame->height,
+                          frame->mat->cols, frame->mat->rows,
                           frame->mat->step, next_pts_++);
 }
 
-bool MP4SaveNode::initFileWriter() {
-    int w = output_width_ > 0 ? output_width_ : 1920;
-    int h = output_height_ > 0 ? output_height_ : 1080;
+bool MP4SaveNode::initFileWriter(int width, int height) {
+    int w = (output_width_ > 0 && output_height_ > 0) ? output_width_ : width;
+    int h = (output_width_ > 0 && output_height_ > 0) ? output_height_ : height;
+    if (w <= 0 || h <= 0) {
+        LOG_ERROR_FMT("[MP4Save] Invalid output size {}x{}", w, h);
+        return false;
+    }
 
     encoder_ = std::make_unique<FileEncoder>();
     return encoder_->init(file_path_, "mp4", w, h, bitrate_, encoder_name_);

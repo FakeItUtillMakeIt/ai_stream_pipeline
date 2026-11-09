@@ -86,7 +86,9 @@ public:
     void registerBackend(const std::string& name, Creator creator);
     /**
      * 按名称创建后端：
-     * - "auto"      : mpp_h264 可用则优先，否则 ffmpeg_h264
+     * - "auto"      : horizon_h264 → mpp_h264 → vaapi_h264 → dvpp_h264 → ffmpeg_h264
+     * - "vaapi_h264": Intel/AMD VAAPI 硬编
+     * - "dvpp_h264" : Ascend DVPP VENC H.264 硬编
      * - "mpp_h264"  : Rockchip MPP 硬编
      * - "ffmpeg_h264": FFmpeg 软编（codec_name 决定 libx264/nvenc 等）
      * 找不到/不可用返回 nullptr（节点回退默认路径）

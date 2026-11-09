@@ -10,7 +10,12 @@
 | spdlog / nlohmann_json | 日志 / JSON（系统无 spdlog 时构建自动拉取 v1.9.2） | 是 |
 | CUDA Toolkit + cuDNN | GPU 加速（解码/预处理/推理/绘制） | WITH_CUDA=ON 时 |
 | TensorRT | 推理引擎（.engine 模型） | WITH_TENSORRT=ON 时 |
+| VAAPI 驱动（iHD/Mesa + 内核 i915/xe） | Intel/AMD 硬解/硬编 | WITH_VAAPI=ON 时（默认） |
+| OpenVINO Runtime（libopenvino_c） | Intel CPU/iGPU/NPU 检测推理 | WITH_OPENVINO=ON 时 |
+| Intel compute runtime（intel-opencl-icd / Level Zero） | OpenVINO 使用 iGPU/NPU | 仅 iGPU/NPU 推理时 |
 | RKNN / Ascend CANN SDK | 嵌入式平台推理 | 对应平台时 |
+| Ascend 驱动 + HwHiAiUser 组权限 | DVPP 硬解 / ACL 检测推理 | WITH_ASCEND=ON 时 |
+| CANN `set_env.sh`（driver 运行库路径） | Ascend 运行时 LD_LIBRARY_PATH | WITH_ASCEND=ON 时 |
 | 地平线 DNN / spcdev（RDK S100P） | BPU 推理 / VPU 编解码 | WITH_HORIZON=ON 时 |
 | Eigen3 | 跟踪器（OCSort/ByteTrack） | WITH_TRACK=ON 时 |
 | libcurl | 证据 FTP 上传 | 可选（缺失则禁用 FTP） |
@@ -27,8 +32,47 @@ cmake -B build -DWITH_CUDA=ON -DWITH_TENSORRT=ON \
 # WSL / 纯 CPU 环境
 cmake -B build
 
+# Intel/AMD iGPU：VAAPI 硬解/硬编 + OpenVINO 推理
+cmake -B build -DWITH_VAAPI=ON -DWITH_OPENVINO=ON \
+      -DOPENVINO_ROOT=/opt/intel/openvino/runtime
+
+# 华为昇腾：ACL 检测推理 + DVPP 硬解
+cmake -B build -DWITH_ASCEND=ON
+
 cmake --build build -j$(nproc)
 ```
+
+> 昇腾运行前置：
+> ```bash
+> sudo usermod -aG HwHiAiUser $USER          # 访问 /dev/davinci*
+> id -nG | grep HwHiAiUser
+> npu-smi info
+> # 检测模型先转 .om（需要 ATC）：
+> tools/model_converter/ascend/convert_onnx_to_om.sh \
+>     models/sevncevision/20260921_sevnce_9_cls_nms_trans_640.onnx \
+>     images 640 640 Ascend310P3
+> # 动作识别：
+> INPUT_SHAPE="input:1,16,3,224,224" \
+> tools/model_converter/ascend/convert_onnx_to_om.sh \
+>     models/action_recognition/action_recognition.onnx input 224 224 Ascend310P3
+> ```
+> 构建产物已通过 RPATH 指向 CANN lib64/driver 目录，通常无需手动
+> `source set_env.sh`；若移动了 CANN 安装位置，则运行前 source
+> `/usr/local/Ascend/ascend-toolkit/set_env.sh`。
+> 检测节点用 `"backend": "ascend"` + `.om`，解码节点用
+> `"hw_decoder": true, "hw_decoder_type": "dvpp"`（或 AUTO）；
+> sink/evidence 写 `"hw_encoder": true`（或 `"encoder": "dvpp_h264"`）走 DVPP VENC。
+> 未显式设置 `output_width/output_height` 时，sink 使用首帧输入视频宽高。
+
+> Intel 核显运行前置：
+> ```bash
+> sudo apt install intel-media-va-driver vainfo            # VAAPI 驱动
+> sudo usermod -aG render $USER                            # 允许访问 /dev/dri/renderD128
+> sudo apt install intel-opencl-icd                        # OpenVINO GPU 插件依赖（可选）
+> vainfo --display drm --device /dev/dri/renderD128          # 验证 H264/HEVC 编解码
+> ```
+> 没有 `render` 权限或驱动时，编解码会自动回退 FFmpeg 软解/软编；
+> OpenVINO 会从 GPU 回退 CPU，均不影响服务启动。
 
 完整选项与平台配置组合见 [compile.md](compile.md)。
 

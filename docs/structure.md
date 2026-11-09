@@ -4,6 +4,7 @@ ai_stream_pipeline/
 │   ├── dependencies.cmake         # 统一依赖查找
 │   ├── FindFFmpeg.cmake           # 随 install 导出，供下游 find_dependency
 │   ├── FindTensorRT.cmake
+│   ├── FindOpenVINO.cmake          # Intel CPU/iGPU/NPU（官方 Runtime / pip wheel）
 │   ├── FindRKNN.cmake             # RK3588 平台
 │   ├── FindAscend.cmake           # 昇腾平台
 │   ├── FindHorizonDNN.cmake       # 地平线 RDK S100P 平台
@@ -57,14 +58,15 @@ ai_stream_pipeline/
 │   │   │                          # infer 推理 / encode 编码 / decode 解码 /
 │   │   │                          # image_accel 图像加速，各含厂商子目录
 │   │   ├── infer/nvidia/          # TensorRT（通用/检测/姿态/动作 + trt_core + kernels）
+│   │   ├── infer/intel/           # OpenVINO（Intel CPU/iGPU/NPU，检测 5 张量契约）
 │   │   ├── infer/rk/              # RKNN（通用/检测/姿态/动作，dlopen librknnrt）
-│   │   ├── infer/ascend/          # 昇腾 CANN（动作识别）
+│   │   ├── infer/ascend/          # 昇腾 ACL（检测 .om；动作识别占位）
 │   │   ├── infer/horizon/         # 地平线 BPU（通用/检测/姿态/动作，dlopen libdnn）
 │   │   ├── infer/cpu/             # CPU fallback（OpenCV DNN 推理）
-│   │   ├── encode/rk/ encode/cpu/ encode/horizon/
-│   │   │                          # MPP 硬编 / FFmpeg 软编（含 nvenc 通道）/ VPU 硬编
-│   │   ├── decode/nvidia/ decode/rk/ decode/ascend/ decode/horizon/ decode/cpu/
-│   │   │                         # NVDEC / MPP / DVPP / VPU(sp 硬解) / FFmpeg 软解
+│   │   ├── encode/rk/ encode/vaapi/ encode/ascend/ encode/cpu/ encode/horizon/
+│   │   │                          # MPP / VAAPI / DVPP VENC(Ascend) / FFmpeg 软编（含 nvenc）/ VPU 硬编
+│   │   ├── decode/nvidia/ decode/vaapi/ decode/rk/ decode/ascend/ decode/horizon/ decode/cpu/
+│   │   │                         # NVDEC / VAAPI / MPP / DVPP(sp 硬解) / VPU(sp 硬解) / FFmpeg 软解
 │   │   ├── image_accel/nvidia/ image_accel/rk/
 │   │   │   image_accel/ascend/ image_accel/horizon/ image_accel/cpu/
 │   │   │                         # NPP+CUDA / RGA / DVPP / OpenCV / OpenCV
@@ -116,6 +118,7 @@ ai_stream_pipeline/
 ├── tools/
 │   ├── benchmark/bench.cpp        # 管道性能基准（跑定时长输出指标）
 │   ├── model_converter/           # ONNX/TRT 转换与量化工具（Python）
+│   │   ├── ascend/                # 昇腾 ONNX→OM（ATC）
 │   │   └── horizon/               # 地平线 ONNX→HBM 转换（convert.sh / 校准集 / 验证脚本）
 │   ├── videomae_train/            # 动作识别训练脚本
 │

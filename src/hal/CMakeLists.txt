@@ -23,6 +23,22 @@ list(APPEND HAL_SOURCES
     infer/common/relation_decode.cpp
 )
 
+# Intel/AMD VAAPI 硬件编解码（纯 FFmpeg hwaccel 实现，不链接 libva；
+# 运行时 device 不可访问时 isAvailable()=false，自动回退其它后端）
+if(WITH_VAAPI)
+    list(APPEND HAL_SOURCES
+        decode/vaapi/vaapi_video_decoder.cpp
+        encode/vaapi/vaapi_video_encoder.cpp
+    )
+endif()
+
+# OpenVINO 检测推理（Intel CPU/iGPU/NPU，C API 避免 C++ ABI 绑定）
+if(WITH_OPENVINO)
+    list(APPEND HAL_SOURCES
+        infer/intel/openvino_detection_engine.cpp
+    )
+endif()
+
 # TensorRT 后端
 if(WITH_TENSORRT)
     find_package(TensorRT REQUIRED)
@@ -76,7 +92,9 @@ if(WITH_ASCEND)
     list(APPEND HAL_SOURCES
         image_accel/ascend/dvpp_image_accelerator.cpp
         decode/ascend/dvpp_video_decoder.cpp
+        encode/ascend/dvpp_video_encoder.cpp
         infer/ascend/ascend_action_recognition.cpp
+        infer/ascend/ascend_detection_engine.cpp
     )
 endif()
 
@@ -158,9 +176,37 @@ if(WITH_RKNN)
 endif()
 
 if(WITH_ASCEND)
-    target_compile_definitions(ai_stream_hal PRIVATE WITH_ASCEND)
+    target_compile_definitions(ai_stream_hal PRIVATE WITH_ASCEND ENABLE_DVPP_INTERFACE)
     target_include_directories(ai_stream_hal PRIVATE ${Ascend_INCLUDE_DIRS})
-    target_link_libraries(ai_stream_hal PRIVATE ${Ascend_LIBRARIES})
+    target_link_libraries(ai_stream_hal PUBLIC ${Ascend_LIBRARIES})
+    # CANN 的 libascend_dump/libdvpp_op_base 依赖 driver 的 drv*/hal* 符号，
+    # 官方 sample 通过 runtime/lib64/stub 解决；本环境无 stub，运行时由
+    # set_env.sh/LD_LIBRARY_PATH 提供 driver 库，链接期允许 shlib 未定义符号。
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        # --allow-shlib-undefined：CANN 内部库的 driver 符号在链接期未解析，
+        #   运行时由 CANN driver 提供。
+        # --disable-new-dtags：生成 DT_RPATH（可传递），使 libascendcl 的
+        #   依赖 libmsprofiler/libascend_dump 等无需 source set_env.sh 也能找到。
+        target_link_options(ai_stream_hal INTERFACE
+            -Wl,--allow-shlib-undefined
+            -Wl,--disable-new-dtags)
+    endif()
+    # CANN 库不在系统默认路径：把 lib64 与 driver 运行库目录加入 RPATH，
+    # 这样不 source set_env.sh 也能启动（与 OpenVINO 的处理一致）。
+    if(Ascend_ACL_LIBRARY)
+        get_filename_component(_ASCEND_LIB_DIR "${Ascend_ACL_LIBRARY}" DIRECTORY)
+        set_property(TARGET ai_stream_hal APPEND PROPERTY BUILD_RPATH "${_ASCEND_LIB_DIR}")
+        set_property(TARGET ai_stream_hal APPEND PROPERTY INSTALL_RPATH "${_ASCEND_LIB_DIR}")
+    endif()
+    foreach(_ascend_driver_dir
+            "/usr/local/Ascend/driver/lib64"
+            "/usr/local/Ascend/driver/lib64/common"
+            "/usr/local/Ascend/driver/lib64/driver")
+        if(EXISTS "${_ascend_driver_dir}")
+            set_property(TARGET ai_stream_hal APPEND PROPERTY BUILD_RPATH "${_ascend_driver_dir}")
+            set_property(TARGET ai_stream_hal APPEND PROPERTY INSTALL_RPATH "${_ascend_driver_dir}")
+        endif()
+    endforeach()
 endif()
 
 if(WITH_HORIZON)
@@ -171,5 +217,18 @@ if(WITH_HORIZON)
         target_link_libraries(ai_stream_hal PRIVATE ${HORIZON_DNN_LIBRARIES} dl)
     else()
         target_link_libraries(ai_stream_hal PRIVATE dl)
+    endif()
+endif()
+
+if(WITH_OPENVINO)
+    target_compile_definitions(ai_stream_hal PRIVATE WITH_OPENVINO)
+    target_include_directories(ai_stream_hal PRIVATE ${OPENVINO_INCLUDE_DIRS})
+    target_link_libraries(ai_stream_hal PRIVATE ${OPENVINO_LIBRARIES})
+    # pip wheel / 非系统路径安装时，运行时需要能找到 libopenvino*.so
+    if(OPENVINO_LIBRARY_DIR)
+        set_target_properties(ai_stream_hal PROPERTIES
+            BUILD_RPATH "${OPENVINO_LIBRARY_DIR}"
+            INSTALL_RPATH "${OPENVINO_LIBRARY_DIR}"
+        )
     endif()
 endif()

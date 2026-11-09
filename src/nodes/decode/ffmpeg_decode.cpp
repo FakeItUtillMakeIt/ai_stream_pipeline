@@ -7,6 +7,8 @@
 #include "registry/node_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 #include <opencv2/opencv.hpp>
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <sstream>
 #include <iomanip>
@@ -74,11 +76,56 @@ void FFmpegDecodeNode::setSnapshotDir(const std::string& dir) {
 
 void FFmpegDecodeNode::setHwDecodeEnabled(bool enabled) {
     use_hw_ = enabled;
+    // 显式关闭 hw_decoder 时强制软解；开启时保持 AUTO（按平台优先级选硬件）
+    if (!enabled) {
+        codec_backend_ = hal::VideoDecoderBackend::FFMPEG;
+    } else if (codec_backend_ == hal::VideoDecoderBackend::FFMPEG) {
+        codec_backend_ = hal::VideoDecoderBackend::AUTO;
+    }
     LOG_INFO_FMT("[FFmpegDecode] HW decode enabled: {}", enabled);
 }
 
 bool FFmpegDecodeNode::isHwDecodeEnabled() {
     return use_hw_.load();
+}
+
+void FFmpegDecodeNode::setDecoderBackendName(const std::string& name) {
+    std::string lower = name;
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    hal::VideoDecoderBackend backend = hal::VideoDecoderBackend::AUTO;
+    if (lower.empty() || lower == "auto") {
+        backend = hal::VideoDecoderBackend::AUTO;
+    } else if (lower.find("cuvid") != std::string::npos ||
+               lower.find("nvdec") != std::string::npos ||
+               lower.find("cuda") != std::string::npos) {
+        backend = hal::VideoDecoderBackend::NVDEC;
+    } else if (lower.find("vaapi") != std::string::npos ||
+               lower.find("qsv") != std::string::npos ||
+               lower.find("intel") != std::string::npos) {
+        backend = hal::VideoDecoderBackend::VAAPI;
+    } else if (lower.find("mpp") != std::string::npos ||
+               lower.find("rk") != std::string::npos) {
+        backend = hal::VideoDecoderBackend::MPP;
+    } else if (lower.find("dvpp") != std::string::npos ||
+               lower.find("ascend") != std::string::npos) {
+        backend = hal::VideoDecoderBackend::DVPP;
+    } else if (lower.find("vpu") != std::string::npos ||
+               lower.find("horizon") != std::string::npos) {
+        backend = hal::VideoDecoderBackend::HORIZON;
+    } else if (lower == "ffmpeg" || lower == "software" || lower == "cpu" ||
+               lower == "libavcodec") {
+        backend = hal::VideoDecoderBackend::FFMPEG;
+    } else {
+        LOG_WARN_FMT("[FFmpegDecode] Unknown hw_decoder_type '{}', using auto", name);
+        backend = hal::VideoDecoderBackend::AUTO;
+    }
+
+    codec_backend_ = backend;
+    use_hw_ = (backend != hal::VideoDecoderBackend::FFMPEG);
+    LOG_INFO_FMT("[FFmpegDecode] Decoder backend: {} (from '{}')",
+                 static_cast<int>(backend), name);
 }
 
 void FFmpegDecodeNode::setVideoDecoderBackend(hal::VideoDecoderBackend backend) {
@@ -172,8 +219,16 @@ std::shared_ptr<DecoderContext> FFmpegDecodeNode::getOrCreateDecoder(
     // 创建新的解码器上下文
     auto ctx = std::make_shared<DecoderContext>();
 
-    // 通过 HAL 工厂创建视频编解码器
-    ctx->codec = hal::VideoDecoderFactory::instance().create(codec_backend_);
+    // 通过 HAL 工厂创建视频编解码器。显式指定的后端未编入当前构建时
+    // （例如 Intel 机器上的旧配置仍写着 h264_cuvid）回退 AUTO。
+    hal::VideoDecoderBackend requested = codec_backend_;
+    if (requested != hal::VideoDecoderBackend::AUTO &&
+        !hal::VideoDecoderFactory::instance().isBackendAvailable(requested)) {
+        LOG_WARN_FMT("[FFmpegDecode] Backend {} not available in this build, falling back to AUTO",
+                     static_cast<int>(requested));
+        requested = hal::VideoDecoderBackend::AUTO;
+    }
+    ctx->codec = hal::VideoDecoderFactory::instance().create(requested);
     if (!ctx->codec) {
         LOG_ERROR("[FFmpegDecode] Failed to create video codec from factory");
         return nullptr;
@@ -189,8 +244,23 @@ std::shared_ptr<DecoderContext> FFmpegDecodeNode::getOrCreateDecoder(
     LOG_INFO_FMT("[FFmpegDecode] Source resolution: {}x{}", width, height);
 
     if (!ctx->codec->init(codec_name, extradata, extradata_size)) {
-        LOG_ERROR_FMT("[FFmpegDecode] Failed to initialize codec for stream {}", stream_id);
-        return nullptr;
+        // AUTO 模式下硬件后端可能因驱动/权限/编码规格不支持而初始化失败，
+        // 此时回退到软件解码，避免整条管道起不来。
+        if (requested == hal::VideoDecoderBackend::AUTO) {
+            LOG_WARN_FMT("[FFmpegDecode] Backend '{}' init failed, falling back to FFmpeg software decode",
+                         ctx->codec->getName());
+            ctx->codec = hal::VideoDecoderFactory::instance().create(
+                hal::VideoDecoderBackend::FFMPEG);
+            if (!ctx->codec ||
+                !ctx->codec->init(codec_name, extradata, extradata_size)) {
+                LOG_ERROR_FMT("[FFmpegDecode] Software decode init also failed for stream {}",
+                              stream_id);
+                return nullptr;
+            }
+        } else {
+            LOG_ERROR_FMT("[FFmpegDecode] Failed to initialize codec for stream {}", stream_id);
+            return nullptr;
+        }
     }
 
     ctx->stream_id = stream_id;

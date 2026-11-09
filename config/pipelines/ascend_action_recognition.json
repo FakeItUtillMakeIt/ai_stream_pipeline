@@ -1,0 +1,55 @@
+{
+  "id": "ascend_action_recognition",
+  "graph": {
+    "nodes": [
+      {
+        "id": "src",
+        "type": "file_source",
+        "params": {
+          "url": "tests/data/sample_5s.mp4",
+          "loop": false,
+          "realtime": true
+        }
+      },
+      {
+        "id": "decode",
+        "type": "ffmpeg_decode",
+        "params": {
+          "output_bgr": true,
+          "hw_decoder": true,
+          "hw_decoder_type": "dvpp"
+        }
+      },
+      {
+        "id": "preprocess",
+        "type": "resize_normalize",
+        "params": {
+          "output_width": 224,
+          "output_height": 224,
+          "keep_aspect_ratio": false,
+          "mean": [0.485, 0.456, 0.406],
+          "std": [0.229, 0.224, 0.225]
+        }
+      },
+      {
+        "id": "action",
+        "type": "action_recognition_videomae",
+        "params": {
+          "model_path": "models/action_recognition/action_recognition.om",
+          "confidence_threshold": 0.7,
+          "num_frames": 16,
+          "frame_interval": 1,
+          "batch_size": 1,
+          "input_height": 224,
+          "input_width": 224,
+          "action_labels": ["climbing", "fighting", "other"]
+        }
+      }
+    ],
+    "edges": [
+      { "from": "src", "to": "decode" },
+      { "from": "decode", "to": "preprocess" },
+      { "from": "preprocess", "to": "action" }
+    ]
+  }
+}

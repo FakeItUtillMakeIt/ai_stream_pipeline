@@ -1,0 +1,38 @@
+{
+  "id": "ascend_dvpp_venc",
+  "graph": {
+    "nodes": [
+      {
+        "id": "src",
+        "type": "file_source",
+        "params": {
+          "url": "tests/data/sample_5s.mp4",
+          "loop": false,
+          "realtime": true
+        }
+      },
+      {
+        "id": "decode",
+        "type": "ffmpeg_decode",
+        "params": {
+          "output_bgr": true,
+          "hw_decoder": true,
+          "hw_decoder_type": "dvpp"
+        }
+      },
+      {
+        "id": "save",
+        "type": "mp4_save",
+        "params": {
+          "output_url": "file://output/ascend_venc.mp4",
+          "hw_encoder": true,
+          "bitrate": 2000
+        }
+      }
+    ],
+    "edges": [
+      { "from": "src", "to": "decode" },
+      { "from": "decode", "to": "save" }
+    ]
+  }
+}

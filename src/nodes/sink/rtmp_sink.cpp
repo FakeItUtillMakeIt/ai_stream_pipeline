@@ -38,9 +38,14 @@ bool RTMPSinkNode::onStartup() {
         LOG_WARN_FMT("[RTMPSink] Output URL not set, using default: {}", output_url_);
     }
 
-    if (!initEncoder()) {
-        LOG_ERROR("[RTMPSink] Failed to initialize encoder");
-        return false;
+    // 未显式设置 output_size 时延迟到首帧，用输入视频宽高初始化
+    if (output_width_ > 0 && output_height_ > 0) {
+        if (!initEncoder(output_width_, output_height_)) {
+            LOG_ERROR("[RTMPSink] Failed to initialize encoder");
+            return false;
+        }
+    } else {
+        LOG_INFO("[RTMPSink] Output size not set, will use first frame dimensions");
     }
 
     LOG_INFO_FMT("[RTMPSink] Started pushing to {}", output_url_);
@@ -67,11 +72,16 @@ void RTMPSinkNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
     auto frame = std::static_pointer_cast<core::VideoFramePacket>(packet);
     if (!frame || !frame->mat || frame->mat->empty()) return;
 
-    int width = output_width_ > 0 ? output_width_ : frame->width;
-    int height = output_height_ > 0 ? output_height_ : frame->height;
+    // 延迟初始化：没有显式 output_size 时取首帧宽高
+    if (!encoder_) {
+        if (!initEncoder(frame->mat->cols, frame->mat->rows)) {
+            LOG_ERROR("[RTMPSink] Failed to initialize encoder on first frame");
+            return;
+        }
+    }
 
-    if (!encoder_->encodeFrame(frame->mat->data, width, height,
-                                frame->mat->step, next_pts_++)) {
+    if (!encoder_->encodeFrame(frame->mat->data, frame->mat->cols, frame->mat->rows,
+                               frame->mat->step, next_pts_++)) {
         LOG_ERROR("[RTMPSink] Failed to encode frame");
         connected_ = false;
         return;
@@ -79,12 +89,16 @@ void RTMPSinkNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
     connected_ = true;
 }
 
-bool RTMPSinkNode::initEncoder() {
+bool RTMPSinkNode::initEncoder(int width, int height) {
+    int w = (output_width_ > 0 && output_height_ > 0) ? output_width_ : width;
+    int h = (output_width_ > 0 && output_height_ > 0) ? output_height_ : height;
+    if (w <= 0 || h <= 0) {
+        LOG_ERROR_FMT("[RTMPSink] Invalid output size {}x{}", w, h);
+        return false;
+    }
+
     encoder_ = std::make_unique<RTMPEncoder>();
-    return encoder_->init(output_url_, "flv",
-                          output_width_ > 0 ? output_width_ : 1920,
-                          output_height_ > 0 ? output_height_ : 1080,
-                          bitrate_, encoder_name_);
+    return encoder_->init(output_url_, "flv", w, h, bitrate_, encoder_name_);
 }
 
 void RTMPSinkNode::closeEncoder() {

@@ -27,7 +27,7 @@ protected:
     void processPacket(std::shared_ptr<core::BasePacket> packet) override;
 
 private:
-    bool initFileWriter();
+    bool initFileWriter(int width, int height);
     void closeFileWriter();
 
     std::string file_path_;

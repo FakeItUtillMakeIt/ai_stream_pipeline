@@ -108,6 +108,9 @@ public:
         if (detector_config.contains("cuda_graph")) {
             setExtraParam("cuda_graph", detector_config["cuda_graph"]);
         }
+        if (detector_config.contains("backend")) {
+            setInferenceBackendName(detector_config["backend"].get<std::string>());
+        }
         if (detector_config.contains("input_nv12")) {
             setExtraParam("input_nv12", detector_config["input_nv12"]);
         }
@@ -128,6 +131,9 @@ public:
     virtual void setExtraParam(const std::string& key, const nlohmann::json& value) {
         (void)key; (void)value;
     }
+
+    // 后端名称（"auto"/"tensorrt"/"openvino"/"cpu"...），默认忽略
+    virtual void setInferenceBackendName(const std::string& /*name*/) {}
 };
 
 } // namespace nodes

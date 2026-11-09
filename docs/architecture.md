@@ -101,15 +101,15 @@ ai_stream_pipeline 是一个模块化的视频流 AI 处理框架：以 **节点
 
 | 接口 | 职责 | 后端 |
 |---|---|---|
-| `IInferenceEngine` / `IDetectionInferenceEngine` | 通用/检测推理 | TensorRT、RKNN、Ascend、地平线 BPU |
-| `IActionRecognition` | 动作识别推理 | TensorRT (VideoMAE)、RKNN、Ascend |
+| `IInferenceEngine` / `IDetectionInferenceEngine` | 通用/检测推理 | TensorRT、RKNN、Ascend、地平线 BPU、OpenVINO（Intel） |
+| `IActionRecognition` | 动作识别推理 | TensorRT (VideoMAE)、RKNN、Ascend（VideoMAE `.om`） |
 | `IPoseEstimationEngine` | 姿态估计推理（host/设备输入/GPU 端到端三路径） | TensorRT (YOLO-Pose) |
-| `IImageAccelerator` | 预处理/绘制/NMS 加速 | CUDA、NPP、RGA、CPU |
-| `IVideoDecoder` | 视频解码 | FFmpeg、NVDEC、MPP、地平线 VPU(sp 硬解) |
-| `IVideoEncoder` | 视频编码 | FFmpeg、MPP、地平线 VPU |
+| `IImageAccelerator` | 预处理/绘制/NMS 加速 | CUDA、NPP、RGA、DVPP（Ascend resize）、CPU |
+| `IVideoDecoder` | 视频解码 | FFmpeg、NVDEC、VAAPI（Intel/AMD）、MPP、DVPP（Ascend）、地平线 VPU(sp 硬解) |
+| `IVideoEncoder` | 视频编码 | FFmpeg、VAAPI（Intel/AMD）、MPP、DVPP VENC（Ascend H.264）、地平线 VPU |
 
 各 `*_factory.cpp` 按编译期宏（`WITH_TENSORRT` / `WITH_RKNN` / `WITH_ASCEND` / `WITH_HORIZON` /
-`WITH_CUDA` / `WITH_CPU_FALLBACK`）选择可用后端；可选依赖缺失时自动降级
+`WITH_OPENVINO` / `WITH_VAAPI` / `WITH_CUDA` / `WITH_CPU_FALLBACK`）选择可用后端；可选依赖缺失时自动降级
 （如无 GPU 回退 CPU 实现）。OSD 绘制的中文渲染依赖 OpenCV freetype 模块，
 缺失时通过 `HAVE_OPENCV_FREETYPE` 宏回退到 `cv::putText`。
 

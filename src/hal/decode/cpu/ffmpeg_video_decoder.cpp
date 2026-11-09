@@ -62,7 +62,12 @@ bool FFmpegVideoDecoder::decode(const uint8_t* packet_data, int packet_size,
     // 接收解码后的帧
     ret = avcodec_receive_frame(codec_ctx_, frame_);
     if (ret < 0) {
-        LOG_ERROR_FMT("[FFmpegVideoDecoder] avcodec_receive_frame failed: {}", ret);
+        // EAGAIN 表示解码器需要更多输入（B 帧重排），不是错误
+        if (ret == AVERROR(EAGAIN)) {
+            LOG_DEBUG("[FFmpegVideoDecoder] Decoder needs more packets (EAGAIN)");
+        } else {
+            LOG_ERROR_FMT("[FFmpegVideoDecoder] avcodec_receive_frame failed: {}", ret);
+        }
         return false;
     }
 

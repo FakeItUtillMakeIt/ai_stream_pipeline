@@ -103,11 +103,15 @@ bool EncoderBase::addVideoStream(int width, int height, int bitrate,
     // legacy 路径复用该上下文执行 avcodec_open2。
     // 以下都是 HAL 后端名（而非 FFmpeg 编码器名），直接按 H264 处理，
     // 避免 avcodec_find_encoder_by_name 报 "not found" 误导日志：
-    //   auto / horizon_h264 / mpp_h264 / nvv4l2_h264 / h264_vpu ...
+    //   auto / horizon_h264 / mpp_h264 / nvv4l2_h264 / vaapi_h264 / h264_vpu ...
     const bool is_backend_name =
         encoder_name == "auto" ||
         encoder_name.find("mpp") != std::string::npos ||
         encoder_name.find("nvv4l2") != std::string::npos ||
+        encoder_name.find("vaapi") != std::string::npos ||
+        encoder_name.find("qsv") != std::string::npos ||
+        encoder_name.find("dvpp") != std::string::npos ||
+        encoder_name.find("ascend") != std::string::npos ||
         encoder_name.find("vpu") != std::string::npos ||
         encoder_name.find("hobot") != std::string::npos ||
         encoder_name.find("horizon") != std::string::npos ||
@@ -128,8 +132,14 @@ bool EncoderBase::addVideoStream(int width, int height, int bitrate,
         codec_ctx_->codec_id = codec->id;
         LOG_INFO_FMT("[EncoderBase] Using encoder: {}", codec->name);
     } else {
-        // HAL 后端（auto 或具体硬件名）：context 仅作封装载体，选默认 H264
+        // HAL 后端（auto 或具体硬件名）：context 仅作封装载体，选默认 H264。
+        // 同时记录 video_codec_，供 HAL 不可用时的 legacy 软编回退使用。
         const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_H264);
+        if (!codec) {
+            LOG_ERROR("[EncoderBase] No default H264 encoder available for HAL fallback");
+            return false;
+        }
+        video_codec_ = codec;
         codec_ctx_ = avcodec_alloc_context3(codec);
         codec_ctx_->codec_id = AV_CODEC_ID_H264;
         LOG_INFO_FMT("[EncoderBase] HAL backend '{}' (muxer codec ctx = H264)", encoder_name);
@@ -175,6 +185,13 @@ bool EncoderBase::openVideoCodec() {
         backend = "nvv4l2_h264";
     } else if (configEncoderName_.find("mpp") != std::string::npos) {
         backend = "mpp_h264";
+    } else if (configEncoderName_.find("vaapi") != std::string::npos ||
+               configEncoderName_.find("qsv") != std::string::npos ||
+               configEncoderName_.find("intel") != std::string::npos) {
+        backend = "vaapi_h264";
+    } else if (configEncoderName_.find("dvpp") != std::string::npos ||
+               configEncoderName_.find("ascend") != std::string::npos) {
+        backend = "dvpp_h264";
     } else if (configEncoderName_.find("vpu") != std::string::npos ||
                configEncoderName_.find("hobot") != std::string::npos ||
                configEncoderName_.find("horizon") != std::string::npos ||
@@ -324,15 +341,45 @@ bool EncoderBase::encodeFrame(const uint8_t* data, int width, int height,
     return encodeLegacy(data, width, height, step, pts);
 }
 
+SwsContext* EncoderBase::swsForInput(int width, int height) {
+    if (width == width_ && height == height_) {
+        return sws_ctx_;
+    }
+    if (scale_sws_ctx_ && width == scale_src_width_ && height == scale_src_height_) {
+        return scale_sws_ctx_;
+    }
+    if (scale_sws_ctx_) {
+        sws_freeContext(scale_sws_ctx_);
+        scale_sws_ctx_ = nullptr;
+    }
+    scale_sws_ctx_ = sws_getContext(
+        width, height, AV_PIX_FMT_BGR24,
+        width_, height_, codec_ctx_->pix_fmt,
+        SWS_FAST_BILINEAR, nullptr, nullptr, nullptr);
+    if (!scale_sws_ctx_) {
+        LOG_ERROR_FMT("[EncoderBase] Failed to create scaler {}x{} -> {}x{}",
+                      width, height, width_, height_);
+        scale_src_width_ = scale_src_height_ = 0;
+        return nullptr;
+    }
+    scale_src_width_ = width;
+    scale_src_height_ = height;
+    LOG_INFO_FMT("[EncoderBase] Input size {}x{} differs from output {}x{}, scaling enabled",
+                 width, height, width_, height_);
+    return scale_sws_ctx_;
+}
+
 bool EncoderBase::encodeViaHal(const uint8_t* data, int width, int height,
                                int step, int64_t pts) {
     if (av_frame_make_writable(av_frame_) < 0) {
         LOG_ERROR("[EncoderBase] av_frame_make_writable failed");
         return false;
     }
+    SwsContext* sws = swsForInput(width, height);
+    if (!sws) return false;
     const uint8_t* src_data[1] = {data};
     const int src_linesize[1] = {step};
-    sws_scale(sws_ctx_, src_data, src_linesize, 0, height,
+    sws_scale(sws, src_data, src_linesize, 0, height,
               av_frame_->data, av_frame_->linesize);
 
     // 三平面 → 连续 YUV420P
@@ -367,9 +414,11 @@ bool EncoderBase::encodeLegacy(const uint8_t* data, int width, int height,
         LOG_ERROR("[EncoderBase] av_frame_make_writable failed");
         return false;
     }
+    SwsContext* sws = swsForInput(width, height);
+    if (!sws) return false;
     const uint8_t* src_data[1] = {data};
     const int src_linesize[1] = {step};
-    sws_scale(sws_ctx_, src_data, src_linesize, 0, height,
+    sws_scale(sws, src_data, src_linesize, 0, height,
               av_frame_->data, av_frame_->linesize);
     av_frame_->pts = pts;
 
@@ -498,6 +547,10 @@ void EncoderBase::close() {
         }
     }
 
+    if (scale_sws_ctx_) {
+        sws_freeContext(scale_sws_ctx_);
+        scale_sws_ctx_ = nullptr;
+    }
     if (sws_ctx_) {
         sws_freeContext(sws_ctx_);
         sws_ctx_ = nullptr;

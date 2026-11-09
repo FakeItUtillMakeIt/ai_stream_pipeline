@@ -58,6 +58,8 @@ private:
     AVFormatContext* fmt_ctx_ = nullptr;
     int video_stream_index_ = -1;
     int codec_id_ = 0;
+    int video_width_ = 0;
+    int video_height_ = 0;
     std::vector<uint8_t> extradata_;
     uint32_t my_stream_id_ = 0;
 

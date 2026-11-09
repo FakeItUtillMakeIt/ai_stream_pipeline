@@ -20,6 +20,7 @@ enum class VideoDecoderBackend {
     NVV4L2,     // NVIDIA Jetson GStreamer nvv4l2 (NvMM/GPU 路径，本机可用)
     V4L2,       // NVIDIA Jetson 裸 V4L2 M2M (/dev/v4l2-nvdec，真实硬件可用)
     MPP,        // Rockchip MPP (RK3588)
+    VAAPI,      // Intel/AMD VAAPI（iHD / Mesa，x86 核显/独显）
     DVPP,       // Huawei Ascend DVPP
     HORIZON,    // Horizon BPU video codec
     FFMPEG      // FFmpeg 软件编解码

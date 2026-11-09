@@ -136,6 +136,8 @@ bool FileSourceNode::openInput() {
         if (codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
             video_stream_index_ = i;
             codec_id_ = codecpar->codec_id;
+            video_width_ = codecpar->width;
+            video_height_ = codecpar->height;
 
             if (codecpar->extradata && codecpar->extradata_size > 0) {
                 extradata_.assign(codecpar->extradata, codecpar->extradata + codecpar->extradata_size);
@@ -260,6 +262,8 @@ void FileSourceNode::workerFunc() {
         }
         raw_pkt->is_key_frame = (pkt->flags & AV_PKT_FLAG_KEY);
         raw_pkt->codec_id = codec_id_;
+        raw_pkt->width = video_width_;
+        raw_pkt->height = video_height_;
         raw_pkt->data.assign(pkt->data, pkt->data + pkt->size);
         raw_pkt->extradata = extradata_;
 

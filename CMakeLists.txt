@@ -35,6 +35,17 @@ option(WITH_TENSORRT     "Enable TensorRT inference support" OFF)
 # GPU 加速选项
 option(WITH_CUDA "Enable CUDA support for GPU acceleration" OFF)
 option(WITH_NPP "Deprecated no-op (NPP is enabled via WITH_CUDA)" OFF)
+# Intel/AMD VAAPI 硬件编解码：仅依赖 FFmpeg 的 VAAPI hwaccel 与运行时驱动，
+# 不需要链接 libva；运行时按 /dev/dri/renderD* 可访问性自动启用。
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|i.86")
+    set(_WITH_VAAPI_DEFAULT ON)
+else()
+    set(_WITH_VAAPI_DEFAULT OFF)
+endif()
+option(WITH_VAAPI "Enable VAAPI hardware video decode/encode (Intel/AMD GPU)" ${_WITH_VAAPI_DEFAULT})
+
+# Intel iGPU 推理（OpenVINO C API）：找到 OpenVINO 后启用检测引擎
+option(WITH_OPENVINO "Enable Intel OpenVINO inference backend (CPU/GPU)" OFF)
 
 # 新平台推理后端
 option(WITH_RKNN  "Enable RKNN inference support (RK3588)" OFF)
@@ -344,6 +355,18 @@ if(WITH_HORIZON)
     endif()
 endif()
 
+# OpenVINO 推理后端（Intel CPU/iGPU/NPU，C API，支持 pip wheel / 官方 Runtime）
+if(WITH_OPENVINO)
+    find_package(OpenVINO QUIET)
+    if(OpenVINO_FOUND)
+        message(STATUS "Found OpenVINO: ${OPENVINO_INCLUDE_DIRS}")
+    else()
+        message(WARNING "OpenVINO not found. Intel OpenVINO inference backend will be disabled "
+                        "(set OPENVINO_ROOT or install openvino runtime).")
+        set(WITH_OPENVINO OFF)
+    endif()
+endif()
+
 if(WITH_TRACK)
     find_package(Eigen3 QUIET)
     if(EIGEN3_FOUND)
@@ -544,6 +567,7 @@ install(FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindRKNN.cmake"
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindAscend.cmake"
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindHorizonDNN.cmake"
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindOpenVINO.cmake"
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ai_stream_pipeline
 )
 
@@ -565,6 +589,8 @@ message(STATUS "  Build tests:          ${BUILD_TESTS}")
 message(STATUS "  Build examples:       ${BUILD_EXAMPLES}")
 message(STATUS "  CUDA support:         ${WITH_CUDA}")
 message(STATUS "  TensorRT support:     ${WITH_TENSORRT}")
+message(STATUS "  VAAPI codec support:  ${WITH_VAAPI}")
+message(STATUS "  OpenVINO inference:   ${WITH_OPENVINO}")
 message(STATUS "  RKNN support:         ${WITH_RKNN}")
 message(STATUS "  Ascend support:       ${WITH_ASCEND}")
 message(STATUS "  Horizon BPU support:  ${WITH_HORIZON}")

@@ -56,6 +56,12 @@ public:
     virtual bool isHwDecodeEnabled() = 0;
 
     /**
+     * @brief 按名称指定解码后端（auto/nvdec/mpp/vaapi/dvpp/horizon/ffmpeg）
+     * 默认空实现，仅支持多后端的解码节点覆写。
+     */
+    virtual void setDecoderBackendName(const std::string& /*name*/) {}
+
+    /**
      * @brief 设置是否随包附带 NV12（供 NV12 输入硬件模型直通消费）
      * 默认空实现，仅支持的后端覆写。
      */
@@ -74,6 +80,12 @@ public:
         }
         if (params.contains("hw_decoder")) {
             setHwDecodeEnabled(params["hw_decoder"].get<bool>());
+        }
+        if (params.contains("hw_decoder_type")) {
+            setDecoderBackendName(params["hw_decoder_type"].get<std::string>());
+        }
+        if (params.contains("decoder_backend")) {
+            setDecoderBackendName(params["decoder_backend"].get<std::string>());
         }
         if (params.contains("snapshot")) {
             const auto& snapshot_cfg = params["snapshot"];

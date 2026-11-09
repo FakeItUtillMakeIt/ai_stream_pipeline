@@ -247,6 +247,7 @@ std::vector<cv::Mat> ActionRecognitionVideoMAENode::getClipFromBuffer(uint32_t s
 
 void ActionRecognitionVideoMAENode::inferFromGpu(const std::vector<void*>& gpu_frames,
                                                   core::InferenceResultPacket::ActionResult& result) {
+    if (!engine_) return;
     if (static_cast<int>(gpu_frames.size()) < cfg_.num_frames) return;
 
     hal::ActionResult hal_result;
@@ -260,6 +261,7 @@ void ActionRecognitionVideoMAENode::inferFromGpu(const std::vector<void*>& gpu_f
 
 void ActionRecognitionVideoMAENode::inferFromCpu(const std::vector<cv::Mat>& clip,
                                                   core::InferenceResultPacket::ActionResult& result) {
+    if (!engine_) return;
     if (static_cast<int>(clip.size()) < cfg_.num_frames) return;
 
     // 预处理：布局转换 (HWC -> NCHW)，归一化已由上游预处理节点完成
@@ -378,9 +380,26 @@ bool ActionRecognitionVideoMAENode::loadModel() {
         }
     }
 
-    // 通过 HAL 工厂创建推理后端（TensorRT/RKNN/Ascend 按编译配置自动选择）
-    engine_ = hal::ActionRecognitionFactory::instance().create(
-        hal::ActionRecognitionBackend::AUTO);
+    // 按模型格式选后端：.om → Ascend，.engine → TensorRT；否则 AUTO。
+    // 避免 Ascend 机器上 AUTO 选中 ACL 后去读 .engine 导致整条管道构建失败。
+    auto& factory = hal::ActionRecognitionFactory::instance();
+    hal::ActionRecognitionBackend selected = hal::ActionRecognitionBackend::AUTO;
+    const auto ends_with = [&](const char* ext) {
+        const std::string e(ext);
+        return cfg_.model_path.size() >= e.size() &&
+               cfg_.model_path.compare(cfg_.model_path.size() - e.size(), e.size(), e) == 0;
+    };
+    if (ends_with(".om")) {
+        if (factory.isBackendAvailable(hal::ActionRecognitionBackend::ASCEND)) {
+            selected = hal::ActionRecognitionBackend::ASCEND;
+        }
+    } else if (ends_with(".engine")) {
+        if (factory.isBackendAvailable(hal::ActionRecognitionBackend::TENSORRT)) {
+            selected = hal::ActionRecognitionBackend::TENSORRT;
+        }
+    }
+
+    engine_ = factory.create(selected);
     if (!engine_) {
         LOG_ERROR("[ActionRecognitionVideoMAE] No action recognition backend available "
                   "(check WITH_TENSORRT/WITH_RKNN/WITH_ASCEND build options)");
@@ -400,6 +419,12 @@ bool ActionRecognitionVideoMAENode::loadModel() {
     if (!engine_->loadModel(hal_cfg)) {
         LOG_ERROR_FMT("Failed to load model via HAL backend: {}", cfg_.model_path);
         engine_.reset();
+        // AUTO 模式（如旧配置仍指向 .engine，但本机只有 Ascend）降级为不推理，
+        // 不阻断管道；显式后端仍视为配置错误。
+        if (selected == hal::ActionRecognitionBackend::AUTO) {
+            LOG_WARN("[ActionRecognitionVideoMAE] Running without action inference");
+            return true;
+        }
         return false;
     }
 

@@ -21,12 +21,13 @@ void DetectionInferenceEngineFactory::registerBackend(
 
 DetectionInferenceEnginePtr DetectionInferenceEngineFactory::create(DetectionBackend type) const {
     if (type == DetectionBackend::AUTO) {
-        // 按优先级自动选择：TensorRT > RKNN > Ascend > CPU
+        // 按优先级自动选择：TensorRT > RKNN > Ascend > OpenVINO(Intel) > CPU
         static const DetectionBackend priority[] = {
             DetectionBackend::TENSORRT,
             DetectionBackend::RKNN,
             DetectionBackend::HORIZON,
             DetectionBackend::ASCEND,
+            DetectionBackend::OPENVINO,
             DetectionBackend::CPU
         };
         for (auto backend : priority) {
@@ -59,6 +60,7 @@ std::vector<std::pair<DetectionBackend, std::string>> DetectionInferenceEngineFa
         {DetectionBackend::RKNN, "RKNN"},
         {DetectionBackend::HORIZON, "Horizon"},
         {DetectionBackend::ASCEND, "Ascend"},
+        {DetectionBackend::OPENVINO, "OpenVINO"},
         {DetectionBackend::CPU, "CPU"}
     };
     for (const auto& [type, creator] : creators_) {

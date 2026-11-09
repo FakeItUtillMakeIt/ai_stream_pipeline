@@ -931,8 +931,34 @@ void DetectionInferNode::freePinnedMemory() {
 // ============================================================
 bool DetectionInferNode::initEngine(const std::string& engine_path) {
     try {
+        auto& factory = hal::DetectionInferenceEngineFactory::instance();
+
+        // AUTO 时按模型格式挑后端：.engine 只能 TensorRT；.onnx/.xml 优先
+        // OpenVINO（Intel）或 OpenCV DNN，避免 TensorRT 被选中后读不了 ONNX。
+        hal::DetectionBackend selected = backend_type_;
+        if (selected == hal::DetectionBackend::AUTO) {
+            const auto ends_with = [&](const char* ext) {
+                const std::string e(ext);
+                return engine_path.size() >= e.size() &&
+                       engine_path.compare(engine_path.size() - e.size(), e.size(), e) == 0;
+            };
+            if (ends_with(".onnx") || ends_with(".xml")) {
+                if (factory.isBackendAvailable(hal::DetectionBackend::OPENVINO)) {
+                    selected = hal::DetectionBackend::OPENVINO;
+                }
+            } else if (ends_with(".om")) {
+                if (factory.isBackendAvailable(hal::DetectionBackend::ASCEND)) {
+                    selected = hal::DetectionBackend::ASCEND;
+                }
+            } else if (ends_with(".engine")) {
+                if (factory.isBackendAvailable(hal::DetectionBackend::TENSORRT)) {
+                    selected = hal::DetectionBackend::TENSORRT;
+                }
+            }
+        }
+
         // 通过 HAL 工厂创建推理引擎
-        engine_ = hal::DetectionInferenceEngineFactory::instance().create(backend_type_);
+        engine_ = factory.create(selected);
         if (!engine_) {
             // 平台无推理后端（如纯 CPU / RKNN 构建未启用）：以 mock 模式
             // 运行（processBatch 生成假检测框），保证流水线可构建可验证
@@ -956,6 +982,16 @@ bool DetectionInferNode::initEngine(const std::string& engine_path) {
 
         if (!engine_->loadModel(config)) {
             LOG_ERROR_FMT("[DetectionInfer] Failed to load model: {}", engine_path);
+            // AUTO 模式下允许回退到 mock：异构部署时 .engine（TensorRT）
+            // 与 .onnx（OpenVINO/OpenCV DNN）并不通用，不能让管道直接起不来。
+            // 显式指定 backend 时仍视为配置错误。
+            if (backend_type_ == hal::DetectionBackend::AUTO) {
+                LOG_WARN("[DetectionInfer] Auto backend failed to load model, running in mock mode");
+                engine_.reset();
+                graph_engine_ = nullptr;
+                nv12_engine_ = nullptr;
+                return true;
+            }
             engine_.reset();
             graph_engine_ = nullptr;
             nv12_engine_ = nullptr;

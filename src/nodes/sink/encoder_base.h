@@ -55,6 +55,8 @@ protected:
     // 编码实现路径
     bool encodeViaHal(const uint8_t* data, int width, int height, int step, int64_t pts);
     bool encodeLegacy(const uint8_t* data, int width, int height, int step, int64_t pts);
+    // 输入尺寸与编码尺寸不一致时按需创建 BGR→YUV 缩放上下文
+    SwsContext* swsForInput(int width, int height);
     bool muxPackets(const std::vector<hal::EncodedPacket>& packets, int64_t pts);
 
     AVFormatContext* fmt_ctx_ = nullptr;
@@ -63,6 +65,9 @@ protected:
     AVStream* video_stream_ = nullptr;
     AVFrame* av_frame_ = nullptr;
     SwsContext* sws_ctx_ = nullptr;
+    SwsContext* scale_sws_ctx_ = nullptr;   // 源尺寸 != 输出尺寸时使用
+    int scale_src_width_ = 0;
+    int scale_src_height_ = 0;
 
     // HAL 编码后端
     hal::VideoEncoderPtr hal_encoder_;

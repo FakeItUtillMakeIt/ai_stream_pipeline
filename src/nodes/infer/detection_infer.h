@@ -111,6 +111,29 @@ public:
     // 设置推理后端类型
     void setInferenceBackend(hal::DetectionBackend backend) { backend_type_ = backend; }
 
+    // 从 detector_config.backend 选择后端（auto/tensorrt/rknn/openvino/cpu...）
+    void setInferenceBackendName(const std::string& name) override {
+        if (name.empty() || name == "auto") {
+            backend_type_ = hal::DetectionBackend::AUTO;
+        } else if (name == "tensorrt" || name == "trt") {
+            backend_type_ = hal::DetectionBackend::TENSORRT;
+        } else if (name == "rknn") {
+            backend_type_ = hal::DetectionBackend::RKNN;
+        } else if (name == "ascend") {
+            backend_type_ = hal::DetectionBackend::ASCEND;
+        } else if (name == "horizon") {
+            backend_type_ = hal::DetectionBackend::HORIZON;
+        } else if (name == "openvino" || name == "intel") {
+            backend_type_ = hal::DetectionBackend::OPENVINO;
+        } else if (name == "cpu") {
+            backend_type_ = hal::DetectionBackend::CPU;
+        } else {
+            LOG_WARN_FMT("[DetectionInfer] Unknown backend '{}', using auto", name);
+            backend_type_ = hal::DetectionBackend::AUTO;
+        }
+        LOG_INFO_FMT("[DetectionInfer] Inference backend: {}", name);
+    }
+
 private:
     void flushBatch();
     bool initEngine(const std::string& engine_path);

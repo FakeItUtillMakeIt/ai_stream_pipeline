@@ -15,12 +15,17 @@ void VideoEncoderFactory::registerBackend(const std::string& name, Creator creat
 }
 
 VideoEncoderPtr VideoEncoderFactory::create(const std::string& name) {
-    // AUTO：硬件可用则优先（Horizon VPU → Rockchip MPP），否则 FFmpeg 软编
+    // AUTO：硬件可用则优先（Horizon VPU → Rockchip MPP → Intel/AMD VAAPI
+    // → Ascend DVPP VENC），否则 FFmpeg 软编
     if (name == "auto") {
         auto hz = create("horizon_h264");
         if (hz && hz->isAvailable()) return hz;
         auto mpp = create("mpp_h264");
         if (mpp && mpp->isAvailable()) return mpp;
+        auto vaapi = create("vaapi_h264");
+        if (vaapi && vaapi->isAvailable()) return vaapi;
+        auto dvpp = create("dvpp_h264");
+        if (dvpp && dvpp->isAvailable()) return dvpp;
         return create("ffmpeg_h264");
     }
     auto it = creators_.find(name);

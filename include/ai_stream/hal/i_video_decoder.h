@@ -1,5 +1,5 @@
 // include/ai_stream/hal/i_video_decoder.h
-// 硬件编解码抽象接口——隔离 NVDEC / MPP / DVPP 等后端
+// 硬件编解码抽象接口——隔离 NVDEC / VAAPI / MPP / DVPP 等后端
 #pragma once
 
 #include <cstdint>

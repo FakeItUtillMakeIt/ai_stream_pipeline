@@ -1,24 +1,21 @@
-// src/hal/ascend/dvpp_image_accelerator.h
+// src/hal/image_accel/ascend/dvpp_image_accelerator.h
 // DVPP 图像加速器——华为 Ascend 数字视觉预处理引擎
+//
+// resize 走 DVPP VPC 硬件（BGR888 in/out）；normalize（/255、mean/std、
+// BGR→RGB、NCHW）与 NMS 仍在 CPU，DVPP 没有 NMS 算子。
+// drawBoxes 用 OpenCV 回退，避免 OSD 节点选中 DVPP 后无法绘制。
 #pragma once
 
 #include "ai_stream/hal/i_image_accelerator.h"
+
+#include <acl/acl.h>
+#include <acl/ops/acl_dvpp.h>
+
 #include <string>
 
 namespace ai_stream {
 namespace hal {
 
-/**
- * @brief DVPP 图像加速器
- *
- * 使用华为 Ascend DVPP (Digital Video Pre-Processing) 引擎进行：
- * - 图像/视频编解码 (JPEG decode/encode, H.264/H.265 decode/encode)
- * - 图像缩放 (resize)
- * - 裁剪 (crop)
- * - 颜色空间转换
- *
- * 通过 ACL (Ascend Computing Language) API 调用。
- */
 class DvppImageAccelerator : public IImageAccelerator {
 public:
     DvppImageAccelerator();
@@ -32,15 +29,19 @@ public:
     bool drawBoxes(const std::vector<BBox>& boxes,
                    const DrawParams& draw) override;
 
+    bool cvtColorNv12ToBgr(
+        const void* src_y, int src_pitch_y,
+        const void* src_uv, int src_pitch_uv,
+        int width, int height,
+        uint8_t* dst_bgr, int dst_pitch,
+        void* stream = nullptr) override;
+
     bool nms(std::vector<BBox>& boxes, float iou_threshold) override;
 
-    std::string getName() const override { return "DVPP (Ascend)"; }
+    std::string getName() const override { return "DVPP VPC (Ascend)"; }
     bool isAvailable() const override;
 
-    /**
-     * @brief 设置 DVPP 通道数
-     */
-    void setChannelCount(int count);
+    void setChannelCount(int count) { channel_count_ = count; }
 
 private:
     bool initDvpp();
@@ -48,7 +49,11 @@ private:
 
     bool initialized_ = false;
     int channel_count_ = 4;
-    void* dvpp_ctx_ = nullptr;
+
+    aclrtContext context_ = nullptr;
+    aclrtStream stream_ = nullptr;
+    acldvppChannelDesc* channel_ = nullptr;
+    acldvppResizeConfig* resize_config_ = nullptr;
 };
 
 } // namespace hal

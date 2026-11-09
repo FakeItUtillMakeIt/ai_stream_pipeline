@@ -50,6 +50,11 @@ cmake -B build -DWITH_CUDA=ON -DWITH_TENSORRT=ON -DBUILD_TESTS=ON \
 cmake --build build -j$(nproc)
 ctest --test-dir build --output-on-failure
 
+# x86 + Intel/AMD iGPU：VAAPI 硬解/硬编 + OpenVINO 检测推理
+cmake -B build -DWITH_VAAPI=ON -DWITH_OPENVINO=ON \
+      -DOPENVINO_ROOT=/opt/intel/openvino/runtime
+cmake --build build -j$(nproc)
+
 # 启动服务
 ./build/src/http/http_server 0.0.0.0 8080
 ```
@@ -62,8 +67,10 @@ ctest --test-dir build --output-on-failure
 |---|---|---|
 | TensorRT | `WITH_TENSORRT` | NVIDIA 推理引擎（.engine 模型） |
 | CUDA / NPP | `WITH_CUDA` / `WITH_NPP` | GPU 解码/预处理/绘制加速 |
+| VAAPI | `WITH_VAAPI` | Intel/AMD 核显/独显硬件解码/编码（默认 ON） |
+| OpenVINO | `WITH_OPENVINO` | Intel CPU/iGPU/NPU 检测推理（ONNX/IR） |
 | RKNN | `WITH_RKNN` | 瑞芯微 RK3588 推理 |
-| Ascend CANN | `WITH_ASCEND` | 华为昇腾推理 |
+| Ascend CANN | `WITH_ASCEND` | 华为昇腾：ACL 检测/动作识别（.om）+ DVPP H264/H265 硬解 + VENC 硬编 + VPC resize |
 | 地平线 BPU / VPU | `WITH_HORIZON` | 地平线 RDK S100P：BPU 推理 + VPU 硬解/硬编 |
 | CPU fallback | `WITH_CPU_FALLBACK` | 无 GPU 时 CPU 实现（默认开启） |
 

@@ -38,6 +38,7 @@ const char* detectionBackendName(DetectionBackend b) {
         case DetectionBackend::RKNN:     return "rknn";
         case DetectionBackend::HORIZON:  return "horizon";
         case DetectionBackend::ASCEND:   return "ascend";
+        case DetectionBackend::OPENVINO: return "openvino";
         case DetectionBackend::CPU:      return "cpu";
     }
     return "unknown";
@@ -86,6 +87,7 @@ const char* videoCodecBackendName(VideoDecoderBackend b) {
         case VideoDecoderBackend::NVV4L2: return "nvv4l2";
         case VideoDecoderBackend::V4L2:   return "v4l2";
         case VideoDecoderBackend::MPP:    return "mpp";
+        case VideoDecoderBackend::VAAPI:  return "vaapi";
         case VideoDecoderBackend::HORIZON: return "horizon";
         case VideoDecoderBackend::DVPP:   return "dvpp";
         case VideoDecoderBackend::FFMPEG: return "ffmpeg";

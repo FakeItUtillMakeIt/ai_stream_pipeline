@@ -21,6 +21,7 @@ enum class DetectionBackend {
     RKNN = 2,
     ASCEND = 3,
     HORIZON = 5,
+    OPENVINO = 6,
     CPU = 4
 };
 

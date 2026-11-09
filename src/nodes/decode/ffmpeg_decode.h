@@ -38,6 +38,7 @@ public:
     void setSnapshotDir(const std::string& dir) override;
     void setHwDecodeEnabled(bool enabled) override;
     bool isHwDecodeEnabled() override;
+    void setDecoderBackendName(const std::string& name) override;
 
     // NV12 直通：随包附带紧凑 NV12（供 NV12 输入模型消费）
     void setOutputNV12(bool enable) override;

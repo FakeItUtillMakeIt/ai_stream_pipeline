@@ -26,7 +26,7 @@ protected:
     void processPacket(std::shared_ptr<core::BasePacket> packet) override;
 
 private:
-    bool initEncoder();
+    bool initEncoder(int width, int height);
     void closeEncoder();
 
     std::string output_url_;
