@@ -324,7 +324,10 @@ void ApiServer::handleSelfcheck(const httplib::Request& req, httplib::Response& 
     { std::lock_guard<std::mutex> lk(meta_mutex_); auto it = meta_.find(id); if (it != meta_.end()) play = it->second.play_url; }
     if (!hasRtmp) add("play", "播放地址", "idle", "未推流，无需播放地址");
     else if (play.empty()) add("play", "播放地址", "warn", "推流开但未配置 play_url");
-    else {
+    else if (play.find("://") == std::string::npos) {
+        // 相对路径：浏览器按同源/反向代理解析可播，但服务端无 base 无法探测，不误报"连不上"
+        add("play", "播放地址", "idle", "相对播放地址（浏览器同源/反代解析，服务端不探测）：" + play);
+    } else {
         auto r = ai_stream::utils::http::get(play, {}, 3000, 2000, true);
         std::string lvl, det;
         if (!r.err.empty()) { lvl = "err"; det = "连不上(" + r.err + ")：" + play; }
@@ -890,7 +893,9 @@ void ApiServer::handlePipelineBuildSync(const httplib::Request& req, httplib::Re
         auto pipeline = std::make_shared<core::Pipeline>(pipeline_id);
         if (!pipeline->buildFromJson(body["graph"])) {
             res.status = 400;
-            res.set_content(R"({"error":"Invalid pipeline configuration"})", "application/json");
+            json err = {{"error", "Invalid pipeline configuration"}};
+            if (!pipeline->buildError().empty()) err["detail"] = pipeline->buildError();
+            res.set_content(err.dump(), "application/json");
             return;
         }
 

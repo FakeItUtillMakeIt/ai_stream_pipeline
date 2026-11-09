@@ -18,11 +18,13 @@ namespace ai_stream
 
         bool Pipeline::buildFromJson(const nlohmann::json &config)
         {
+            build_error_.clear();
             try
             {
                 // 1. 解析节点配置并创建实例
                 if (!config.contains("nodes") || !config["nodes"].is_array())
                 {
+                    build_error_ = "缺少 nodes 数组";
                     LOG_ERROR_FMT("[Pipeline {}] Invalid config: missing 'nodes' array", id_);
                     return false;
                 }
@@ -37,12 +39,14 @@ namespace ai_stream
 
                     if (id.empty() || type.empty())
                     {
+                        build_error_ = "有节点缺少 id 或 type";
                         LOG_ERROR_FMT("[Pipeline {}] Node missing 'id' or 'type'", id_);
                         return false;
                     }
 
                     if (nodes_.find(id) != nodes_.end())
                     {
+                        build_error_ = "节点 id 重复: " + id;
                         LOG_ERROR_FMT("[Pipeline {}] Duplicate node id: {}", id_, id);
                         return false;
                     }
@@ -50,6 +54,7 @@ namespace ai_stream
                     auto node = NodeFactory::instance().create(type, params);
                     if (!node)
                     {
+                        build_error_ = "无法创建节点类型: " + type + " (id=" + id + ")";
                         LOG_ERROR_FMT("[Pipeline {}] Failed to create node type: {}", id_, type);
                         return false;
                     }
@@ -57,6 +62,7 @@ namespace ai_stream
                     // 节点自行解析参数（模型加载等初始化也在此完成）
                     if (!node->configure(id, params))
                     {
+                        build_error_ = "节点配置失败: " + id + " (type=" + type + ")，检查其必填参数";
                         LOG_ERROR_FMT("[Pipeline {}] Failed to configure node: {} (type: {})", id_, id, type);
                         return false;
                     }
@@ -81,6 +87,7 @@ namespace ai_stream
                         auto it_to = nodes_.find(to);
                         if (it_from == nodes_.end() || it_to == nodes_.end())
                         {
+                            build_error_ = "边引用了不存在的节点: " + from + " -> " + to;
                             LOG_ERROR_FMT("[Pipeline {}] Invalid edge: {} -> {}", id_, from, to);
                             return false;
                         }
@@ -93,6 +100,7 @@ namespace ai_stream
                 // 3. 计算拓扑序（用于启停顺序），并检测环
                 if (!computeTopologicalOrder(edge_list))
                 {
+                    if (build_error_.empty()) build_error_ = "图存在环，无法确定拓扑序";
                     return false;
                 }
 
@@ -131,6 +139,7 @@ namespace ai_stream
             }
             catch (const std::exception &e)
             {
+                build_error_ = std::string("构建异常: ") + e.what();
                 LOG_ERROR_FMT("[Pipeline {}] Exception during build: {}", id_, e.what());
                 return false;
             }

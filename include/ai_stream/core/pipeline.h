@@ -33,13 +33,17 @@ public:
     
     // 获取管道 ID
     const std::string& getId() const { return id_; }
-    
+
+    // 最近一次 build 失败的原因（用于 API 返回可诊断信息）
+    const std::string& buildError() const { return build_error_; }
+
     // 获取管道状态
     bool isRunning() const;
 
 private:
     mutable std::mutex mutex_;
     std::string id_;
+    std::string build_error_;
     NodeMap nodes_;
     std::atomic<bool> running_{false};
 

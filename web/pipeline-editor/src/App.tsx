@@ -336,11 +336,12 @@ function Editor() {
   const doDelete = async () => {
     if (!activeId) return;
     if (!window.confirm(`删除管道 ${activeId}？`)) return;
-    const r = await api.del(settings, activeId);
-    appendLog(`Delete ${activeId} → ${r.status} ${JSON.stringify(r.json)}`, r.ok ? 'info' : 'error');
-    if (r.ok) {
+    const gone = activeId;
+    const r = await api.del(settings, gone);
+    const serverGone = r.ok || r.status === 404;   // 404=服务器本就没有，允许清理本地
+    appendLog(`Delete ${gone} → ${r.status} ${JSON.stringify(r.json)}${r.status === 404 ? '（服务器无此管道，仅清理本地）' : ''}`, serverGone ? 'info' : 'error');
+    if (serverGone) {
       setStatus('waiting');
-      const gone = activeId;
       setStore((s) => { const n = { ...s }; delete n[gone]; return n; });
       setSavedSig((s) => { const n = { ...s }; delete n[gone]; return n; });
       const rest = Object.keys(store).filter((k) => k !== gone);
