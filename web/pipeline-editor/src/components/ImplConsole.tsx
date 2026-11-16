@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiSettings, api, listPipelines, PipelineInfo, waitState } from '../api/client';
 import { PipelineDoc, getPath, setPath, Overrides, TemplateDef, detectOverrides } from '../types';
+import { RULE_SCHEMA } from '../schema/ruleSchema';
 import { LivePlayer } from './Media';
 
 const SOURCE_TYPES = ['file_source', 'rtsp_source'];
+const ruleLabel = (type: string) => RULE_SCHEMA[type]?.label || type;
 const THRESH_KEYS = ['relation_threshold', 'conf_threshold', 'confidence_threshold', 'score_threshold'];
 // 常用摄像头预设（按需修改）；下拉里还会自动带上"模板自带地址"
 const PRESET_SOURCE_URLS = [
@@ -242,7 +244,6 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
     });
   };
 
-  const RULE_LABEL: Record<string, string> = { person_intrusion: '人员入侵', person_loitering: '人员徘徊', child_near_boundary: '儿童靠近边界', fighting: '打架', climbing: '攀爬', falling: '跌倒' };
 
   const shown = insts.filter((i) => {
     if (fStatus === 'running' && i.info.state !== 'running') return false;
@@ -323,7 +324,7 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
               <div className="impl-cb">
                 <div className="impl-kv"><span className="impl-k">拉流</span><span className="impl-url">{i.loading ? '载入中…' : (i.sourceUrl || '—')}</span></div>
                 <div className="impl-kv"><span className="impl-k">告警</span><div className="impl-chips">
-                  {i.rules.length ? i.rules.map((r) => <span key={r.type} className="impl-chip on">{RULE_LABEL[r.type] || r.type}</span>) : <span className="impl-chip">—</span>}
+                  {i.rules.length ? i.rules.map((r) => <span key={r.type} className="impl-chip on">{ruleLabel(r.type)}</span>) : <span className="impl-chip">—</span>}
                 </div></div>
                 <div className="impl-kv"><span className="impl-k">推流</span><span className={'impl-sw' + (i.push ? ' on' : '')}>{i.push ? '开' : '关'}</span></div>
                 <div className="impl-kv"><span className="impl-k">自检</span>
@@ -381,7 +382,7 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
                     <td><span className={'impl-st ' + i.info.state}><span className="impl-dot" />{b ? b + '…' : stateText(i.info.state)}</span></td>
                     <td><div className="impl-name">{i.id}</div></td>
                     <td><span className="impl-url">{i.loading ? '载入中…' : (i.sourceUrl || '—')}</span></td>
-                    <td><div className="impl-chips">{i.rules.length ? i.rules.map((r) => <span key={r.type} className="impl-chip on">{RULE_LABEL[r.type] || r.type}</span>) : <span className="impl-chip">—</span>}</div></td>
+                    <td><div className="impl-chips">{i.rules.length ? i.rules.map((r) => <span key={r.type} className="impl-chip on">{ruleLabel(r.type)}</span>) : <span className="impl-chip">—</span>}</div></td>
                     <td><span className={'impl-sw' + (i.push ? ' on' : '')}>{i.push ? '开' : '关'}</span></td>
                     <td><span className="impl-dots">{sc.map((x, k) => <span key={k} className={'impl-m ' + x.level} title={x.label + '：' + x.detail} />)}</span></td>
                     <td><span className={'il-last' + (i.last ? ' hot' : '')} onClick={() => onOpenAlerts(i.id)}>{i.last ? `${i.last.type} · ${relTime(i.last.ts)} · 今日${i.last.count24h}` : '无'}</span></td>
@@ -468,7 +469,7 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
                     const tk = rule ? THRESH_KEYS.find((x) => typeof rule.params[x] === 'number') : undefined;
                     return (
                       <div key={t} className={'impl-rule' + (on ? '' : ' locked')}>
-                        <span className="impl-rn">{RULE_LABEL[t] || t}<div className="impl-rt">{t}{on ? '' : '（关）'}</div></span>
+                        <span className="impl-rn">{ruleLabel(t)}<div className="impl-rt">{t}{on ? '' : '（关）'}</div></span>
                         {on && tk && <input type="range" min={0} max={1} step={0.05} value={Number(rule!.params[tk]) || 0} onChange={(e) => setThreshold(t, Number(e.target.value))} />}
                         <span className={'impl-chip' + (on ? ' on' : '')} style={{ cursor: 'pointer' }} onClick={() => toggleRule(t)}>{on ? '开' : '关'}</span>
                       </div>
