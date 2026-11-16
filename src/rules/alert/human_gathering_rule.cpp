@@ -2,6 +2,7 @@
 #include "human_gathering_rule.h"
 #include "alert_rule_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
+#include <set>
 
 namespace ai_stream
 {
@@ -76,8 +77,9 @@ namespace ai_stream
             uint8_t zone_no, ZonePoints zone_points)
         {
             LOG_INFO_FMT("HumanGatheringRule::rule_logic()");
-            int person_count = 0;
-            std::vector<int> person_track_ids;
+            // P1：按 track_id 去重，避免同一人被重复检测框凑数（未跟踪的框各自计数）
+            std::set<int> unique_track_ids;
+            int untracked_count = 0;
             for (const auto &detection : packet->detections)
             {
                 if (detection.class_name != "person")
@@ -85,12 +87,21 @@ namespace ai_stream
                     continue;
                 }
                 bool in_zone = zone_points.empty() ? true : ZoneValidator::pointInPolygon(PixelPoint(detection.x + detection.w / 2, detection.y + detection.h / 2), zone_points);
-                if (in_zone)
+                if (!in_zone)
                 {
-                    person_count++;
-                    person_track_ids.push_back(detection.track_id);
+                    continue;
+                }
+                if (detection.track_id >= 0)
+                {
+                    unique_track_ids.insert(detection.track_id);
+                }
+                else
+                {
+                    untracked_count++;
                 }
             }
+            const int person_count = static_cast<int>(unique_track_ids.size()) + untracked_count;
+            std::vector<int> person_track_ids(unique_track_ids.begin(), unique_track_ids.end());
             // 更新zone_alert_map_（未配置阈值的区域默认 2 人）
             const int thresh = gathering_thresh_map_.count(zone_no) ? gathering_thresh_map_.at(zone_no) : 2;
             if (person_count < thresh)

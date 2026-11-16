@@ -83,6 +83,9 @@ namespace ai_stream
             }
             for (const auto &person_box : person_boxes)
             {
+                // P0：只判定落在本 zone 内的人员
+                if (!boxInZone(person_box, zone_points))
+                    continue;
                 bool person_has_smoking = false;
                 std::vector<PixelPoint> person_zone{PixelPoint(person_box.x, person_box.y), PixelPoint(person_box.x + person_box.w, person_box.y), PixelPoint(person_box.x + person_box.w, person_box.y + person_box.h), PixelPoint(person_box.x, person_box.y + person_box.h)};
                 // 筛选当前人体范围内的人头
@@ -107,14 +110,13 @@ namespace ai_stream
                 head_boxes_in_person_box.insert(head_boxes_in_person_box.end(), helmet_boxes_in_person_box.begin(), helmet_boxes_in_person_box.end());
                 if (head_boxes_in_person_box.empty())
                     continue;
-                // 检测抽烟框是否与人头/头盔相交
+                // P1：抽烟框须与头部有实质重叠（近嘴），而不是“任意接触”。
                 for (const auto &head_box : head_boxes_in_person_box)
                 {
-                    std::vector<PixelPoint> head_zone{PixelPoint(head_box.x, head_box.y), PixelPoint(head_box.x + head_box.w, head_box.y), PixelPoint(head_box.x + head_box.w, head_box.y + head_box.h), PixelPoint(head_box.x, head_box.y + head_box.h)};
                     for (const auto &smoking_box : smoking_boxes)
                     {
-                        std::vector<PixelPoint> smoking_zone{PixelPoint(smoking_box.x, smoking_box.y), PixelPoint(smoking_box.x + smoking_box.w, smoking_box.y), PixelPoint(smoking_box.x + smoking_box.w, smoking_box.y + smoking_box.h), PixelPoint(smoking_box.x, smoking_box.y + smoking_box.h)};
-                        if (ZoneValidator::boxIsIntersect(head_zone, smoking_zone))
+                        if (centerInsideBox(smoking_box, head_box) ||
+                            overlapRatioInParent(smoking_box, head_box) >= 0.2f)
                         {
                             person_has_smoking = true;
                             break;

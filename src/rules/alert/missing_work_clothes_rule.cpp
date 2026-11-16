@@ -96,7 +96,6 @@ namespace ai_stream
             const std::shared_ptr<core::InferenceResultPacket> packet,
             uint8_t zone_no, ZonePoints zone_points)
         {
-            (void)zone_points;
             std::vector<BBox> person_boxes;
             std::vector<BBox> head_boxes;
             std::vector<BBox> helmet_boxes;
@@ -131,6 +130,11 @@ namespace ai_stream
             std::vector<int> not_work_clothes_track_ids;
             for (const auto &person_box : person_boxes)
             {
+                // P0：只判定落在本 zone 内的人员
+                if (!boxInZone(person_box, zone_points))
+                {
+                    continue;
+                }
                 // 1) 远处/抖动的小人不做判定
                 if (person_box.h < min_person_h_)
                 {

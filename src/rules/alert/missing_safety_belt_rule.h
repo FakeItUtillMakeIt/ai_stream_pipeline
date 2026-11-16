@@ -22,6 +22,9 @@ namespace rules {
         RuleStatus rule_logic(
             const std::shared_ptr<core::InferenceResultPacket> packet,
             uint8_t zone_no, ZonePoints zone_points) override;
+
+        // 人体框最小像素高度（1080p 下过滤远处/抖动小目标；可由 config 覆盖）
+        int min_person_h_ = 60;
     };
 }
 }

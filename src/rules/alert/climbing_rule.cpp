@@ -12,7 +12,8 @@ namespace ai_stream
         {
             LOG_INFO("ClimbingRule::ClimbingRule()");
             action_recognition_mode_ = ActionRecongnitionType::ACTION_RECOGNITION_POSE;
-            alert_duration_ms_ = 100;
+            // P0：动作类规则默认确认窗口从 100ms 提高到 500ms（可由 config 覆盖）
+            alert_duration_ms_ = 500;
         }
 
         bool ClimbingRule::initialize(const nlohmann::json &config)
@@ -63,7 +64,12 @@ namespace ai_stream
                 for (const auto &action_result : packet->action_results)
                 {
                     if (action_result.action_label == alertTypeMap[AlertType::CLIMBING])
+                    {
                         now_climb = true;
+                        // 尽量带上动作目标 track_id，供 rule_logic 做 zone 过滤
+                        if (action_result.track_id >= 0)
+                            last_climb_track_ids_.push_back(action_result.track_id);
+                    }
                 }
                 const int64_t ts = packet->timestamp_ms;
                 if (now_climb)
@@ -115,7 +121,19 @@ namespace ai_stream
             {
                 return RuleStatus::RULE_STATUS_OK;
             }
-            updateZoneEvent(zone_no, packet, last_climb_track_ids_);
+            // P0：zone 过滤。有 track_id 时按目标归属；无法定位具体目标时，
+            // 至少要求本 zone 内存在 person，避免区域外动作触发本区域告警。
+            std::vector<int> ids = filterIdsInZone(packet, zone_points, last_climb_track_ids_);
+            if (!zone_points.empty() && ids.empty())
+            {
+                if (!anyPersonInZone(packet, zone_points))
+                {
+                    return RuleStatus::RULE_STATUS_OK;
+                }
+                updateZoneEvent(zone_no, packet, {});
+                return RuleStatus::RULE_STATUS_OK;
+            }
+            updateZoneEvent(zone_no, packet, ids);
             return RuleStatus::RULE_STATUS_OK;
         }
 

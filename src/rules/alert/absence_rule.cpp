@@ -8,7 +8,7 @@ namespace ai_stream
     namespace rules
     {
 
-        AbsenceRule::AbsenceRule() : station_detector_(), absent_threshold_(50)
+        AbsenceRule::AbsenceRule() : station_detector_(), absent_duration_ms_(2000)
         {
             LOG_INFO("AbsenceRule::AbsenceRule()");
             station_detector_.setMinStayDuration(5000); // 设置最小停留时长为5秒
@@ -22,6 +22,11 @@ namespace ai_stream
                 if (config.contains("name") && config["name"].is_string())
                 {
                     setName(config.value("name", ""));
+                }
+                if (config.contains("absent_duration_ms") &&
+                    config["absent_duration_ms"].is_number_integer())
+                {
+                    absent_duration_ms_ = config["absent_duration_ms"].get<int64_t>();
                 }
             }
             catch (const std::exception &e)
@@ -45,6 +50,7 @@ namespace ai_stream
             LOG_INFO_FMT("AbsenceRule::reset()");
             std::lock_guard<std::mutex> lock(mutex_);
             zone_alert_map_.clear();
+            m_absent_start_ms_.clear();
         }
 
         nlohmann::json AbsenceRule::getStatistics() const
@@ -61,8 +67,6 @@ namespace ai_stream
         {
             LOG_INFO_FMT("AbsenceRule::rule_logic()");
             std::vector<core::InferenceResultPacket::BBox> person_boxes;
-            int person_not_in_station_count = 0;
-            std::vector<core::InferenceResultPacket::BBox> person_not_in_station_box;
             for (const auto &detection : packet->detections)
             {
                 if (detection.class_name == "person")
@@ -75,9 +79,14 @@ namespace ai_stream
             {
                 return RuleStatus::RULE_STATUS_OK;
             }
+            const int64_t now = packet->timestamp_ms;
+            int person_not_in_station_count = 0;
             // 根据生成的岗位区域，判断人员是否在岗位内
             for (const auto &station_region : all_station_regions_)
             {
+                // P0：只处理落在本 zone 内的岗位区域
+                if (!polygonInZone(station_region.region, zone_points))
+                    continue;
                 int station_id = station_region.track_id;
                 bool station_occupied = false;
                 // 检查当前区域是否有人
@@ -89,33 +98,23 @@ namespace ai_stream
                         break;
                     }
                 }
-                // 如果岗位无人且之前有人，更新离岗计数器
+                // P1：时间基准判定，与帧率无关
                 if (!station_occupied)
                 {
-                    if (m_absent_counter_map_.find(station_id) == m_absent_counter_map_.end())
+                    auto it = m_absent_start_ms_.find(station_id);
+                    if (it == m_absent_start_ms_.end())
                     {
-                        m_absent_counter_map_[station_id] = 1;
+                        m_absent_start_ms_[station_id] = now;
                     }
-                    else
+                    else if (now - it->second >= absent_duration_ms_)
                     {
-                        m_absent_counter_map_[station_id]++;
-                    }
-                    // 判断是否达到离岗阈值
-                    if (m_absent_counter_map_[station_id] >= absent_threshold_)
-                    {
-                        core::InferenceResultPacket::BBox absent_box;
-                        absent_box.x = station_region.region[0].x;
-                        absent_box.y = station_region.region[0].y;
-                        absent_box.w = station_region.region[1].x - station_region.region[0].x;
-                        absent_box.h = station_region.region[2].y - station_region.region[0].y;
-                        person_not_in_station_box.push_back(absent_box);
                         person_not_in_station_count++;
                     }
                 }
                 else
                 {
-                    // 人员回到岗位，重置离岗计数（否则计数器闩锁，防抖只生效一次）
-                    m_absent_counter_map_[station_id] = 0;
+                    // 人员回到岗位，清除离岗计时
+                    m_absent_start_ms_.erase(station_id);
                 }
             }
             if (person_not_in_station_count <= 0)

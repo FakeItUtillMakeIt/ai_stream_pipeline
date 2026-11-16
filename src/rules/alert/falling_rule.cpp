@@ -12,8 +12,9 @@ namespace ai_stream
         {
             LOG_INFO("FallingRule::FallingRule()");
             // 跌倒确认由 down 状态的持续时间（down_confirm_ms_）把关，
-            // 此处复用基类的告警持续窗口，设为较小值以便确认后尽快上报
-            alert_duration_ms_ = 100;
+            // 此处复用基类的告警持续窗口；P0 将默认值从 100ms 提到 300ms
+            //（可被 config 的 alert_duration_ms 覆盖），减少确认后的瞬时抖动误报。
+            alert_duration_ms_ = 300;
         }
 
         bool FallingRule::isPersonClass(const std::string &name) const

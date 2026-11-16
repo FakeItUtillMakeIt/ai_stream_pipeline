@@ -154,9 +154,11 @@ public:
 
             if (include_boundary)
             {
+                // pointOnSegment(p, q, r) 判定 q 是否在线段 p-r 上；
+                // 这里要判定的是 point 落在边 polygon[j]-polygon[i] 上。
                 if (pointOnSegment(
-                        point,
                         polygon[j],
+                        point,
                         polygon[i]))
                 {
                     return true;

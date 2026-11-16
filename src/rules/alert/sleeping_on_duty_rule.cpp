@@ -8,7 +8,7 @@ namespace ai_stream
     namespace rules
     {
 
-        SleepingOnDutyRule::SleepingOnDutyRule() : station_detector_(), sleeping_on_duty_threshold_(50)
+        SleepingOnDutyRule::SleepingOnDutyRule() : station_detector_(), sleeping_duration_ms_(2000)
         {
             LOG_INFO("SleepingOnDutyRule::SleepingOnDutyRule()");
             station_detector_.setMinStayDuration(5000); // 设置最小停留时长为5秒
@@ -22,6 +22,11 @@ namespace ai_stream
                 if (config.contains("name") && config["name"].is_string())
                 {
                     setName(config.value("name", ""));
+                }
+                if (config.contains("sleeping_duration_ms") &&
+                    config["sleeping_duration_ms"].is_number_integer())
+                {
+                    sleeping_duration_ms_ = config["sleeping_duration_ms"].get<int64_t>();
                 }
             }
             catch (const std::exception &e)
@@ -45,6 +50,7 @@ namespace ai_stream
             LOG_INFO_FMT("SleepingOnDutyRule::reset()");
             std::lock_guard<std::mutex> lock(mutex_);
             zone_alert_map_.clear();
+            m_sleeping_start_ms_.clear();
         }
 
         nlohmann::json SleepingOnDutyRule::getStatistics() const
@@ -61,8 +67,6 @@ namespace ai_stream
         {
             LOG_INFO_FMT("SleepingOnDutyRule::rule_logic()");
             std::vector<core::InferenceResultPacket::BBox> sleeping_boxes;
-            int sleeping_on_duty_count = 0;
-            std::vector<core::InferenceResultPacket::BBox> person_not_in_station_box;
             for (const auto &detection : packet->detections)
             {
                 if (detection.class_name == "sleeping")
@@ -75,9 +79,14 @@ namespace ai_stream
             {
                 return RuleStatus::RULE_STATUS_OK;
             }
+            const int64_t now = packet->timestamp_ms;
+            int sleeping_on_duty_count = 0;
             // 根据生成的岗位区域，判断人员是否在岗位内
             for (const auto &station_region : all_station_regions_)
             {
+                // P0：只处理落在本 zone 内的岗位区域
+                if (!polygonInZone(station_region.region, zone_points))
+                    continue;
                 int station_id = station_region.track_id;
                 bool sleeping_on_duty = false;
                 // 检查当前区域是否有人
@@ -89,33 +98,23 @@ namespace ai_stream
                         break;
                     }
                 }
-                // 如果岗位有人且在睡觉，更新睡岗计数器
+                // P1：时间基准判定，与帧率无关
                 if (sleeping_on_duty)
                 {
-                    if (sleeping_on_duty_counter_map_.find(station_id) == sleeping_on_duty_counter_map_.end())
+                    auto it = m_sleeping_start_ms_.find(station_id);
+                    if (it == m_sleeping_start_ms_.end())
                     {
-                        sleeping_on_duty_counter_map_[station_id] = 1;
+                        m_sleeping_start_ms_[station_id] = now;
                     }
-                    else
+                    else if (now - it->second >= sleeping_duration_ms_)
                     {
-                        sleeping_on_duty_counter_map_[station_id]++;
-                    }
-                    // 判断是否达到睡岗阈值
-                    if (sleeping_on_duty_counter_map_[station_id] >= sleeping_on_duty_threshold_)
-                    {
-                        core::InferenceResultPacket::BBox absent_box;
-                        absent_box.x = station_region.region[0].x;
-                        absent_box.y = station_region.region[0].y;
-                        absent_box.w = station_region.region[1].x - station_region.region[0].x;
-                        absent_box.h = station_region.region[2].y - station_region.region[0].y;
-                        person_not_in_station_box.push_back(absent_box);
                         sleeping_on_duty_count++;
                     }
                 }
                 else
                 {
-                    // 人员清醒，重置睡岗计数（否则计数器闩锁，防抖只生效一次）
-                    sleeping_on_duty_counter_map_[station_id] = 0;
+                    // 人员清醒，清除睡岗计时
+                    m_sleeping_start_ms_.erase(station_id);
                 }
             }
             if (sleeping_on_duty_count <= 0)

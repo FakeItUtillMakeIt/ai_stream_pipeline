@@ -22,6 +22,10 @@ namespace ai_stream
                 {
                     setName(config.value("name", ""));
                 }
+                if (config.contains("min_person_h") && config["min_person_h"].is_number_integer())
+                {
+                    min_person_h_ = config["min_person_h"].get<int>();
+                }
             }
             catch (const std::exception &e)
             {
@@ -78,74 +82,65 @@ namespace ai_stream
             }
             for (auto &person_box : person_boxes)
             {
-                bool person_has_helmet = false;
-                bool person_has_head = false;
-                std::vector<PixelPoint> person_zone;
-                person_zone.push_back(PixelPoint(person_box.x, person_box.y));
-                person_zone.push_back(PixelPoint(person_box.x + person_box.w, person_box.y));
-                person_zone.push_back(PixelPoint(person_box.x + person_box.w, person_box.y + person_box.h));
-                person_zone.push_back(PixelPoint(person_box.x, person_box.y + person_box.h));
+                // P0：只判定落在本 zone 内的人员
+                if (!boxInZone(person_box, zone_points))
+                    continue;
+                // P1：远处/抖动小人不判，避免头部/头盔漏检即误报
+                if (person_box.h < min_person_h_)
+                    continue;
+
+                // P1：用“中心在框内或大部分落在框内”替代原来严格的中心点判定，
+                // 降低检测框抖动导致的佩戴误判。
+                std::vector<core::InferenceResultPacket::BBox> person_helmets;
+                std::vector<core::InferenceResultPacket::BBox> person_heads;
                 for (auto &helmet_box : helmet_boxes)
                 {
-                    person_has_helmet |= ZoneValidator::pointInPolygon(
-                        PixelPoint(helmet_box.x + helmet_box.w / 2, helmet_box.y + helmet_box.h / 2),
-                        person_zone);
-                    if (person_has_helmet)
-                        break;
-                }
-                for (auto &head : head_boxes)
-                {
-                    person_has_head |= ZoneValidator::pointInPolygon(
-                        PixelPoint(head.x + head.w / 2, head.y + head.h / 2),
-                        person_zone);
-                    if (person_has_head)
-                        break;
-                }
-                // 有安全帽+有人头，检查安全帽是否在人头上
-                if (person_has_helmet && person_has_head)
-                {
-                    bool properly_wearing_helmet = false;
-                    for (auto &head : head_boxes)
+                    if (centerInsideBox(helmet_box, person_box) ||
+                        overlapRatioInParent(helmet_box, person_box) >= 0.5f)
                     {
-                        if (!ZoneValidator::pointInPolygon(
-                                PixelPoint(head.x + head.w / 2, head.y + head.h / 2),
-                                person_zone))
+                        person_helmets.push_back(helmet_box);
+                    }
+                }
+                for (auto &head_box : head_boxes)
+                {
+                    if (centerInsideBox(head_box, person_box) ||
+                        overlapRatioInParent(head_box, person_box) >= 0.5f)
+                    {
+                        person_heads.push_back(head_box);
+                    }
+                }
+
+                const bool person_has_helmet = !person_helmets.empty();
+                const bool person_has_head = !person_heads.empty();
+
+                // 只有头盔、没有头：多半是头盔遮住头部导致 head 漏检 → 视为已佩戴
+                if (person_has_helmet && !person_has_head)
+                    continue;
+                // 既无头也无头盔：无法确认，不计入
+                if (!person_has_helmet && !person_has_head)
+                    continue;
+
+                bool properly_wearing_helmet = false;
+                for (auto &head : person_heads)
+                {
+                    for (auto &helmet : person_helmets)
+                    {
+                        // 头盔中心在头部框内，或头盔大部分落在头部框内
+                        if (centerInsideBox(helmet, head) ||
+                            overlapRatioInParent(helmet, head) >= 0.3f)
                         {
-                            continue;
-                        }
-                        for (auto &helmet : helmet_boxes)
-                        {
-                            if (!ZoneValidator::pointInPolygon(
-                                    PixelPoint(helmet.x + helmet.w / 2, helmet.y + helmet.h / 2),
-                                    person_zone))
-                            {
-                                continue;
-                            }
-                            // 安全帽中心在人头内，认为佩戴正确
-                            if (ZoneValidator::pointInPolygon(
-                                    PixelPoint(helmet.x + helmet.w / 2, helmet.y + helmet.h / 2),
-                                    std::vector<PixelPoint>{PixelPoint(head.x, head.y), PixelPoint(head.x + head.w, head.y), PixelPoint(head.x + head.w, head.y + head.h), PixelPoint(head.x, head.y + head.h)}))
-                            {
-                                properly_wearing_helmet = true;
-                                break;
-                            }
-                        }
-                        if (properly_wearing_helmet)
+                            properly_wearing_helmet = true;
                             break;
+                        }
                     }
-                    if (!properly_wearing_helmet)
-                    {
-                        person_not_helmet_count++;
-                        not_helmet_track_ids.push_back(person_box.track_id);
-                    }
+                    if (properly_wearing_helmet)
+                        break;
                 }
-                // 无安全帽但有人头，认为未佩戴安全帽
-                else if (!person_has_helmet && person_has_head)
+                if (!properly_wearing_helmet)
                 {
                     person_not_helmet_count++;
                     not_helmet_track_ids.push_back(person_box.track_id);
                 }
-                // 其他情况（无安全帽无头，或有安全帽但无头）不纳入统计
             }
             if (person_not_helmet_count <= 0)
             {

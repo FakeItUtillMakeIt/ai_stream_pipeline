@@ -149,7 +149,14 @@ namespace ai_stream
             {
                 return RuleStatus::RULE_STATUS_OK;
             }
-            updateZoneEvent(zone_no, packet, last_moving_phonecall_track_ids_);
+            // P0：按 zone 过滤缓存目标（zone 为空时原样返回）
+            std::vector<int> ids = filterIdsInZone(packet, zone_points,
+                                                   last_moving_phonecall_track_ids_);
+            if (ids.empty())
+            {
+                return RuleStatus::RULE_STATUS_OK;
+            }
+            updateZoneEvent(zone_no, packet, ids);
             return RuleStatus::RULE_STATUS_OK;
         }
         REGISTER_ALERT_RULE("moving_phone_call", MovingPhoneCallRule)

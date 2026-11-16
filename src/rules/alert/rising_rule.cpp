@@ -11,7 +11,8 @@ namespace ai_stream
         RisingRule::RisingRule() : rising_detector_()
         {
             LOG_INFO("RisingRule::RisingRule()");
-            alert_duration_ms_ = 100;
+            // P0：默认确认窗口从 100ms 提高到 500ms（可由 config 覆盖）
+            alert_duration_ms_ = 500;
         }
 
         bool RisingRule::initialize(const nlohmann::json &config)
@@ -79,7 +80,18 @@ namespace ai_stream
                 return RuleStatus::RULE_STATUS_OK;
             }
 
-            std::vector<int> rising_track_ids = last_rising_result_.active_track_ids;
+            // P0：zone 过滤（有 track_id 按目标归属；无法定位时要求 zone 内有人）
+            std::vector<int> rising_track_ids = filterIdsInZone(
+                packet, zone_points, last_rising_result_.active_track_ids);
+            if (!zone_points.empty() && rising_track_ids.empty())
+            {
+                if (!anyPersonInZone(packet, zone_points))
+                {
+                    return RuleStatus::RULE_STATUS_OK;
+                }
+                updateZoneEvent(zone_no, packet, {});
+                return RuleStatus::RULE_STATUS_OK;
+            }
             updateZoneEvent(zone_no, packet, rising_track_ids);
             return RuleStatus::RULE_STATUS_OK;
         }

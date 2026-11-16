@@ -30,8 +30,9 @@ namespace rules {
     private:
         StationDetector station_detector_;// 岗位检测器
         std::vector<StationRegion> all_station_regions_; // 岗位区域列表
-        std::map<int,int> m_absent_counter_map_;
-        int absent_threshold_;
+        // P1：改为时间基准（ms），不再依赖帧率；key=station track_id
+        std::map<int, int64_t> m_absent_start_ms_;
+        int64_t absent_duration_ms_ = 2000;
     };
 }
 }

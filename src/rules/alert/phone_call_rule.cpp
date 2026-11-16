@@ -78,6 +78,9 @@ namespace ai_stream
             }
             for (const auto &person_box : person_boxes)
             {
+                // P0：只判定落在本 zone 内的人员
+                if (!boxInZone(person_box, zone_points))
+                    continue;
                 bool person_phone_call = false;
 
                 std::vector<PixelPoint> person_zone{
@@ -113,15 +116,14 @@ namespace ai_stream
                 {
                     continue;
                 }
-                // 检查电话框是否与在人头/安全帽范围相交
+                // P1：电话框须与头部有实质重叠（贴耳/贴脸），而不是“任意接触”。
                 for (const auto &phone_box : phone_boxes)
                 {
                     bool phone_in_head = false;
                     for (const auto &head_box : person_head_boxes)
                     {
-                        if (ZoneValidator::boxIsIntersect(
-                                std::vector<PixelPoint>{PixelPoint(phone_box.x, phone_box.y), PixelPoint(phone_box.x + phone_box.w, phone_box.y), PixelPoint(phone_box.x + phone_box.w, phone_box.y + phone_box.h), PixelPoint(phone_box.x, phone_box.y + phone_box.h)},
-                                std::vector<PixelPoint>{PixelPoint(head_box.x, head_box.y), PixelPoint(head_box.x + head_box.w, head_box.y), PixelPoint(head_box.x + head_box.w, head_box.y + head_box.h), PixelPoint(head_box.x, head_box.y + head_box.h)}))
+                        if (centerInsideBox(phone_box, head_box) ||
+                            overlapRatioInParent(phone_box, head_box) >= 0.25f)
                         {
                             phone_in_head = true;
                             break;
