@@ -323,8 +323,15 @@ body { background: var(--bg); }
 .impl-field input[type=text] { width: 100%; background: var(--panel-2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 6px 9px; font-size: 13px; }
 .impl-field select { width: 100%; background: var(--panel-2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 6px 9px; font-size: 13px; margin-bottom: 6px; }
 .impl-hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
-.impl-rule { display: flex; align-items: center; gap: 10px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; background: var(--panel-2); }
+.impl-rule { display: flex; flex-direction: column; gap: 8px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; background: var(--panel-2); }
 .impl-rule.locked { opacity: .6; }
+.impl-rule-head { display: flex; align-items: center; gap: 10px; }
+.impl-rule-cfg { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; border-top: 1px dashed var(--border); padding-top: 7px; }
+.impl-cfg { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+.impl-cfg input[type=range] { width: 120px; }
+.impl-cfg input[type=number] { width: 88px; background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 3px 6px; font-size: 12px; }
+.impl-cfg code { font-size: 11px; color: var(--text); min-width: 30px; }
+.impl-unit { color: var(--muted); }
 .impl-rn { flex: 1; font-size: 13px; }
 .impl-rt { font-size: 11px; color: var(--muted); }
 .impl-locknote { font-size: 11px; color: var(--muted); border: 1px dashed var(--border); border-radius: 8px; padding: 10px 12px; margin-top: 6px; }

@@ -6,7 +6,17 @@ import { LivePlayer } from './Media';
 
 const SOURCE_TYPES = ['file_source', 'rtsp_source'];
 const ruleLabel = (type: string) => RULE_SCHEMA[type]?.label || type;
+// 与后端各规则构造函数默认值保持一致，用于输入框 placeholder
+const ALERT_DURATION_DEFAULT: Record<string, number> = { climbing: 500, rising: 500, falling: 300 };
+const alertDurationDefault = (type: string) => ALERT_DURATION_DEFAULT[type] ?? 1000;
 const THRESH_KEYS = ['relation_threshold', 'conf_threshold', 'confidence_threshold', 'score_threshold'];
+// 阈值滑条标签：按实际键名显示，避免把置信度阈值误标成关系分
+const threshLabel = (key: string) => key === 'relation_threshold'
+  ? '关系分阈值'
+  : '置信度阈值';
+const threshHint = (key: string) => key === 'relation_threshold'
+  ? '关系模型给出的“儿童靠近边界”置信度下限，越高越严格'
+  : '检测置信度下限，越高越严格';
 // 常用摄像头预设（按需修改）；下拉里还会自动带上"模板自带地址"
 const PRESET_SOURCE_URLS = [
   'rtsp://192.168.1.101:554/',
@@ -243,6 +253,19 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
       return { ...e, rules: e.rules.map((r) => { if (r.type !== type) return r; const p = { ...r.params }; const k = THRESH_KEYS.find((x) => typeof p[x] === 'number'); if (k) p[k] = val; return { ...r, params: p }; }) };
     });
   };
+  // 通用规则参数写入；空值/NaN 视为删除（使用后端默认）
+  const setRuleParam = (type: string, key: string, val: unknown) => {
+    setEdit((e) => {
+      if (!e) return e;
+      return { ...e, rules: e.rules.map((r) => {
+        if (r.type !== type) return r;
+        const p = { ...r.params };
+        if (val === undefined || val === '' || (typeof val === 'number' && Number.isNaN(val))) delete p[key];
+        else p[key] = val;
+        return { ...r, params: p };
+      }) };
+    });
+  };
 
 
   const shown = insts.filter((i) => {
@@ -467,15 +490,39 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
                     const on = !!edit.rules.find((r) => r.type === t);
                     const rule = edit.rules.find((r) => r.type === t);
                     const tk = rule ? THRESH_KEYS.find((x) => typeof rule.params[x] === 'number') : undefined;
+                    const dur = rule?.params?.alert_duration_ms;
                     return (
                       <div key={t} className={'impl-rule' + (on ? '' : ' locked')}>
-                        <span className="impl-rn">{ruleLabel(t)}<div className="impl-rt">{t}{on ? '' : '（关）'}</div></span>
-                        {on && tk && <input type="range" min={0} max={1} step={0.05} value={Number(rule!.params[tk]) || 0} onChange={(e) => setThreshold(t, Number(e.target.value))} />}
-                        <span className={'impl-chip' + (on ? ' on' : '')} style={{ cursor: 'pointer' }} onClick={() => toggleRule(t)}>{on ? '开' : '关'}</span>
+                        <div className="impl-rule-head">
+                          <span className="impl-rn">{ruleLabel(t)}<div className="impl-rt">{t}{on ? '' : '（关）'}</div></span>
+                          <span className={'impl-chip' + (on ? ' on' : '')} style={{ cursor: 'pointer' }} onClick={() => toggleRule(t)}>{on ? '开' : '关'}</span>
+                        </div>
+                        {on && (
+                          <div className="impl-rule-cfg">
+                            {tk && (
+                              <label className="impl-cfg">
+                                <span title={threshHint(tk)}>{threshLabel(tk)}</span>
+                                <input type="range" min={0} max={1} step={0.05}
+                                  title={threshHint(tk)}
+                                  value={Number(rule!.params[tk]) || 0}
+                                  onChange={(e) => setThreshold(t, Number(e.target.value))} />
+                                <code>{Number(rule!.params[tk]).toFixed(2)}</code>
+                              </label>
+                            )}
+                            <label className="impl-cfg">
+                              <span>确认时长</span>
+                              <input type="number" min={0} step={100}
+                                value={dur === undefined || dur === null ? '' : String(dur)}
+                                placeholder={`默认 ${alertDurationDefault(t)}`}
+                                onChange={(e) => setRuleParam(t, 'alert_duration_ms', e.target.value === '' ? undefined : Number(e.target.value))} />
+                              <span className="impl-unit">ms</span>
+                            </label>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
-                  <div className="impl-hint">灵敏度=阈值滑条；规则细节/区域/类别由模板锁定，如需增改请回研发模式。</div>
+                  <div className="impl-hint">确认时长留空=规则默认（动作类 500/跌倒 300/其它 1000ms）；关系分阈值越高越严格。区域/类别等由模板锁定，如需增改请回研发模式。</div>
                 </div>
               )}
 
