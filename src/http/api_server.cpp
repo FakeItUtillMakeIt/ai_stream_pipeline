@@ -11,6 +11,8 @@
 #include <cctype>
 #include <fstream>
 #include <sstream>
+#include <deque>
+#include <iterator>
 #include <cerrno>
 #include <sys/socket.h>
 #include <netdb.h>
@@ -720,6 +722,10 @@ void ApiServer::setupRoutes() {
     server_.Get("/api/v1/evidence/file", [this](const auto& req, auto& res) {
         handleEvidenceFile(req, res);
     });
+    // 日志查看（研发模式，实施台「日志」按钮）
+    server_.Get("/api/v1/logs", [this](const auto& req, auto& res) {
+        handleLogs(req, res);
+    });
 
     // 健康检查
     server_.Get("/health", [this](const auto& req, auto& res) {
@@ -1249,6 +1255,153 @@ void ApiServer::handlePipelineStatusAsync(const httplib::Request& req, httplib::
         res.status = 500;
         res.set_content(json{{"error", e.what()}}.dump(), "application/json");
     }
+}
+
+// ==============================================================================
+// 研发日志查看
+// ==============================================================================
+
+void ApiServer::handleLogs(const httplib::Request& req, httplib::Response& res) {
+    if (roleOf(req) != "dev") {
+        res.status = 403;
+        res.set_content(R"({"error":"需要研发权限"})", "application/json");
+        return;
+    }
+
+    const std::string pipeline = req.has_param("pipeline") ? req.get_param_value("pipeline") : std::string();
+    const std::string levels = req.has_param("levels") ? req.get_param_value("levels")
+                                                       : std::string("info,warn,error");
+    int limit = 500;
+    if (req.has_param("limit")) {
+        try { limit = std::stoi(req.get_param_value("limit")); } catch (...) { limit = 500; }
+    }
+    if (limit <= 0) limit = 500;
+    if (limit > 5000) limit = 5000;
+
+    bool want_info = false, want_warn = false, want_error = false;
+    {
+        std::stringstream ss(levels);
+        std::string item;
+        while (std::getline(ss, item, ',')) {
+            while (!item.empty() && std::isspace(static_cast<unsigned char>(item.front()))) item.erase(item.begin());
+            while (!item.empty() && std::isspace(static_cast<unsigned char>(item.back()))) item.pop_back();
+            if (item == "info") want_info = true;
+            else if (item == "warn" || item == "warning") want_warn = true;
+            else if (item == "error" || item == "err" || item == "critical") want_error = true;
+        }
+    }
+    if (!want_info && !want_warn && !want_error) want_info = want_warn = want_error = true;
+
+    std::string log_dir = LogManager::get_instance().get_log_dir();
+    if (log_dir.empty()) log_dir = "logs";
+    std::error_code ec;
+    fs::path dir = fs::absolute(log_dir, ec);
+    fs::path newest;
+    fs::file_time_type newest_time{};
+    if (fs::is_directory(dir, ec)) {
+        for (const auto& entry : fs::directory_iterator(dir, ec)) {
+            if (ec) break;
+            if (!entry.is_regular_file()) continue;
+            if (entry.path().extension() != ".log") continue;
+            auto mt = entry.last_write_time(ec);
+            if (ec) { ec.clear(); continue; }
+            if (newest.empty() || mt > newest_time) {
+                newest = entry.path();
+                newest_time = mt;
+            }
+        }
+    }
+    if (newest.empty()) {
+        res.status = 404;
+        res.set_content(json{{"error", "log file not found"}, {"dir", dir.string()}}.dump(),
+                        "application/json");
+        return;
+    }
+
+    // 只读取文件尾部，避免大日志一次性载入
+    std::ifstream in(newest, std::ios::binary);
+    if (!in) {
+        res.status = 500;
+        res.set_content(R"({"error":"open log failed"})", "application/json");
+        return;
+    }
+    in.seekg(0, std::ios::end);
+    std::streamoff size = in.tellg();
+    if (size < 0) size = 0;
+    constexpr std::streamoff kTailBytes = 4 * 1024 * 1024;
+    const std::streamoff start = size > kTailBytes ? size - kTailBytes : 0;
+    in.seekg(start, std::ios::beg);
+    std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (start > 0) {
+        const size_t nl = data.find('\n');
+        if (nl != std::string::npos) data.erase(0, nl + 1);
+    }
+
+    std::deque<json> ring;
+    size_t matched = 0;
+    size_t begin = 0;
+    while (begin <= data.size()) {
+        const size_t end = data.find('\n', begin);
+        std::string line = data.substr(begin, (end == std::string::npos ? data.size() : end) - begin);
+        begin = (end == std::string::npos) ? data.size() + 1 : end + 1;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty()) continue;
+        if (!pipeline.empty() && line.find(pipeline) == std::string::npos) continue;
+
+        // 解析 spdlog 格式：[ts] [level] [src:line] msg
+        std::string ts, level_raw, rest = line;
+        const size_t p1 = line.find("] [");
+        if (p1 != std::string::npos) {
+            ts = line.substr(1, p1 - 1);
+            const size_t p2 = line.find("] [", p1 + 3);
+            if (p2 != std::string::npos) {
+                level_raw = line.substr(p1 + 3, p2 - (p1 + 3));
+                // p2 指向 level 与 src 之间的 "] ["，跳过 "] "（2 字符）后
+                // rest 形如 "src:line] message"
+                rest = line.substr(p2 + 2);
+            }
+        }
+        std::string lv;
+        for (char c : level_raw) lv.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+        std::string norm;
+        if (lv == "info") norm = "info";
+        else if (lv == "warn" || lv == "warning") norm = "warn";
+        else if (lv == "err" || lv == "error" || lv == "critical") norm = "error";
+        else norm = "debug";
+        if (norm == "debug") continue;  // 界面仅过滤 info/warn/error
+        if ((norm == "info" && !want_info) || (norm == "warn" && !want_warn) ||
+            (norm == "error" && !want_error)) continue;
+
+        std::string src, msg = rest;
+        if (!rest.empty() && rest.front() == '[') {
+            const size_t rb = rest.find(']');
+            if (rb != std::string::npos) {
+                src = rest.substr(1, rb - 1);
+                msg = rest.substr(rb + 1);
+                if (!msg.empty() && msg.front() == ' ') msg.erase(0, 1);
+            }
+        }
+        if (msg.size() > 4000) msg.resize(4000);  // 防止单行过大
+
+        json e;
+        e["ts"] = ts;
+        e["level"] = norm;
+        e["src"] = src;
+        e["msg"] = msg;
+        ring.push_back(std::move(e));
+        ++matched;
+        while (ring.size() > static_cast<size_t>(limit)) ring.pop_front();
+    }
+
+    json out;
+    out["file"] = newest.filename().string();
+    out["dir"] = dir.string();
+    out["pipeline"] = pipeline;
+    out["levels"] = levels;
+    out["matched"] = matched;
+    out["lines"] = json::array();
+    for (const auto& e : ring) out["lines"].push_back(e);
+    res.set_content(out.dump(), "application/json");
 }
 
 // ==============================================================================

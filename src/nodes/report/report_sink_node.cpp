@@ -132,18 +132,21 @@ void ReportSinkNode::processPacket(std::shared_ptr<core::BasePacket> packet)
 
             // 附带报警图（base64）：取 evidence 落的**已标注**快照，而不是原始帧。
             // 缺图/读失败只降级为"无图上报"，不因图片问题丢掉告警本身。
+            // extra_data 可能为 null（未挂快照），value() 对 null 会抛，先判对象。
+            const std::string snap = ev.extra_data.is_object()
+                                         ? ev.extra_data.value("snapshot_path", "")
+                                         : std::string();
+            std::string img_state = cfg_.attach_image ? "no_snapshot" : "disabled";
             std::string img_b64;
             size_t img_bytes = 0;
             if (cfg_.attach_image) {
-                // extra_data 可能为 null（未挂快照），value() 对 null 会抛，先判对象。
-                const std::string snap = ev.extra_data.is_object()
-                                             ? ev.extra_data.value("snapshot_path", "")
-                                             : std::string();
                 if (loadImageBase64(snap, cfg_.image_max_side, img_b64)) {
                     payload[cfg_.image_field] = img_b64;
                     payload["image_mime"] = "image/jpeg";
                     img_bytes = img_b64.size();
+                    img_state = "attached";
                 } else if (!snap.empty()) {
+                    img_state = "encode_failed";
                     LOG_WARN_FMT("[Report] snapshot 无法编码为 base64，改为无图上报: {}", snap);
                 } else {
                     LOG_WARN("[Report] 告警无 snapshot_path，改为无图上报");
@@ -152,21 +155,30 @@ void ReportSinkNode::processPacket(std::shared_ptr<core::BasePacket> packet)
 
             utils::http::Response resp;
             const int attempts = 1 + std::max(0, cfg_.retries);
+            int tries = 0;
             for (int i = 0; i < attempts; ++i) {
+                ++tries;
                 resp = utils::http::postJson(cfg_.url, payload.dump(), headers,
                                       cfg_.timeout_ms, cfg_.connect_timeout_ms);
                 if (resp.ok())
                     break;
             }
 
+            const std::string type_name =
+                rules::alertTypeMap.count(ev.alert_type) ? rules::alertTypeMap.at(ev.alert_type) : "unknown";
             if (resp.ok()) {
-                LOG_INFO_FMT("[Report] pushed alert '{}' (http {}) image={} b64={}B body={}B",
-                             ev.alert_name, resp.status, img_bytes ? "yes" : "no",
-                             img_bytes, payload.dump().size());
+                LOG_INFO_FMT("[Report] pushed alert '{}' type={} id={} pipeline={} url={} "
+                             "image={} snapshot='{}' payload={}B (http {})",
+                             ev.alert_name, type_name, ev.alert_id, pid, cfg_.url,
+                             img_state, snap, payload.dump().size(), resp.status);
             } else {
-                LOG_WARN_FMT("[Report] push FAILED alert '{}' err={} status={} body={}",
-                             ev.alert_name, resp.err, resp.status,
-                             resp.body.substr(0, 200));
+                // 便于排查：明确是哪个快照文件、发往哪个 URL、为何失败（不打印响应 body）
+                LOG_WARN_FMT("[Report] push FAILED alert '{}' type={} id={} pipeline={} url={} "
+                             "image={} snapshot='{}' err='{}' status={} tries={} "
+                             "timeout={}ms connect_timeout={}ms payload={}B",
+                             ev.alert_name, type_name, ev.alert_id, pid, cfg_.url,
+                             img_state, snap, resp.err, resp.status, tries,
+                             cfg_.timeout_ms, cfg_.connect_timeout_ms, payload.dump().size());
             }
           } catch (const std::exception& e) {
             LOG_ERROR_FMT("[Report] 处理告警异常，跳过: {}", e.what());

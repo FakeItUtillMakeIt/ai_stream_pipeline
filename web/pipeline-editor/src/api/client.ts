@@ -55,6 +55,8 @@ export const api = {
   alertFileUrl: (s: ApiSettings, path: string) => s.baseUrl + '/api/v1/alerts/file?path=' + encodeURIComponent(path),
   evidenceFileUrl: (s: ApiSettings, pipeline: string, dir: number, name: string) =>
     s.baseUrl + `/api/v1/evidence/file?pipeline=${encodeURIComponent(pipeline)}&dir=${dir}&name=${encodeURIComponent(name)}`,
+  logs: (s: ApiSettings, params: Record<string, string | number>) =>
+    req(s, 'GET', '/api/v1/logs?' + new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)]))),
 };
 
 // 拉取并规范化管道列表（含 play_url / evidence 目录）

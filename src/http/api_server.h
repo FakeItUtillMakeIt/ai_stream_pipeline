@@ -87,6 +87,8 @@ private:
     // 证据查看（预览页）：列目录 / 取文件（限制在该管道 evidence 目录内）
     void handleEvidenceList(const httplib::Request& req, httplib::Response& res);
     void handleEvidenceFile(const httplib::Request& req, httplib::Response& res);
+    // 研发日志查看：读取最新日志文件尾部，按实例子串 + 等级过滤
+    void handleLogs(const httplib::Request& req, httplib::Response& res);
     // 从 build 请求体抽取 play_url / evidence 目录，登记到 meta_
     void extractMeta(const std::string& pipeline_id, const nlohmann::json& body);
 

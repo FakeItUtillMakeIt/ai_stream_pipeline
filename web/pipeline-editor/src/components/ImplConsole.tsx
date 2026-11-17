@@ -3,6 +3,7 @@ import { ApiSettings, api, listPipelines, PipelineInfo, waitState } from '../api
 import { PipelineDoc, getPath, setPath, Overrides, TemplateDef, detectOverrides } from '../types';
 import { RULE_SCHEMA } from '../schema/ruleSchema';
 import { LivePlayer } from './Media';
+import LogViewer from './LogViewer';
 
 const SOURCE_TYPES = ['file_source', 'rtsp_source'];
 const ruleLabel = (type: string) => RULE_SCHEMA[type]?.label || type;
@@ -141,6 +142,7 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
   const [fPush, setFPush] = useState('all');        // all|on|off
   const [fQ, setFQ] = useState('');
   const [sel, setSel] = useState<Record<string, boolean>>({});
+  const [logsFor, setLogsFor] = useState<string | null>(null);   // 研发模式日志弹窗
   const timer = useRef<number | null>(null);
   useEffect(() => { localStorage.setItem('implViewMode', viewMode); }, [viewMode]);
   const inflight = useRef(false);
@@ -372,6 +374,7 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
                 {i.push && <button className="btn sm" onClick={() => onOpenPreview(i.id)}>预览</button>}
                 <button className="btn sm" onClick={() => onOpenPreview(i.id)}>证据</button>
                 {i.info.state !== 'running' && <button className="btn sm danger" onClick={() => doDel(i.id)}>删除</button>}
+                {role === 'dev' && <button className="btn sm" onClick={() => setLogsFor(i.id)}>日志</button>}
               </div>
             </div>
           );
@@ -417,6 +420,7 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
                       {i.push && <button className="btn sm" onClick={() => onOpenPreview(i.id)}>预览</button>}
                       <button className="btn sm" onClick={() => onOpenPreview(i.id)}>证据</button>
                       {i.info.state !== 'running' && <button className="btn sm danger" onClick={() => doDel(i.id)}>删除</button>}
+                      {role === 'dev' && <button className="btn sm" onClick={() => setLogsFor(i.id)}>日志</button>}
                     </div></td>
                   </tr>
                 );
@@ -542,6 +546,7 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
           </div>
         </>
       )}
+      {logsFor && <LogViewer settings={settings} pipeline={logsFor} onClose={() => setLogsFor(null)} />}
     </div>
   );
 }
