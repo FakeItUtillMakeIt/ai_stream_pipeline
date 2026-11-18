@@ -51,6 +51,9 @@ private:
 
     EvidenceVideoConfig video_config_;
     EvidenceSnapshotConfig snapshot_config_;
+    // 实际落盘目录（已按 pipeline id 加子目录）
+    std::string video_dir_;
+    std::string snapshot_dir_;
     EvidenceRolloverConfig rollover_config_;
     EvidenceFtpConfig ftp_config_;
 

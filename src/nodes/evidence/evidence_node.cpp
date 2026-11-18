@@ -1,6 +1,7 @@
 // src/nodes/evidence/evidence_node.cpp
 #include "utils/time_util.h"
 #include "evidence_node.h"
+#include "utils/evidence_path.h"
 #include "registry/node_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 #include "ai_stream/core/alert_store.h"
@@ -88,9 +89,13 @@ EvidenceNode::~EvidenceNode() { stop(); }
 bool EvidenceNode::onStartup() {
     std::lock_guard<std::mutex> lock(mutex_);
 
+    // 证据按实例隔离：<output_dir>/<pipeline_id>；无 pipeline id 时保持原目录
+    video_dir_ = utils::evidenceSubdir(video_config_.output_dir, pipelineId());
+    snapshot_dir_ = utils::evidenceSubdir(snapshot_config_.output_dir, pipelineId());
+
     if (video_config_.enabled) {
         video_recorder_.setLogContext(pipelineId(), name_);
-        if (!video_recorder_.initialize(video_config_.output_dir, video_config_.fps, video_config_.bitrate, video_config_.encoder)) {
+        if (!video_recorder_.initialize(video_dir_, video_config_.fps, video_config_.bitrate, video_config_.encoder)) {
             LOG_ERROR("[EvidenceNode] Failed to initialize video recorder");
             return false;
         }
@@ -100,16 +105,17 @@ bool EvidenceNode::onStartup() {
 
     if (snapshot_config_.enabled) {
         std::error_code ec;
-        std::filesystem::create_directories(snapshot_config_.output_dir, ec);
+        std::filesystem::create_directories(snapshot_dir_, ec);
         if (ec) {
-            LOG_ERROR_FMT("[EvidenceNode] Failed to create snapshot directory: {}", ec.message());
+            LOG_ERROR_FMT("[EvidenceNode] Failed to create snapshot directory {}: {}", snapshot_dir_, ec.message());
             return false;
         }
     }
 
     if (rollover_config_.enabled) {
         VideoRolloverConfig rcfg;
-        rcfg.video_dir = video_config_.output_dir;
+        rcfg.video_dir = video_config_.enabled ? video_dir_ : "";
+        rcfg.snapshot_dir = snapshot_config_.enabled ? snapshot_dir_ : "";
         rcfg.retention_hours = rollover_config_.retention_hours;
         rcfg.check_interval_min = rollover_config_.check_interval_min;
         rcfg.enabled = true;
@@ -355,7 +361,7 @@ std::string EvidenceNode::writeSnapshot(std::shared_ptr<core::VideoFramePacket> 
 
     try {
         std::string filename = generateFilename(event.alert_name, "jpg");
-        std::filesystem::path filepath = snapshot_config_.output_dir;
+        std::filesystem::path filepath = snapshot_dir_;
         filepath /= filename;
 
         cv::imwrite(filepath.string(), *frame->mat);

@@ -13,8 +13,9 @@ namespace nodes {
 
 struct VideoRolloverConfig {
     std::string video_dir = "./evidence/videos";
-    uint32_t retention_hours = 72;
-    uint32_t check_interval_min = 60;
+    std::string snapshot_dir;   // 可选：与视频共用同一保留策略
+    uint32_t retention_hours = 24;
+    uint32_t check_interval_min = 10;
     bool enabled = true;
 };
 

@@ -23,9 +23,9 @@ struct EvidenceSnapshotConfig {
 };
 
 struct EvidenceRolloverConfig {
-    bool enabled = true;
-    uint32_t retention_hours = 72;
-    uint32_t check_interval_min = 60;
+    bool enabled = true;          // 默认开启滚存
+    uint32_t retention_hours = 24; // 默认保留 1 天
+    uint32_t check_interval_min = 10; // 默认每 10 分钟检查
 };
 
 struct EvidenceFtpConfig {
@@ -75,9 +75,9 @@ public:
 
         const nlohmann::json rollover_cfg = params.value("rollover", nlohmann::json::object());
         setRolloverConfig(EvidenceRolloverConfig{
-            .enabled = rollover_cfg.value("enabled", false),
+            .enabled = rollover_cfg.value("enabled", true),
             .retention_hours = static_cast<uint32_t>(rollover_cfg.value("retention_hours", 24)),
-            .check_interval_min = static_cast<uint32_t>(rollover_cfg.value("check_interval_min", 60))
+            .check_interval_min = static_cast<uint32_t>(rollover_cfg.value("check_interval_min", 10))
         });
 
         const nlohmann::json ftp_cfg = params.value("ftp", nlohmann::json::object());

@@ -21,6 +21,7 @@
 #include <unistd.h>
 #include <poll.h>
 #include "utils/http_util.h"
+#include "utils/evidence_path.h"
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
@@ -488,7 +489,7 @@ void ApiServer::extractMeta(const std::string& pipeline_id, const json& body) {
                     auto addDir = [&](const json& sub) {
                         if (sub.is_object() && sub.contains("output_dir") && sub["output_dir"].is_string()) {
                             std::string d = sub["output_dir"].get<std::string>();
-                            if (!d.empty()) m.evidence_dirs.push_back(d);
+                            if (!d.empty()) m.evidence_dirs.push_back(utils::evidenceSubdir(d, pipeline_id));
                         }
                     };
                     if (params.contains("video")) addDir(params["video"]);

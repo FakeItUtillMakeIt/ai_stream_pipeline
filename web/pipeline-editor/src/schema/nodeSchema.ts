@@ -172,7 +172,7 @@ export const SCHEMA: Record<string, NodeTypeDef> = {
     fields: {
       video: { type: 'json', label: 'video', default: { enabled: true, pre_frames: 20, post_frames: 40, fps: 25, encoder: 'libx264', output_dir: './evidence/videos' } },
       snapshot: { type: 'json', label: 'snapshot', default: { enabled: true, output_dir: './evidence/snapshots' } },
-      rollover: { type: 'json', label: 'rollover', default: { enabled: false, retention_hours: 72 } },
+      rollover: { type: 'json', label: 'rollover', default: { enabled: true, retention_hours: 24, check_interval_min: 10 } },
       ftp: { type: 'json', label: 'ftp', default: { enabled: false } },
     },
   },
