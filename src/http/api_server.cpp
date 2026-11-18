@@ -1271,6 +1271,8 @@ void ApiServer::handleLogs(const httplib::Request& req, httplib::Response& res) 
     const std::string pipeline = req.has_param("pipeline") ? req.get_param_value("pipeline") : std::string();
     const std::string levels = req.has_param("levels") ? req.get_param_value("levels")
                                                        : std::string("info,warn,error");
+    // 增量拉取：只返回 ts >= since 的行（ts 格式固定，可按字符串比较）
+    const std::string since = req.has_param("since") ? req.get_param_value("since") : std::string();
     int limit = 500;
     if (req.has_param("limit")) {
         try { limit = std::stoi(req.get_param_value("limit")); } catch (...) { limit = 500; }
@@ -1361,6 +1363,7 @@ void ApiServer::handleLogs(const httplib::Request& req, httplib::Response& res) 
                 rest = line.substr(p2 + 2);
             }
         }
+        if (!since.empty() && (ts.empty() || ts < since)) continue;
         std::string lv;
         for (char c : level_raw) lv.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
         std::string norm;
@@ -1398,6 +1401,7 @@ void ApiServer::handleLogs(const httplib::Request& req, httplib::Response& res) 
     out["dir"] = dir.string();
     out["pipeline"] = pipeline;
     out["levels"] = levels;
+    out["since"] = since;
     out["matched"] = matched;
     out["lines"] = json::array();
     for (const auto& e : ring) out["lines"].push_back(e);

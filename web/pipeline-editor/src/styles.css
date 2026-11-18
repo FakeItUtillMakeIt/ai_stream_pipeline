@@ -336,9 +336,10 @@ body { background: var(--bg); }
 .impl-rt { font-size: 11px; color: var(--muted); }
 .impl-locknote { font-size: 11px; color: var(--muted); border: 1px dashed var(--border); border-radius: 8px; padding: 10px 12px; margin-top: 6px; }
 
-/* 研发日志查看弹窗 */
-.log-mask { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 14; display: flex; align-items: center; justify-content: center; }
-.log-modal { width: min(1040px, 95vw); height: min(82vh, 820px); background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.5); display: flex; flex-direction: column; overflow: hidden; }
+/* 研发日志查看：右侧非阻塞抽屉（无遮罩，页面其余区域仍可操作） */
+.log-drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(760px, 92vw); background: var(--panel); border-left: 1px solid var(--border); box-shadow: -18px 0 48px rgba(0,0,0,.45); z-index: 20; display: flex; flex-direction: column; overflow: hidden; animation: log-slide-in .16s ease-out; }
+@keyframes log-slide-in { from { transform: translateX(28px); opacity: .5; } to { transform: translateX(0); opacity: 1; } }
+@media (max-width: 900px) { .log-drawer { width: 100vw; } }
 .log-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
 .log-title { font-weight: 600; font-size: 14px; }
 .log-file { font-size: 11px; color: var(--muted); }
