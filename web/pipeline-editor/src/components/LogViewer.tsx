@@ -3,7 +3,7 @@ import { ApiSettings, api } from '../api/client';
 
 const LEVELS = ['info', 'warn', 'error'] as const;
 type Level = typeof LEVELS[number];
-interface LogLine { ts: string; level: string; src: string; msg: string; }
+interface LogLine { ts: string; level: string; src: string; msg: string; pipeline?: string; node?: string; }
 interface LogData { file?: string; dir?: string; matched?: number; pipeline?: string; lines?: LogLine[]; }
 
 // 研发日志查看抽屉：按实例（子串）+ 等级过滤；自动增量刷新 3s（无新行不重绘）。
@@ -144,7 +144,7 @@ export default function LogViewer({ settings, pipeline, onClose }: {
             <div key={i} className={'log-line ' + ln.level}>
               <span className="log-ts">{ln.ts}</span>
               <span className={'log-badge ' + ln.level}>{ln.level}</span>
-              <span className="log-src" title={ln.src}>{ln.src}</span>
+              <span className="log-src" title={ln.src}>{ln.node && <b className="log-node">{ln.node}</b>}{ln.src}</span>
               <span className="log-msg">{ln.msg}</span>
             </div>
           ))}

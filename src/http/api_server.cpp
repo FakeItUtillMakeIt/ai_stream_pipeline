@@ -36,6 +36,21 @@ std::string idOf(const json& body) {
     }
     return "";
 }
+
+// 旧日志（无 MDC 标签）回退匹配：按 token 边界，避免 mdc_ 命中 mdc_test
+bool containsWordToken(const std::string& text, const std::string& token) {
+    if (token.empty()) return true;
+    auto is_word = [](unsigned char c) { return std::isalnum(c) != 0 || c == '_'; };
+    size_t pos = 0;
+    while ((pos = text.find(token, pos)) != std::string::npos) {
+        const bool left_ok = pos == 0 || !is_word(static_cast<unsigned char>(text[pos - 1]));
+        const size_t end = pos + token.size();
+        const bool right_ok = end >= text.size() || !is_word(static_cast<unsigned char>(text[end]));
+        if (left_ok && right_ok) return true;
+        pos = end;
+    }
+    return false;
+}
 } // namespace
 
 ApiServer::ApiServer(bool async_mode) : async_mode_(async_mode) {
@@ -1348,7 +1363,6 @@ void ApiServer::handleLogs(const httplib::Request& req, httplib::Response& res) 
         begin = (end == std::string::npos) ? data.size() + 1 : end + 1;
         if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.empty()) continue;
-        if (!pipeline.empty() && line.find(pipeline) == std::string::npos) continue;
 
         // 解析 spdlog 格式：[ts] [level] [src:line] msg
         std::string ts, level_raw, rest = line;
@@ -1384,12 +1398,37 @@ void ApiServer::handleLogs(const httplib::Request& req, httplib::Response& res) 
                 if (!msg.empty() && msg.front() == ' ') msg.erase(0, 1);
             }
         }
+
+        // 解析 MDC 上下文标签：[pipeline=x][node=y]（旧日志无标签，保持兼容）
+        std::string ctx_pipeline, ctx_node;
+        while (!msg.empty() && msg.front() == '[') {
+            const size_t rb = msg.find(']');
+            if (rb == std::string::npos) break;
+            const size_t eq = msg.find('=', 1);
+            if (eq == std::string::npos || eq > rb) break;   // 非 key=value，视为普通消息
+            const std::string key = msg.substr(1, eq - 1);
+            const std::string val = msg.substr(eq + 1, rb - eq - 1);
+            msg = msg.substr(rb + 1);
+            if (!msg.empty() && msg.front() == ' ') msg.erase(0, 1);
+            if (key == "pipeline") ctx_pipeline = val;
+            else if (key == "node") ctx_node = val;
+        }
+
+        if (!pipeline.empty()) {
+            if (!ctx_pipeline.empty()) {
+                if (ctx_pipeline != pipeline) continue;     // 精确匹配
+            } else if (!containsWordToken(line, pipeline)) {
+                continue;                                    // 兼容无标签的旧日志（按 token 边界）
+            }
+        }
         if (msg.size() > 4000) msg.resize(4000);  // 防止单行过大
 
         json e;
         e["ts"] = ts;
         e["level"] = norm;
         e["src"] = src;
+        e["pipeline"] = ctx_pipeline;
+        e["node"] = ctx_node;
         e["msg"] = msg;
         ring.push_back(std::move(e));
         ++matched;

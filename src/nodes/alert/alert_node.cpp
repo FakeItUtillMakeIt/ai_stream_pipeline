@@ -176,10 +176,14 @@ std::vector<rules::AlertResult> AlertNode::process_all_alerts_parallel(std::shar
 
     std::vector<std::future<rules::AlertResult>> futures;
     futures.reserve(rules_snapshot.size());
+    // 线程池复用：提交时捕获管道/节点，任务内 RAII 设置并恢复上下文
+    const std::string log_pid = pipelineId();
+    const std::string log_node = name_;
     for (auto& rule : rules_snapshot)
     {
         auto rule_copy = rule;
-        futures.push_back(pool_->enqueue([this, rule_copy, packet]() {
+        futures.push_back(pool_->enqueue([this, rule_copy, packet, log_pid, log_node]() {
+            ScopedLogContext log_ctx(log_pid, log_node);
             return process_single_alert(rule_copy, packet);
         }));
     }

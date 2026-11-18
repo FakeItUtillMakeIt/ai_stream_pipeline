@@ -18,6 +18,7 @@ namespace ai_stream
 
         bool Pipeline::buildFromJson(const nlohmann::json &config)
         {
+            ScopedLogContext log_ctx(id_, "pipeline");
             build_error_.clear();
             try
             {
@@ -43,6 +44,9 @@ namespace ai_stream
                         LOG_ERROR_FMT("[Pipeline {}] Node missing 'id' or 'type'", id_);
                         return false;
                     }
+
+                    // 节点创建/配置期间的日志归属到具体节点
+                    ScopedLogContext node_ctx(id_, id);
 
                     if (nodes_.find(id) != nodes_.end())
                     {
@@ -193,6 +197,7 @@ namespace ai_stream
 
         bool Pipeline::start()
         {
+            ScopedLogContext log_ctx(id_, "pipeline");
             if (running_)
             {
                 bool any_running = false;
@@ -248,6 +253,7 @@ namespace ai_stream
 
         void Pipeline::stop()
         {
+            ScopedLogContext log_ctx(id_, "pipeline");
             const bool was_running = running_.exchange(false);
 
             // 按拓扑序停止：source 最先停止，阻止新数据进入，下游自然排空

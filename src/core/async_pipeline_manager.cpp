@@ -250,6 +250,8 @@ void AsyncPipelineManager::taskWorker() {
 }
 
 void AsyncPipelineManager::processTask(PipelineTask& task) {
+    // 复用 worker 线程：按任务所属管道注入日志上下文
+    ScopedLogContext log_ctx(task.pipeline_id, "async");
     try {
         switch (task.type) {
             case PipelineTask::Type::LOAD:

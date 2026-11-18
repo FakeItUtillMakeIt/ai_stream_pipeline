@@ -67,6 +67,9 @@ public:
     // 设置管道上下文 (用于获取全局配置等)
     void setPipeline(std::weak_ptr<Pipeline> pipeline) { pipeline_ = pipeline; }
 
+    // 所属管道 id（供日志上下文使用）；无归属返回空串
+    std::string pipelineId() const;
+
     // 记录节点处理指标（节点在 pushData 中计算完 latency 后调用）
     void recordMetrics(uint64_t latency_ms) {
         recordMetricsImpl(latency_ms, false);

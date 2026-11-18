@@ -3,6 +3,7 @@
 
 #include "node.h"
 #include "bounded_queue.h"
+#include "3rd_party/log_mgr/log_mgr.h"
 #include <algorithm>
 #include <mutex>
 #include <thread>
@@ -70,7 +71,15 @@ public:
         if (worker_.joinable()) {
             worker_.join();
         }
-        if (!onStartup()) return false;
+        // onStartup 在调用线程执行：临时注入本节点上下文，保证启动日志可归属
+        bool started = false;
+        {
+            ScopedLogContext log_ctx(this->pipelineId(), this->name_);
+            started = onStartup();
+        }
+        if (!started) {
+            return false;
+        }
         {
             std::lock_guard<std::mutex> lock(lifecycle_mutex_);
             shutdown_done_ = false;   // 新一轮生命周期，允许 onShutdown 再次执行
@@ -166,6 +175,8 @@ private:
     }
 
     void workerLoop() {
+        // worker 线程常驻：整段生命周期注入 pipeline/node 上下文
+        ScopedLogContext log_ctx(this->pipelineId(), this->name_);
         while (this->running_.load()) {
             std::shared_ptr<BasePacket> packet;
             if (!queue_.pop(packet, poll_timeout_)) {

@@ -359,6 +359,7 @@ body { background: var(--bg); }
 .log-badge.warn { color: #f0c36a; background: rgba(210,153,34,.14); }
 .log-badge.error { color: #ff8a8a; background: rgba(248,81,73,.12); }
 .log-src { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-node { color: var(--text); font-weight: 600; margin-right: 4px; }
 .log-msg { white-space: pre-wrap; word-break: break-word; }
 .log-empty { color: var(--muted); padding: 24px; text-align: center; }
 

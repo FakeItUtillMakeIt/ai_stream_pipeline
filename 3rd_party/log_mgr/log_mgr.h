@@ -121,67 +121,37 @@ public:
     template <typename... Args>
     void trace_fmt(const char *file, int line, const char *fmt, Args &&...args)
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        if (m_initialized && m_logger)
-        {
-            m_logger->log(spdlog::source_loc{file, line, ""},
-                          spdlog::level::trace, fmt, std::forward<Args>(args)...);
-        }
+        log_fmt_with_context(file, line, spdlog::level::trace, fmt, std::forward<Args>(args)...);
     }
 
     template <typename... Args>
     void debug_fmt(const char *file, int line, const char *fmt, Args &&...args)
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        if (m_initialized && m_logger)
-        {
-            m_logger->log(spdlog::source_loc{file, line, ""},
-                          spdlog::level::debug, fmt, std::forward<Args>(args)...);
-        }
+        log_fmt_with_context(file, line, spdlog::level::debug, fmt, std::forward<Args>(args)...);
     }
 
     template <typename... Args>
     void info_fmt(const char *file, int line, const char *fmt, Args &&...args)
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        if (m_initialized && m_logger)
-        {
-            m_logger->log(spdlog::source_loc{file, line, ""},
-                          spdlog::level::info, fmt, std::forward<Args>(args)...);
-        }
+        log_fmt_with_context(file, line, spdlog::level::info, fmt, std::forward<Args>(args)...);
     }
 
     template <typename... Args>
     void warn_fmt(const char *file, int line, const char *fmt, Args &&...args)
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        if (m_initialized && m_logger)
-        {
-            m_logger->log(spdlog::source_loc{file, line, ""},
-                          spdlog::level::warn, fmt, std::forward<Args>(args)...);
-        }
+        log_fmt_with_context(file, line, spdlog::level::warn, fmt, std::forward<Args>(args)...);
     }
 
     template <typename... Args>
     void error_fmt(const char *file, int line, const char *fmt, Args &&...args)
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        if (m_initialized && m_logger)
-        {
-            m_logger->log(spdlog::source_loc{file, line, ""},
-                          spdlog::level::err, fmt, std::forward<Args>(args)...);
-        }
+        log_fmt_with_context(file, line, spdlog::level::err, fmt, std::forward<Args>(args)...);
     }
 
     template <typename... Args>
     void critical_fmt(const char *file, int line, const char *fmt, Args &&...args)
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        if (m_initialized && m_logger)
-        {
-            m_logger->log(spdlog::source_loc{file, line, ""},
-                          spdlog::level::critical, fmt, std::forward<Args>(args)...);
-        }
+        log_fmt_with_context(file, line, spdlog::level::critical, fmt, std::forward<Args>(args)...);
     }
 
     // 获取当前配置
@@ -202,8 +172,53 @@ public:
     void enable_stack_trace(bool enable) { m_enable_stack_trace = enable; }
     bool is_stack_trace_enabled() const { return m_enable_stack_trace; }
 
+    // ================= 线程级日志上下文（MDC） =================
+    // 在调用线程设置，日志会以 "[pipeline=x][node=y] " 前缀写入。
+    // 注意：必须在调用线程完成格式化（当前实现即如此），以兼容异步日志。
+    static void set_thread_context(const std::string &key, const std::string &value);
+    static std::string get_thread_context(const std::string &key);
+    static void clear_thread_context();
+
 private:
     LogManager();
+
+    struct ThreadContext
+    {
+        std::string pipeline;
+        std::string node;
+        std::string tag;   // 预构建前缀，避免每条日志重组
+        void rebuild();
+    };
+    static ThreadContext &thread_context();
+    // 非格式化日志的上下文注入（调用方持有 m_mutex）
+    template <typename... Args>
+    void log_fmt_with_context(const char *file, int line,
+                              spdlog::level::level_enum level,
+                              const char *fmt, Args &&...args)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (!m_initialized || !m_logger || !m_logger->should_log(level))
+        {
+            return;
+        }
+        const spdlog::source_loc loc{file, line, ""};
+        const std::string &tag = thread_context().tag;
+        if (tag.empty())
+        {
+            m_logger->log(loc, level, fmt, std::forward<Args>(args)...);
+        }
+        else
+        {
+            // 在调用线程完成格式化，保证异步日志也能拿到正确的 TLS 上下文
+            std::string msg = tag + fmt::format(SPDLOG_FMT_RUNTIME(fmt),
+                                                std::forward<Args>(args)...);
+            m_logger->log(loc, level, "{}", msg);
+        }
+    }
+
+    void log_with_context(spdlog::source_loc loc,
+                          spdlog::level::level_enum level,
+                          const std::string &message);
     ~LogManager();
 
     // 创建日志目录
@@ -234,6 +249,31 @@ private:
     std::string m_current_date;
     bool m_enable_stack_trace = true;
     bool m_shutting_down = false;  // 添加关闭标志
+};
+
+// RAII 日志上下文：保存/恢复当前线程的 pipeline/node，
+// 防止线程池复用导致不同实例日志串线。
+class ScopedLogContext
+{
+public:
+    ScopedLogContext(const std::string &pipeline, const std::string &node)
+        : prev_pipeline_(LogManager::get_thread_context("pipeline")),
+          prev_node_(LogManager::get_thread_context("node"))
+    {
+        LogManager::set_thread_context("pipeline", pipeline);
+        LogManager::set_thread_context("node", node);
+    }
+    ~ScopedLogContext()
+    {
+        LogManager::set_thread_context("pipeline", prev_pipeline_);
+        LogManager::set_thread_context("node", prev_node_);
+    }
+    ScopedLogContext(const ScopedLogContext &) = delete;
+    ScopedLogContext &operator=(const ScopedLogContext &) = delete;
+
+private:
+    std::string prev_pipeline_;
+    std::string prev_node_;
 };
 
 // 为了方便使用，定义一些宏

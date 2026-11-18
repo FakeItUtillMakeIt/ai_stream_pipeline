@@ -392,6 +392,83 @@ std::string LogManager::get_current_date_str() const
     return ss.str();
 }
 
+// ================= 线程级日志上下文（MDC） =================
+void LogManager::ThreadContext::rebuild()
+{
+    tag.clear();
+    if (!pipeline.empty())
+    {
+        tag += "[pipeline=";
+        tag += pipeline;
+        tag += "]";
+    }
+    if (!node.empty())
+    {
+        tag += "[node=";
+        tag += node;
+        tag += "]";
+    }
+    if (!tag.empty())
+    {
+        tag += " ";
+    }
+}
+
+LogManager::ThreadContext &LogManager::thread_context()
+{
+    thread_local ThreadContext ctx;
+    return ctx;
+}
+
+void LogManager::set_thread_context(const std::string &key, const std::string &value)
+{
+    ThreadContext &ctx = thread_context();
+    std::string *dst = nullptr;
+    if (key == "pipeline")
+        dst = &ctx.pipeline;
+    else if (key == "node")
+        dst = &ctx.node;
+    else
+        return;
+    if (*dst == value)
+        return;
+    *dst = value;
+    ctx.rebuild();
+}
+
+std::string LogManager::get_thread_context(const std::string &key)
+{
+    const ThreadContext &ctx = thread_context();
+    if (key == "pipeline")
+        return ctx.pipeline;
+    if (key == "node")
+        return ctx.node;
+    return {};
+}
+
+void LogManager::clear_thread_context()
+{
+    ThreadContext &ctx = thread_context();
+    ctx.pipeline.clear();
+    ctx.node.clear();
+    ctx.tag.clear();
+}
+
+void LogManager::log_with_context(spdlog::source_loc loc,
+                                  spdlog::level::level_enum level,
+                                  const std::string &message)
+{
+    const std::string &tag = thread_context().tag;
+    if (tag.empty())
+    {
+        m_logger->log(loc, level, message);
+    }
+    else
+    {
+        m_logger->log(loc, level, "{}{}", tag, message);
+    }
+}
+
 // 日志记录实现
 void LogManager::trace(const std::string &message, const char *file, int line)
 {
@@ -399,8 +476,8 @@ void LogManager::trace(const std::string &message, const char *file, int line)
     if (m_initialized && m_logger && !m_shutting_down)
     {
         try {
-            m_logger->log(spdlog::source_loc{file, line, ""},
-                          spdlog ::level::trace, message);
+            log_with_context(spdlog::source_loc{file, line, ""},
+                              spdlog::level::trace, message);
         } catch (...) {
             // 忽略记录异常
         }
@@ -413,8 +490,8 @@ void LogManager::debug(const std::string &message, const char *file, int line)
     if (m_initialized && m_logger && !m_shutting_down)
     {
         try {
-            m_logger->log(spdlog::source_loc{file, line, ""},
-                          spdlog ::level::debug, message);
+            log_with_context(spdlog::source_loc{file, line, ""},
+                              spdlog::level::debug, message);
         } catch (...) {
             // 忽略记录异常
         }
@@ -427,8 +504,8 @@ void LogManager::info(const std::string &message, const char *file, int line)
     if (m_initialized && m_logger && !m_shutting_down)
     {
         try {
-            m_logger->log(spdlog::source_loc{file, line, ""},
-                          spdlog ::level::info, message);
+            log_with_context(spdlog::source_loc{file, line, ""},
+                              spdlog::level::info, message);
         } catch (...) {
             // 忽略记录异常
         }
@@ -441,8 +518,8 @@ void LogManager::warn(const std::string &message, const char *file, int line)
     if (m_initialized && m_logger && !m_shutting_down)
     {
         try {
-            m_logger->log(spdlog::source_loc{file, line, ""},
-                          spdlog ::level::warn, message);
+            log_with_context(spdlog::source_loc{file, line, ""},
+                              spdlog::level::warn, message);
         } catch (...) {
             // 忽略记录异常
         }
@@ -455,8 +532,8 @@ void LogManager::error(const std::string &message, const char *file, int line)
     if (m_initialized && m_logger && !m_shutting_down)
     {
         try {
-            m_logger->log(spdlog::source_loc{file, line, ""},
-                          spdlog ::level::err, message);
+            log_with_context(spdlog::source_loc{file, line, ""},
+                              spdlog::level::err, message);
         } catch (...) {
             // 忽略记录异常
         }
@@ -469,8 +546,8 @@ void LogManager::critical(const std::string &message, const char *file, int line
     if (m_initialized && m_logger && !m_shutting_down)
     {
         try {
-            m_logger->log(spdlog::source_loc{file, line, ""},
-                          spdlog ::level::critical, message);
+            log_with_context(spdlog::source_loc{file, line, ""},
+                              spdlog::level::critical, message);
         } catch (...) {
             // 忽略记录异常
         }

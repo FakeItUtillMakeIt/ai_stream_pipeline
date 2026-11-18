@@ -62,6 +62,13 @@ static std::shared_ptr<BasePacket> trimGpuPayload(const std::shared_ptr<BasePack
 
 } // namespace
 
+std::string Node::pipelineId() const {
+    if (auto p = pipeline_.lock()) {
+        return p->getId();
+    }
+    return {};
+}
+
 void Node::broadcast(std::shared_ptr<BasePacket> packet) {
     if (!packet) return;
     auto it = packet->cost_time_map.find(name_);
