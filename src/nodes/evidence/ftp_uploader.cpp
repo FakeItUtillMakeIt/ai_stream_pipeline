@@ -66,6 +66,7 @@ size_t FtpUploader::queueSize() const {
 }
 
 void FtpUploader::uploadLoop() {
+    ScopedLogContext log_ctx(log_pipeline_, log_node_);
     while (true) {
         std::string local_path;
         if (!upload_queue_.pop(local_path, std::chrono::milliseconds(100))) {

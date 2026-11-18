@@ -167,16 +167,16 @@ void ReportSinkNode::processPacket(std::shared_ptr<core::BasePacket> packet)
             const std::string type_name =
                 rules::alertTypeMap.count(ev.alert_type) ? rules::alertTypeMap.at(ev.alert_type) : "unknown";
             if (resp.ok()) {
-                LOG_INFO_FMT("[Report] pushed alert '{}' type={} id={} pipeline={} url={} "
+                LOG_INFO_FMT("[Report] pushed alert '{}' type={} id={} url={} "
                              "image={} snapshot='{}' payload={}B (http {})",
-                             ev.alert_name, type_name, ev.alert_id, pid, cfg_.url,
+                             ev.alert_name, type_name, ev.alert_id, cfg_.url,
                              img_state, snap, payload.dump().size(), resp.status);
             } else {
                 // 便于排查：明确是哪个快照文件、发往哪个 URL、为何失败（不打印响应 body）
-                LOG_WARN_FMT("[Report] push FAILED alert '{}' type={} id={} pipeline={} url={} "
+                LOG_WARN_FMT("[Report] push FAILED alert '{}' type={} id={} url={} "
                              "image={} snapshot='{}' err='{}' status={} tries={} "
                              "timeout={}ms connect_timeout={}ms payload={}B",
-                             ev.alert_name, type_name, ev.alert_id, pid, cfg_.url,
+                             ev.alert_name, type_name, ev.alert_id, cfg_.url,
                              img_state, snap, resp.err, resp.status, tries,
                              cfg_.timeout_ms, cfg_.connect_timeout_ms, payload.dump().size());
             }

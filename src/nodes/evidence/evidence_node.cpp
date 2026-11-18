@@ -89,6 +89,7 @@ bool EvidenceNode::onStartup() {
     std::lock_guard<std::mutex> lock(mutex_);
 
     if (video_config_.enabled) {
+        video_recorder_.setLogContext(pipelineId(), name_);
         if (!video_recorder_.initialize(video_config_.output_dir, video_config_.fps, video_config_.bitrate, video_config_.encoder)) {
             LOG_ERROR("[EvidenceNode] Failed to initialize video recorder");
             return false;
@@ -112,6 +113,7 @@ bool EvidenceNode::onStartup() {
         rcfg.retention_hours = rollover_config_.retention_hours;
         rcfg.check_interval_min = rollover_config_.check_interval_min;
         rcfg.enabled = true;
+        video_rollover_.setLogContext(pipelineId(), name_);
         video_rollover_.configure(rcfg);
         video_rollover_.start();
     }
@@ -127,6 +129,7 @@ bool EvidenceNode::onStartup() {
         ftp_internal_config_.delete_after_upload = ftp_config_.delete_after_upload;
         ftp_internal_config_.max_retry = ftp_config_.max_retry;
         ftp_uploader_ = std::make_unique<FtpUploader>();
+        ftp_uploader_->setLogContext(pipelineId(), name_);
         if (!ftp_uploader_->initialize(ftp_internal_config_)) {
             LOG_ERROR("[EvidenceNode] Failed to initialize FTP uploader");
             ftp_uploader_.reset();

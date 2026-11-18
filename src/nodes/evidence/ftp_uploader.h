@@ -29,6 +29,11 @@ public:
     bool initialize(const FtpConfig& config);
     void shutdown();
     void enqueue(const std::string& local_path);
+
+    void setLogContext(const std::string& pipeline, const std::string& node) {
+        log_pipeline_ = pipeline;
+        log_node_ = node;
+    }
     size_t queueSize() const;
     size_t uploadedCount() const { return uploaded_count_; }
     size_t failedCount() const { return failed_count_; }
@@ -39,6 +44,8 @@ private:
     std::string buildRemoteUrl(const std::string& filename) const;
 
     FtpConfig config_;
+    std::string log_pipeline_;
+    std::string log_node_;
     std::atomic<bool> running_{false};
     std::atomic<bool> stop_flag_{false};
 

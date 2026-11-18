@@ -38,6 +38,25 @@ std::string idOf(const json& body) {
 }
 
 // 旧日志（无 MDC 标签）回退匹配：按 token 边界，避免 mdc_ 命中 mdc_test
+// 从 query 或 JSON body 中提取 pipeline id（用于 HTTP 请求日志上下文）
+std::string requestPipelineId(const httplib::Request& req) {
+    if (req.has_param("pipeline")) return req.get_param_value("pipeline");
+    if (req.has_param("id")) return req.get_param_value("id");
+    const std::string ct = req.get_header_value("Content-Type");
+    if (!req.body.empty() && req.body.size() <= 1024 * 1024 &&
+        ct.find("json") != std::string::npos) {
+        try {
+            json j = json::parse(req.body);
+            if (j.is_object() && j.contains("id") && j["id"].is_string()) {
+                return j["id"].get<std::string>();
+            }
+        } catch (...) {
+            // 非法 body 交给具体 handler 报错；这里只做日志上下文
+        }
+    }
+    return {};
+}
+
 bool containsWordToken(const std::string& text, const std::string& token) {
     if (token.empty()) return true;
     auto is_word = [](unsigned char c) { return std::isalnum(c) != 0 || c == '_'; };
@@ -645,6 +664,17 @@ void ApiServer::setupRoutes() {
             res.status = 204;
             return httplib::Server::HandlerResponse::Handled;
         }
+
+        // MDC：按请求注入日志上下文（HTTP 线程复用，先清后设，post 统一清理）
+        LogManager::clear_thread_context();
+        {
+            const std::string pid = requestPipelineId(req);
+            if (!pid.empty()) LogManager::set_thread_context("pipeline", pid);
+            if (!pid.empty() || req.path.rfind("/api/", 0) == 0) {
+                LogManager::set_thread_context("node", "http");
+            }
+        }
+
         // 仅保护 /api/ 业务接口；/health、/metrics、/api/v1/whoami 放行（whoami 需匿名可查以决定是否弹登录）
         // 媒体取文件接口(<img>/<video> 无法带 Authorization)额外允许 ?t=<token> 查询参数鉴权。
         if ((!api_token_.empty() || !impl_token_.empty()) && req.path.rfind("/api/", 0) == 0 &&
@@ -664,6 +694,9 @@ void ApiServer::setupRoutes() {
             }
         }
         return httplib::Server::HandlerResponse::Unhandled;
+    });
+    server_.set_post_routing_handler([](const httplib::Request&, httplib::Response&) {
+        LogManager::clear_thread_context();
     });
 
     // 管道管理 API

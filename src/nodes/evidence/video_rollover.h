@@ -26,6 +26,11 @@ public:
     void configure(const VideoRolloverConfig& config);
     void start();
     void stop();
+
+    void setLogContext(const std::string& pipeline, const std::string& node) {
+        log_pipeline_ = pipeline;
+        log_node_ = node;
+    }
     void forceCheck();
     size_t getDeletedCount() const { return deleted_count_; }
 
@@ -34,6 +39,8 @@ private:
     void cleanupExpiredFiles();
 
     VideoRolloverConfig config_;
+    std::string log_pipeline_;
+    std::string log_node_;
     std::atomic<bool> running_{false};
     std::atomic<bool> stop_flag_{false};
     std::thread worker_;

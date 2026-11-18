@@ -222,6 +222,7 @@ namespace ai_stream
             bool all_started = true;
             for (auto it = topo_order_.rbegin(); it != topo_order_.rend(); ++it)
             {
+                ScopedLogContext node_ctx(id_, *it);
                 auto &node = nodes_[*it];
                 LOG_INFO_FMT("[Pipeline {}] Starting node: {}", id_, *it);
                 if (!node->start())
@@ -245,6 +246,7 @@ namespace ai_stream
                 auto it = nodes_.find(name);
                 if (it != nodes_.end())
                 {
+                    ScopedLogContext node_ctx(id_, name);
                     it->second->stop();
                 }
             }
@@ -264,6 +266,7 @@ namespace ai_stream
                 {
                     continue;
                 }
+                ScopedLogContext node_ctx(id_, name);
                 LOG_INFO_FMT("[Pipeline {}] Stopping node: {}", id_, name);
                 it->second->stop();
             }

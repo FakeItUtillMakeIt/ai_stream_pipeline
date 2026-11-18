@@ -25,6 +25,12 @@ public:
     void enqueueFrame(std::shared_ptr<core::VideoFramePacket> frame);
     void stop();
     bool isRecording() const;
+
+    // 日志上下文（由 EvidenceNode 注入，用于编码子线程）
+    void setLogContext(const std::string& pipeline, const std::string& node) {
+        log_pipeline_ = pipeline;
+        log_node_ = node;
+    }
     std::string getCurrentFilePath() const;
 
 private:
@@ -40,6 +46,8 @@ private:
     std::atomic<bool> recording_{false};
     std::atomic<bool> stop_flag_{false};
     std::string current_filepath_;
+    std::string log_pipeline_;
+    std::string log_node_;
     mutable std::mutex mutex_;
 
     std::unique_ptr<FileEncoder> encoder_;

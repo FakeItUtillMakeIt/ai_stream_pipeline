@@ -167,6 +167,7 @@ void FileSourceNode::closeInput() {
 }
 
 void FileSourceNode::workerFunc() {
+    ScopedLogContext log_ctx(this->pipelineId(), this->name_);
     LOG_INFO_FMT("[FileSource] Worker thread started (stream_id={})", my_stream_id_);
 
     AVPacket* pkt = av_packet_alloc();

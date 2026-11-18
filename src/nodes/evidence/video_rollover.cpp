@@ -48,6 +48,7 @@ void VideoRollover::forceCheck() {
 }
 
 void VideoRollover::rolloverLoop() {
+    ScopedLogContext log_ctx(log_pipeline_, log_node_);
     while (!stop_flag_) {
         cleanupExpiredFiles();
 

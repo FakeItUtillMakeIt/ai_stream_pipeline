@@ -123,6 +123,7 @@ std::string VideoRecorder::getCurrentFilePath() const {
 }
 
 void VideoRecorder::encodingLoop() {
+    ScopedLogContext log_ctx(log_pipeline_, log_node_);
     while (true) {
         std::shared_ptr<core::VideoFramePacket> frame;
         if (!frame_queue_.pop(frame, std::chrono::milliseconds(100))) {

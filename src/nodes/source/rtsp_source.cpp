@@ -262,6 +262,7 @@ void RTSPSourceNode::closeInput() {
 
 
 void RTSPSourceNode::workerFunc() {
+    ScopedLogContext log_ctx(this->pipelineId(), this->name_);
     LOG_INFO_FMT("[RTSPSource] Worker thread started (stream_id={})", my_stream_id_);
     
     AVPacket* pkt = av_packet_alloc();
