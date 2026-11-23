@@ -6,6 +6,7 @@
 #include "3rd_party/log_mgr/log_mgr.h"
 #include <nlohmann/json.hpp>
 #include <chrono>
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <cctype>
@@ -22,6 +23,10 @@
 #include <poll.h>
 #include "utils/http_util.h"
 #include "utils/evidence_path.h"
+
+#ifdef WITH_CUDA
+#include <cuda_runtime.h>
+#endif
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
@@ -826,8 +831,72 @@ void ApiServer::setupRoutes() {
     }
 }
 
+void ApiServer::monitorSystemResources() {
+    auto& mc = core::MetricsCollector::instance();
+    LOG_INFO("[SystemMetrics] Resource monitor started");
+    auto last_time = std::chrono::steady_clock::now();
+    unsigned long long last_idle = 0;
+    unsigned long long last_total = 0;
+
+    while (resource_running_.load()) {
+#ifdef WITH_CUDA
+        // cudaMemGetInfo 返回的是当前设备的全局空闲/总量，包含其他进程占用。
+        size_t free_mem = 0;
+        size_t total_mem = 0;
+        if (cudaMemGetInfo(&free_mem, &total_mem) == cudaSuccess && total_mem > 0) {
+            const size_t used_mb = (total_mem - free_mem) / (1024 * 1024);
+            mc.setGpuMemoryMb(static_cast<int>(used_mb));
+        }
+#endif
+
+        const auto now = std::chrono::steady_clock::now();
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - last_time).count();
+        if (elapsed >= 1000) {
+#ifdef __linux__
+            std::ifstream stat_file("/proc/stat");
+            if (stat_file.is_open()) {
+                std::string line;
+                if (std::getline(stat_file, line)) {
+                    std::istringstream iss(line);
+                    std::string cpu_label;
+                    unsigned long long user = 0, nice = 0, system = 0, idle = 0;
+                    unsigned long long iowait = 0, irq = 0, softirq = 0, steal = 0;
+                    if (iss >> cpu_label >> user >> nice >> system >> idle
+                            >> iowait >> irq >> softirq >> steal) {
+                        const unsigned long long current_idle = idle + iowait;
+                        const unsigned long long current_total =
+                            user + nice + system + idle + iowait + irq + softirq + steal;
+                        if (last_total != 0 && current_total > last_total) {
+                            const unsigned long long total_diff = current_total - last_total;
+                            const unsigned long long idle_diff = current_idle - last_idle;
+                            const int usage = static_cast<int>(
+                                100.0 * static_cast<double>(total_diff - idle_diff) / total_diff);
+                            mc.setCpuUsagePercent(std::clamp(usage, 0, 100));
+                        }
+                        last_idle = current_idle;
+                        last_total = current_total;
+                    }
+                }
+            }
+#endif
+            last_time = now;
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+    LOG_INFO("[SystemMetrics] Resource monitor stopped");
+}
+
 bool ApiServer::start(const std::string& host, int port) {
     if (running_.exchange(true)) return true;
+
+    // 同步模式没有 AsyncPipelineManager 的资源监控线程，这里补一个。
+    // 异步模式继续由 AsyncPipelineManager 统一采样，避免重复。
+    if (!async_mode_) {
+        resource_running_ = true;
+        resource_thread_ = std::thread(&ApiServer::monitorSystemResources, this);
+    }
 
     server_thread_ = std::thread([this, host, port]() {
         LOG_INFO_FMT("HTTP server listening on {}:{}", host, port);
@@ -850,9 +919,13 @@ void ApiServer::stop() {
     // 无论 running_ 状态如何都必须 join 线程（listen 失败/启动中途停止时
     // running_ 可能为 false，但 server_thread_ 仍 joinable，否则析构触发 terminate）
     running_ = false;
+    resource_running_ = false;
     server_.stop();
     if (server_thread_.joinable()) {
         server_thread_.join();
+    }
+    if (resource_thread_.joinable()) {
+        resource_thread_.join();
     }
     // 停止所有管道（异步模式由 manager 析构统一停止）
     if (!async_mode_) {

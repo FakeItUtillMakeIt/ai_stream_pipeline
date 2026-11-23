@@ -7,6 +7,8 @@
 #include <map>
 #include <vector>
 #include <mutex>
+#include <thread>
+#include <atomic>
 #include <httplib.h>
 #include "ai_stream/core/pipeline.h"
 #include "src/core/async_pipeline_manager.h"
@@ -122,6 +124,8 @@ private:
     void handleMetricsPrometheus(const httplib::Request& req, httplib::Response& res);
     void handleMetricsJson(const httplib::Request& req, httplib::Response& res);
     void handleMetricsPipeline(const httplib::Request& req, httplib::Response& res);
+    // 同步模式没有 AsyncPipelineManager，需自行采样 CPU/GPU 写入 MetricsCollector
+    void monitorSystemResources();
 
 private:
     httplib::Server server_;
@@ -143,6 +147,10 @@ private:
 
     std::thread server_thread_;
     std::atomic<bool> running_{false};
+
+    // 同步模式资源采样（CPU/GPU）；异步模式由 AsyncPipelineManager 监控线程负责
+    std::thread resource_thread_;
+    std::atomic<bool> resource_running_{false};
 
     // 可选 bearer token 鉴权（环境变量 AI_STREAM_API_TOKEN，未设置则不启用）
     std::string api_token_;
