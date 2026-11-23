@@ -1,6 +1,7 @@
 // src/core/metrics.cpp
 #include "ai_stream/core/metrics.h"
 #include "3rd_party/log_mgr/log_mgr.h"
+#include <fstream>
 #include <sstream>
 #include <iomanip>
 #include <nlohmann/json.hpp>
@@ -24,6 +25,21 @@ std::string escapePromLabel(const std::string& s) {
     return out;
 }
 } // namespace
+
+int processRssMb() {
+#ifdef __linux__
+    std::ifstream f("/proc/self/status");
+    std::string line;
+    while (std::getline(f, line)) {
+        if (line.rfind("VmRSS:", 0) != 0) continue;
+        std::istringstream iss(line.substr(6));
+        long kb = 0;
+        if (iss >> kb) return static_cast<int>(kb / 1024);
+        break;
+    }
+#endif
+    return 0;
+}
 
 MetricsCollector& MetricsCollector::instance() {
     static MetricsCollector collector;
@@ -106,6 +122,10 @@ void MetricsCollector::setCpuUsagePercent(int pct) {
     cpu_usage_percent_.store(pct);
 }
 
+void MetricsCollector::setMemoryMb(int mb) {
+    memory_mb_.store(mb);
+}
+
 void MetricsCollector::setActivePipelines(int count) {
     active_pipelines_.store(count);
 }
@@ -151,6 +171,7 @@ MetricsCollector::SystemMetrics MetricsCollector::getSystemMetrics() const {
     SystemMetrics s;
     s.gpu_memory_mb = gpu_memory_mb_.load();
     s.cpu_usage_percent = cpu_usage_percent_.load();
+    s.memory_mb = memory_mb_.load();
     s.active_pipelines = active_pipelines_.load();
     s.total_pipelines = total_pipelines_.load();
     return s;
@@ -204,6 +225,7 @@ std::string MetricsCollector::formatJson() const {
     j["system"] = {
         {"gpu_memory_mb", sys.gpu_memory_mb},
         {"cpu_percent", sys.cpu_usage_percent},
+        {"memory_mb", sys.memory_mb},
         {"active_pipelines", sys.active_pipelines},
         {"total_pipelines", sys.total_pipelines}
     };
@@ -276,6 +298,10 @@ std::string MetricsCollector::formatPrometheus() const {
     oss << "\n# HELP ai_stream_system_gpu_memory_mb GPU memory usage in MB\n";
     oss << "# TYPE ai_stream_system_gpu_memory_mb gauge\n";
     oss << "ai_stream_system_gpu_memory_mb " << sys.gpu_memory_mb << "\n";
+
+    oss << "\n# HELP ai_stream_system_memory_mb Process resident memory usage in MB\n";
+    oss << "# TYPE ai_stream_system_memory_mb gauge\n";
+    oss << "ai_stream_system_memory_mb " << sys.memory_mb << "\n";
 
     oss << "\n# HELP ai_stream_system_cpu_percent CPU usage percent\n";
     oss << "# TYPE ai_stream_system_cpu_percent gauge\n";

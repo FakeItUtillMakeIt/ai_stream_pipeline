@@ -49,6 +49,7 @@ public:
 
     void setGpuMemoryMb(int mb);
     void setCpuUsagePercent(int pct);
+    void setMemoryMb(int mb);
     void setActivePipelines(int count);
     void setTotalPipelines(int count);
 
@@ -65,6 +66,7 @@ public:
     struct SystemMetrics {
         int gpu_memory_mb = 0;
         int cpu_usage_percent = 0;
+        int memory_mb = 0;          // 当前进程 RSS
         int active_pipelines = 0;
         int total_pipelines = 0;
     };
@@ -96,9 +98,13 @@ private:
 
     std::atomic<int> gpu_memory_mb_{0};
     std::atomic<int> cpu_usage_percent_{0};
+    std::atomic<int> memory_mb_{0};
     std::atomic<int> active_pipelines_{0};
     std::atomic<int> total_pipelines_{0};
 };
+
+/** 当前进程常驻内存（RSS，MB）；非 Linux 返回 0 */
+int processRssMb();
 
 } // namespace core
 } // namespace ai_stream

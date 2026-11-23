@@ -939,6 +939,7 @@ void ApiServer::monitorSystemResources() {
             mc.setGpuMemoryMb(static_cast<int>(used_mb));
         }
 #endif
+        mc.setMemoryMb(core::processRssMb());
 
         const auto now = std::chrono::steady_clock::now();
         const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(

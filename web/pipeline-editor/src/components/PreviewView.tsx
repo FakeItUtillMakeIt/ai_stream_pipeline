@@ -43,6 +43,7 @@ interface MetricSample {
   ts: number;
   cpu: number;
   gpu: number;
+  mem?: number;   // 旧版本 localStorage 样本没有该字段
   active: number;
   fps: number | null;
   drops: number;
@@ -164,6 +165,7 @@ function buildMetricSample(data: any, ts: number): MetricSample {
     ts,
     cpu: numberValue(system.cpu_percent),
     gpu: numberValue(system.gpu_memory_mb),
+    mem: numberValue(system.memory_mb),
     active: numberValue(system.active_pipelines),
     fps,
     drops,
@@ -199,7 +201,7 @@ function sortMark(active: boolean, dir: number): string {
   return active ? (dir > 0 ? ' ▲' : ' ▼') : '';
 }
 
-function gpuText(mb: number): string {
+function mbText(mb: number): string {
   return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
 }
 
@@ -1040,7 +1042,8 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
                   <Kpi label="总丢帧" value={String(totalDrops)} sub="累计 dropped_packets" tone={totalDrops > 0 ? 'warn' : 'ok'} />
                   <Kpi label="平均 FPS" value={avgFps != null ? avgFps.toFixed(1) : '—'} sub="仅统计 FPS > 0 的节点" />
                   <Kpi label="CPU" value={system.cpu_percent != null ? `${system.cpu_percent}%` : '—'} sub="system.cpu_percent" />
-                  <Kpi label="GPU 显存" value={system.gpu_memory_mb != null ? gpuText(system.gpu_memory_mb) : '—'} sub="system.gpu_memory_mb" />
+                  <Kpi label="GPU 显存" value={system.gpu_memory_mb != null ? mbText(system.gpu_memory_mb) : '—'} sub="system.gpu_memory_mb" />
+                  <Kpi label="内存占用" value={system.memory_mb != null ? mbText(system.memory_mb) : '—'} sub="system.memory_mb · 进程 RSS" />
                 </div>
 
                 <div className="pv-trend-head">
@@ -1069,9 +1072,17 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
                   />
                   <TrendCard
                     title="GPU 显存"
-                    value={lastTrend ? gpuText(lastTrend.gpu) : '—'}
+                    value={lastTrend ? mbText(lastTrend.gpu) : '—'}
                     values={trendSamples.map((sample) => sample.gpu)}
                     color="var(--primary)"
+                  />
+                  <TrendCard
+                    title="内存占用 (MEM)"
+                    value={lastTrend?.mem != null ? mbText(lastTrend.mem) : '—'}
+                    values={trendSamples
+                      .map((sample) => sample.mem)
+                      .filter((value): value is number => typeof value === 'number')}
+                    color="var(--info)"
                   />
                   <TrendCard
                     title="平均 FPS"

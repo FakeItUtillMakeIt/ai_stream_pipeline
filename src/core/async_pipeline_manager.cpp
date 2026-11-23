@@ -491,6 +491,7 @@ void AsyncPipelineManager::monitorResourceUsage() {
         auto& mc = MetricsCollector::instance();
         mc.setGpuMemoryMb(gpu_memory_mb_.load());
         mc.setCpuUsagePercent(cpu_usage_percent_.load());
+        mc.setMemoryMb(processRssMb());
         {
             std::lock_guard<std::mutex> lock(mutex_);
             int active = 0;

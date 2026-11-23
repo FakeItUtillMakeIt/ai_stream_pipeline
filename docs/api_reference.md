@@ -174,7 +174,7 @@
 
 ## GET /metrics — Prometheus 指标
 
-返回 `text/plain` Prometheus 格式：各节点处理量/丢包/延迟/FPS + 系统 GPU 显存/CPU/管道数。
+返回 `text/plain` Prometheus 格式：各节点处理量/丢包/延迟/FPS + 系统 GPU 显存/进程内存/CPU/管道数。
 
 ## GET /api/v1/metrics — 全量 JSON 指标
 
@@ -186,7 +186,7 @@
        "min_latency_ms": 0, "max_latency_ms": 0, "fps": 310.7}
     ]
   },
-  "system": {"gpu_memory_mb": 0, "cpu_percent": 0, "active_pipelines": 1, "total_pipelines": 1}
+  "system": {"gpu_memory_mb": 0, "cpu_percent": 0, "memory_mb": 0, "active_pipelines": 1, "total_pipelines": 1}
 }
 ```
 
