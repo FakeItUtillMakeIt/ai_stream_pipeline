@@ -8,12 +8,20 @@
 #include <string>
 #include <deque>
 #include <atomic>
+#include <condition_variable>
 #include <thread>
 #include <mutex>
 
 namespace ai_stream {
 namespace nodes {
 
+/**
+ * @brief 证据录像器
+ *
+ * 常驻一个编码线程；编码器（含 HAL/NVENC 上下文）在多次告警录制之间复用，
+ * 每次录制只切换 MP4 封装输出，避免频繁初始化/销毁硬件编码器造成的
+ * 内存与线程抖动。
+ */
 class VideoRecorder {
 public:
     VideoRecorder();
@@ -23,7 +31,10 @@ public:
     bool startRecording(const std::string& filename,
                        std::deque<std::shared_ptr<core::VideoFramePacket>> pre_frames);
     void enqueueFrame(std::shared_ptr<core::VideoFramePacket> frame);
+    // 结束当前录制；编码线程与编码器保持常驻
     void stop();
+    // 停止编码线程并释放编码器（pipeline 停止/对象销毁时调用）
+    void shutdown();
     bool isRecording() const;
 
     // 日志上下文（由 EvidenceNode 注入，用于编码子线程）
@@ -35,7 +46,8 @@ public:
 
 private:
     void encodingLoop();
-    bool initEncoder(const std::string& filepath, int width, int height);
+    bool startEncoder(const std::string& filepath, int width, int height);
+    void finishEncoder();
     void closeEncoder();
 
     std::string output_dir_;
@@ -44,7 +56,6 @@ private:
     std::string codec_ = "libx264";
 
     std::atomic<bool> recording_{false};
-    std::atomic<bool> stop_flag_{false};
     std::string current_filepath_;
     std::string log_pipeline_;
     std::string log_node_;
@@ -57,7 +68,19 @@ private:
 
     // 有界队列（满时丢最旧帧，防止编码慢时无界增长）
     core::BoundedQueue<std::shared_ptr<core::VideoFramePacket>> frame_queue_{256};
+
+    // 常驻编码线程及命令握手
     std::thread encode_thread_;
+    std::condition_variable cv_;
+    bool shutdown_ = false;
+    bool start_pending_ = false;
+    bool start_ack_ = false;
+    bool start_ok_ = false;
+    bool stop_requested_ = false;
+    bool worker_done_ = true;
+    std::string pending_filepath_;
+    int pending_width_ = 0;
+    int pending_height_ = 0;
 };
 
 } // namespace nodes

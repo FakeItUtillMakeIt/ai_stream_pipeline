@@ -82,6 +82,13 @@ protected:
     // 广播数据给所有下游节点，并自动记录当前节点的处理指标
     void broadcast(std::shared_ptr<BasePacket> packet);
 
+    // 按“入队 → 当前”耗时记录一次处理指标。
+    // 适用于不向下游广播数据包（终端节点）或只偶尔广播的节点。
+    void recordProcessedLatency() {
+        const uint64_t now = utils::TimeUtil::currentTimeMs();
+        recordMetrics(in_time_ms_ > 0 && now >= in_time_ms_ ? now - in_time_ms_ : 0);
+    }
+
     // 下游弱引用 + 该分支是否需要 GPU payload
     struct DownstreamRef {
         std::weak_ptr<Node> node;

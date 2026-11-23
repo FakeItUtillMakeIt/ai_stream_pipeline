@@ -122,6 +122,8 @@ bool FFmpegVideoEncoder::encode(const uint8_t* yuv420p, size_t size, int64_t pts
                v + static_cast<size_t>(y) * (w / 2), w / 2);
     }
     frame_->pts = pts;
+    frame_->pict_type = force_keyframe_ ? AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_NONE;
+    force_keyframe_ = false;
 
     int ret = avcodec_send_frame(codec_ctx_, frame_);
     if (ret < 0 && ret != AVERROR(EAGAIN)) {

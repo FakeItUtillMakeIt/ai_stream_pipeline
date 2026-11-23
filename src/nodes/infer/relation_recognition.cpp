@@ -347,7 +347,9 @@ void RelationRecognitionNode::processPacket(std::shared_ptr<core::BasePacket> pa
     std::vector<core::InferenceResultPacket::RelationResult> relations;
     fillTriplets(*in, triplets, all_classes, track_ids, relations);
     in->relations = std::move(relations);
+    // relation_infer 供排查/兼容；节点指标按配置 id（如 rel1）上报
     in->cost_time_map["relation_infer"] = last_infer_ms_;
+    in->cost_time_map[name_] = last_infer_ms_;
     LOG_DEBUG_FMT("[Relation] frame {} boxes={} relations={} cost={}ms",
                   in->timestamp_ms, meta.boxes.size(), in->relations.size(), last_infer_ms_);
     // 有关系时才打 INFO：每帧都打会刷屏，而"一直没关系"正是需要排查的情况。

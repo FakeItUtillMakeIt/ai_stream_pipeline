@@ -41,6 +41,16 @@ public:
               int bitrate,
               const std::string& encoder_name = "libx264");
 
+    // 复用已打开的编码器，切换到新的输出文件：
+    // 结束上一个文件（若仍打开）→ 新建封装上下文/流 → 写文件头。
+    // 编码器上下文、HAL 后端、颜色转换上下文均保持复用。
+    bool startFile(const std::string& output_url, const std::string& format_name);
+
+    // 结束当前输出文件：排空编码器、写 trailer、释放封装上下文；编码器保持打开。
+    void finishFile();
+
+    bool isInitialized() const { return initialized_; }
+
     // 编码单帧（public：VideoRecorder 等外部组件直接调用）
     virtual bool encodeFrame(const uint8_t* data, int width, int height,
                              int step, int64_t pts);
@@ -48,9 +58,12 @@ public:
 
 protected:
     virtual bool openOutput(const std::string& url, const std::string& format_name) = 0;
-    bool addVideoStream(int width, int height, int bitrate, const std::string& encoder_name);
+    bool openCodec(int width, int height, int bitrate, const std::string& encoder_name);
+    bool createCodecContext(int width, int height, int bitrate, const std::string& encoder_name);
+    bool addStream();
     bool openVideoCodec();
     bool writeHeader();
+    void closeMuxer();
 
     // 编码实现路径
     bool encodeViaHal(const uint8_t* data, int width, int height, int step, int64_t pts);
@@ -76,7 +89,10 @@ protected:
 
     int width_ = 0;
     int height_ = 0;
-    bool initialized_ = false;
+    bool initialized_ = false;   // 编码器（codec/HAL/帧缓冲）已就绪
+    bool file_open_ = false;     // 当前封装输出已打开并写入文件头
+    std::atomic<bool> keyframe_requested_{false};
+    int64_t file_pts_base_ = -1; // 当前文件首个包的 dts（用于时间戳归零）
     int64_t next_pts_ = 0;
     std::atomic<bool> closed_{false};
     std::atomic<bool> flushed_{false};

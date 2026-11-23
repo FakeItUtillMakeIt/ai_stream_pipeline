@@ -71,10 +71,17 @@ std::string Node::pipelineId() const {
 
 void Node::broadcast(std::shared_ptr<BasePacket> packet) {
     if (!packet) return;
+    // 节点自己填了耗时就用精确值；没填则按入队到广播的耗时兜底，
+    // 保证 src/fusion/alert/draw/gate 等未写 cost_time_map 的节点也有指标。
     auto it = packet->cost_time_map.find(name_);
+    uint64_t latency_ms = 0;
     if (it != packet->cost_time_map.end()) {
-        recordMetricsImpl(it->second, false);
+        latency_ms = it->second;
+    } else if (in_time_ms_ > 0) {
+        const uint64_t now = utils::TimeUtil::currentTimeMs();
+        if (now >= in_time_ms_) latency_ms = now - in_time_ms_;
     }
+    recordMetricsImpl(latency_ms, false);
     // 打戳生产者：下游可据此区分数据来源（如 fusion 区分多路推理结果）
     packet->producer_id = name_;
 

@@ -157,7 +157,7 @@ void EvidenceNode::onShutdown() {
         pending_snapshot_event_.reset();
     }
 
-    video_recorder_.stop();
+    video_recorder_.shutdown();
 
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -188,6 +188,9 @@ void EvidenceNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
     if (packet->type == core::PacketType::DECODED_FRAME) {
         auto frame = std::static_pointer_cast<core::VideoFramePacket>(packet);
         handleFrame(std::move(frame));
+        // 证据节点消费帧但不逐帧广播，帧处理指标需主动上报
+        // （告警元数据包若触发快照会 broadcast，由基类统一记录）
+        recordProcessedLatency();
     } else if (packet->type == core::PacketType::META_DATA) {
         auto infer = std::static_pointer_cast<core::InferenceResultPacket>(packet);
         if (infer) {

@@ -187,6 +187,9 @@ void ReportSinkNode::processPacket(std::shared_ptr<core::BasePacket> packet)
           }
         }
     }
+
+    // 终端节点不向数据面广播，主动上报处理指标（含 HTTP 重试耗时）
+    recordProcessedLatency();
 }
 
 REGISTER_NODE("report", ReportSinkNode)

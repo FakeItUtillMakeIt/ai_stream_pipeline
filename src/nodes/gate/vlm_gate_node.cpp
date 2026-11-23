@@ -429,8 +429,12 @@ void VlmGateNode::processPacket(std::shared_ptr<core::BasePacket> packet)
     }
 
     // 只把"有可上报事件(PUSH/PASSTHROUGH)"的告警下发；全 DROP/HOLD 时不发。
-    if (any_push)
-        broadcast(infer);
+    if (any_push) {
+        broadcast(infer);   // 由基类记录本节点指标
+    } else {
+        // 全部 HOLD/DROP 时没有广播，仍需记录节点处理指标
+        recordProcessedLatency();
+    }
 }
 
 REGISTER_NODE("vlm_gate", VlmGateNode)

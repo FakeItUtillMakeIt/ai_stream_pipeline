@@ -48,20 +48,36 @@ bool EncoderBase::init(const std::string& output_url,
     LOG_INFO_FMT("[EncoderBase] Initializing: url={}, format={}, {}x{}, {}kbps, encoder={}",
                  output_url, format_name, width, height, bitrate, encoder_name);
 
-    if (!openOutput(output_url, format_name)) {
-        LOG_ERROR("[EncoderBase] Failed to open output");
+    if (!openCodec(width, height, bitrate, encoder_name)) {
+        close();
         return false;
     }
 
-    if (!addVideoStream(width, height, bitrate, encoder_name)) {
-        LOG_ERROR("[EncoderBase] Failed to add video stream");
+    if (!startFile(output_url, format_name)) {
+        LOG_ERROR("[EncoderBase] Failed to open output");
         close();
+        return false;
+    }
+
+    LOG_INFO_FMT("[EncoderBase] Initialized successfully (encoder={})",
+                 hal_encoder_ ? hal_encoder_->getName() : std::string("legacy avcodec"));
+    return true;
+}
+
+bool EncoderBase::openCodec(int width, int height, int bitrate,
+                            const std::string& encoder_name) {
+    closed_ = false;
+    flushed_ = false;
+    legacy_codec_opened_ = false;
+    file_pts_base_ = -1;
+
+    if (!createCodecContext(width, height, bitrate, encoder_name)) {
+        LOG_ERROR("[EncoderBase] Failed to create codec context");
         return false;
     }
 
     if (!openVideoCodec()) {
         LOG_ERROR("[EncoderBase] Failed to open video codec");
-        close();
         return false;
     }
 
@@ -69,7 +85,6 @@ bool EncoderBase::init(const std::string& output_url,
     av_frame_ = av_frame_alloc();
     if (!av_frame_) {
         LOG_ERROR("[EncoderBase] Failed to allocate frame");
-        close();
         return false;
     }
     av_frame_->format = codec_ctx_->pix_fmt;
@@ -80,7 +95,6 @@ bool EncoderBase::init(const std::string& output_url,
         char errbuf[256] = {0};
         av_strerror(ret, errbuf, sizeof(errbuf));
         LOG_ERROR_FMT("[EncoderBase] Failed to allocate frame buffer: {}", errbuf);
-        close();
         return false;
     }
 
@@ -92,24 +106,80 @@ bool EncoderBase::init(const std::string& output_url,
     );
     if (!sws_ctx_) {
         LOG_ERROR("[EncoderBase] Failed to create swscale context");
-        close();
+        return false;
+    }
+
+    initialized_ = true;
+    return true;
+}
+
+bool EncoderBase::startFile(const std::string& output_url,
+                            const std::string& format_name) {
+    if (!initialized_ || !codec_ctx_) {
+        LOG_ERROR("[EncoderBase] Codec not initialized");
+        return false;
+    }
+
+    // 若上一个文件仍未结束，先正常收尾，避免丢帧/文件损坏
+    finishFile();
+
+    if (!openOutput(output_url, format_name)) {
+        LOG_ERROR("[EncoderBase] Failed to open output");
+        return false;
+    }
+
+    if (!addStream()) {
+        LOG_ERROR("[EncoderBase] Failed to add video stream");
+        closeMuxer();
         return false;
     }
 
     if (!writeHeader()) {
         LOG_ERROR("[EncoderBase] Failed to write header");
-        close();
+        closeMuxer();
         return false;
     }
 
-    initialized_ = true;
-    LOG_INFO_FMT("[EncoderBase] Initialized successfully (encoder={})",
-                 hal_encoder_ ? hal_encoder_->getName() : std::string("legacy avcodec"));
+    file_open_ = true;
+    flushed_ = false;
+    file_pts_base_ = -1;
+    // 复用编码器时，每个文件首帧强制关键帧，保证片段可独立解码
+    keyframe_requested_ = true;
+    if (hal_encoder_) {
+        hal_encoder_->requestKeyframe();
+    }
     return true;
 }
 
-bool EncoderBase::addVideoStream(int width, int height, int bitrate,
-                                  const std::string& encoder_name) {
+void EncoderBase::finishFile() {
+    if (!file_open_ && !fmt_ctx_) return;
+
+    if (initialized_ && fmt_ctx_) {
+        flush();
+        // legacy 编码器在 drain 后需要复位，才能继续用于下一个文件
+        if (legacy_codec_opened_ && codec_ctx_) {
+            avcodec_flush_buffers(codec_ctx_);
+        }
+    }
+
+    closeMuxer();
+    file_open_ = false;
+}
+
+void EncoderBase::closeMuxer() {
+    if (!fmt_ctx_) return;
+
+    if (fmt_ctx_->pb && !(fmt_ctx_->flags & AVFMT_NOFILE)) {
+        avio_flush(fmt_ctx_->pb);
+        avio_closep(&fmt_ctx_->pb);
+    }
+    avformat_free_context(fmt_ctx_);
+    fmt_ctx_ = nullptr;
+    video_stream_ = nullptr;
+}
+
+bool EncoderBase::createCodecContext(int width, int height, int bitrate,
+                                     const std::string& encoder_name) {
     // 编码上下文在此仅作封装载体（codecpar/time_base）；实际编码在 HAL。
     // legacy 路径复用该上下文执行 avcodec_open2。
     // 以下都是 HAL 后端名（而非 FFmpeg 编码器名），直接按 H264 处理，
@@ -160,13 +230,6 @@ bool EncoderBase::addVideoStream(int width, int height, int bitrate,
         return false;
     }
 
-    video_stream_ = avformat_new_stream(fmt_ctx_, nullptr);
-    if (!video_stream_) {
-        LOG_ERROR("[EncoderBase] Failed to create stream");
-        return false;
-    }
-    video_stream_->id = fmt_ctx_->nb_streams - 1;
-
     codec_ctx_->codec_type = AVMEDIA_TYPE_VIDEO;
     codec_ctx_->bit_rate = bitrate * 1000;
     codec_ctx_->width = width;
@@ -176,13 +239,31 @@ bool EncoderBase::addVideoStream(int width, int height, int bitrate,
     codec_ctx_->gop_size = 12;
     codec_ctx_->max_b_frames = 2;
     codec_ctx_->pix_fmt = AV_PIX_FMT_YUV420P;
+    // MP4/FLV 均要求序列头进入容器（extradata）；编码器可跨文件复用
+    codec_ctx_->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
 
-    if (fmt_ctx_->oformat->flags & AVFMT_GLOBALHEADER) {
-        codec_ctx_->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+    LOG_INFO_FMT("[EncoderBase] Codec context created: {}x{} @ {}kbps", width, height, bitrate);
+    return true;
+}
+
+bool EncoderBase::addStream() {
+    if (!fmt_ctx_ || !codec_ctx_) return false;
+
+    video_stream_ = avformat_new_stream(fmt_ctx_, nullptr);
+    if (!video_stream_) {
+        LOG_ERROR("[EncoderBase] Failed to create stream");
+        return false;
     }
+    video_stream_->id = fmt_ctx_->nb_streams - 1;
     video_stream_->time_base = codec_ctx_->time_base;
 
-    LOG_INFO_FMT("[EncoderBase] Video stream added: {}x{} @ {}kbps", width, height, bitrate);
+    if (avcodec_parameters_from_context(video_stream_->codecpar, codec_ctx_) < 0) {
+        LOG_ERROR("[EncoderBase] avcodec_parameters_from_context failed");
+        return false;
+    }
+
+    LOG_INFO_FMT("[EncoderBase] Video stream added: {}x{} @ {}kbps", width_, height_,
+                 static_cast<int>(codec_ctx_->bit_rate / 1000));
     return true;
 }
 
@@ -243,11 +324,6 @@ bool EncoderBase::openVideoCodec() {
             memcpy(codec_ctx_->extradata, ed, ed_size);
             codec_ctx_->extradata_size = static_cast<int>(ed_size);
         }
-        if (avcodec_parameters_from_context(video_stream_->codecpar, codec_ctx_) < 0) {
-            LOG_ERROR("[EncoderBase] avcodec_parameters_from_context failed");
-            enc->close();
-            return false;
-        }
         hal_encoder_ = std::move(enc);
         LOG_INFO_FMT("[EncoderBase] HAL encoder active: {}", hal_encoder_->getName());
         return true;
@@ -288,19 +364,13 @@ bool EncoderBase::openVideoCodec() {
         codec_ctx_->gop_size = 12;
         codec_ctx_->max_b_frames = 2;
         codec_ctx_->pix_fmt = AV_PIX_FMT_YUV420P;
-        if (fmt_ctx_ && (fmt_ctx_->oformat->flags & AVFMT_GLOBALHEADER)) {
-            codec_ctx_->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
-        }
+        codec_ctx_->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
 
         int ret = avcodec_open2(codec_ctx_, codec, nullptr);
         if (ret < 0) {
             char errbuf[256] = {0};
             av_strerror(ret, errbuf, sizeof(errbuf));
             LOG_ERROR_FMT("[EncoderBase] Failed to open codec '{}': {}", codec_name, errbuf);
-            return false;
-        }
-        if (avcodec_parameters_from_context(video_stream_->codecpar, codec_ctx_) < 0) {
-            LOG_ERROR("[EncoderBase] avcodec_parameters_from_context failed");
             return false;
         }
         legacy_codec_opened_ = true;
@@ -465,6 +535,9 @@ bool EncoderBase::encodeLegacy(const uint8_t* data, int width, int height,
     sws_scale(sws, src_data, src_linesize, 0, height,
               av_frame_->data, av_frame_->linesize);
     av_frame_->pts = pts;
+    // 复用编码器时，每个证据文件的第一帧强制 I 帧
+    av_frame_->pict_type = keyframe_requested_.exchange(false)
+        ? AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_NONE;
 
     int ret = avcodec_send_frame(codec_ctx_, av_frame_);
     if (ret < 0 && ret != AVERROR(EAGAIN)) {
@@ -489,6 +562,12 @@ bool EncoderBase::encodeLegacy(const uint8_t* data, int width, int height,
             av_packet_free(&pkt);
             return false;
         }
+        // 复用编码器时输入 PTS 持续递增；封装层按文件归零，避免片段 start_time 很大
+        if (file_pts_base_ < 0) {
+            file_pts_base_ = (pkt->dts != AV_NOPTS_VALUE) ? pkt->dts : pkt->pts;
+        }
+        if (pkt->pts != AV_NOPTS_VALUE) pkt->pts -= file_pts_base_;
+        if (pkt->dts != AV_NOPTS_VALUE) pkt->dts -= file_pts_base_;
         av_packet_rescale_ts(pkt, codec_ctx_->time_base, video_stream_->time_base);
         pkt->stream_index = video_stream_->index;
         ret = av_interleaved_write_frame(fmt_ctx_, pkt);
@@ -518,6 +597,12 @@ bool EncoderBase::muxPackets(const std::vector<hal::EncodedPacket>& packets, int
         pkt->pts = p.pts;
         pkt->dts = p.dts;
         if (p.keyframe) pkt->flags |= AV_PKT_FLAG_KEY;
+        // 文件内时间戳归零（编码器本身仍使用全局递增 PTS）
+        if (file_pts_base_ < 0) {
+            file_pts_base_ = (p.dts != AV_NOPTS_VALUE) ? p.dts : p.pts;
+        }
+        if (pkt->pts != AV_NOPTS_VALUE) pkt->pts -= file_pts_base_;
+        if (pkt->dts != AV_NOPTS_VALUE) pkt->dts -= file_pts_base_;
         av_packet_rescale_ts(pkt, codec_ctx_->time_base, video_stream_->time_base);
         pkt->stream_index = video_stream_->index;
 
@@ -549,6 +634,11 @@ void EncoderBase::flush() {
             while (true) {
                 ret = avcodec_receive_packet(codec_ctx_, pkt);
                 if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF || ret < 0) break;
+                if (file_pts_base_ < 0) {
+                    file_pts_base_ = (pkt->dts != AV_NOPTS_VALUE) ? pkt->dts : pkt->pts;
+                }
+                if (pkt->pts != AV_NOPTS_VALUE) pkt->pts -= file_pts_base_;
+                if (pkt->dts != AV_NOPTS_VALUE) pkt->dts -= file_pts_base_;
                 av_packet_rescale_ts(pkt, codec_ctx_->time_base, video_stream_->time_base);
                 pkt->stream_index = video_stream_->index;
                 av_interleaved_write_frame(fmt_ctx_, pkt);
@@ -558,8 +648,13 @@ void EncoderBase::flush() {
         }
     }
 
+    // HAL 后端刷出内部缓冲（不关闭编码器，允许复用）
     if (hal_encoder_) {
-        hal_encoder_->close();
+        std::vector<hal::EncodedPacket> packets;
+        hal_encoder_->flush(packets);
+        if (!packets.empty()) {
+            muxPackets(packets, next_pts_);
+        }
     }
 
     if (fmt_ctx_ && fmt_ctx_->pb) {
@@ -609,14 +704,9 @@ void EncoderBase::close() {
     if (codec_ctx_) {
         avcodec_free_context(&codec_ctx_);
     }
-    if (fmt_ctx_) {
-        if (fmt_ctx_->pb && !(fmt_ctx_->flags & AVFMT_NOFILE)) {
-            avio_flush(fmt_ctx_->pb);
-            avio_closep(&fmt_ctx_->pb);
-        }
-        avformat_free_context(fmt_ctx_);
-        fmt_ctx_ = nullptr;
-    }
+    closeMuxer();
+    file_open_ = false;
+    legacy_codec_opened_ = false;
     LOG_INFO("[EncoderBase] Closed");
 }
 

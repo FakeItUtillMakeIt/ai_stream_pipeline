@@ -63,6 +63,9 @@ public:
     /** 刷出内部缓冲 */
     virtual bool flush(std::vector<EncodedPacket>& packets) { (void)packets; return true; }
 
+    /** 请求下一帧编码为关键帧（复用编码器切分文件时使用） */
+    virtual void requestKeyframe() {}
+
     virtual void close() = 0;
 
     /** 序列头（AnnexB 格式 SPS/PPS；AVCDecoderConfigurationRecord 由 muxer 生成） */
