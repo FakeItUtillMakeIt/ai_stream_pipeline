@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { MediaImg, MediaVideo, LivePlayer } from './Media';
-import type { LivePlayerStatus } from './Media';
+import { MediaImg, LivePlayer, StreamVideo } from './Media';
+import type { LivePlayerStatus, LivePlayerMeta } from './Media';
 import { ApiSettings, api, listPipelines, PipelineInfo } from '../api/client';
 
 export type PreviewTab = 'preview' | 'evidence' | 'metrics' | 'status';
@@ -13,6 +13,7 @@ interface EvFile {
   name: string;
   kind: string;
   size: number;
+  mtime_ms?: number;
 }
 
 interface EvidenceMeta {
@@ -37,6 +38,19 @@ interface MetricRow {
   latencyAvg: number | null;
   latencyMax: number | null;
 }
+
+interface MetricSample {
+  ts: number;
+  cpu: number;
+  gpu: number;
+  active: number;
+  fps: number | null;
+  drops: number;
+  latency: number | null;
+  nodes: MetricRow[];
+}
+
+type MetricSortKey = 'node' | 'fps' | 'total' | 'dropped' | 'latency';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'preview', label: '实时预览' },
@@ -138,6 +152,57 @@ function normalizeMetrics(data: any): { rows: MetricRow[]; system: any } {
   return { rows, system: data?.system || {} };
 }
 
+function buildMetricSample(data: any, ts: number): MetricSample {
+  const { rows, system } = normalizeMetrics(data);
+  const fpsRows = rows.filter((row) => row.fps > 0);
+  const fps = fpsRows.length
+    ? fpsRows.reduce((sum, row) => sum + row.fps, 0) / fpsRows.length
+    : null;
+  const drops = rows.reduce((sum, row) => sum + row.dropped, 0);
+  const latency = rows.reduce((max, row) => Math.max(max, row.latencyMax ?? 0), 0) || null;
+  return {
+    ts,
+    cpu: numberValue(system.cpu_percent),
+    gpu: numberValue(system.gpu_memory_mb),
+    active: numberValue(system.active_pipelines),
+    fps,
+    drops,
+    latency,
+    nodes: rows,
+  };
+}
+
+function metricHistoryKey(baseUrl: string): string {
+  return `aiStreamMetricHistoryV1:${baseUrl || 'same-origin'}`;
+}
+
+function loadMetricHistory(baseUrl: string): MetricSample[] {
+  try {
+    const raw = localStorage.getItem(metricHistoryKey(baseUrl));
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((sample) => sample && typeof sample.ts === 'number').slice(-720);
+  } catch {
+    return [];
+  }
+}
+
+function metricSortValue(row: MetricRow, key: MetricSortKey): string | number {
+  if (key === 'node') return row.node;
+  if (key === 'fps') return row.fps;
+  if (key === 'total') return row.total;
+  if (key === 'dropped') return row.dropped;
+  return row.latencyAvg ?? row.latencyMax ?? 0;
+}
+
+function sortMark(active: boolean, dir: number): string {
+  return active ? (dir > 0 ? ' ▲' : ' ▼') : '';
+}
+
+function gpuText(mb: number): string {
+  return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
+}
+
 function latencyText(row: MetricRow): string {
   if (row.latencyAvg != null) return row.latencyAvg.toFixed(1);
   if (row.latencyMin != null || row.latencyMax != null) {
@@ -179,6 +244,10 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
   const [filesUpdated, setFilesUpdated] = useState<number | null>(null);
   const [evQuery, setEvQuery] = useState('');
   const [evKind, setEvKind] = useState<EvidenceKind>('all');
+  const [evLimit, setEvLimit] = useState(60);
+  const [evRange, setEvRange] = useState<'all' | 'today' | '7d' | '30d'>('all');
+  const [evChecked, setEvChecked] = useState<Record<string, boolean>>({});
+  const [evBatchBusy, setEvBatchBusy] = useState(false);
   const [evSelected, setEvSelected] = useState<EvItem | null>(null);
   const [downloading, setDownloading] = useState('');
   const evSeq = useRef(0);
@@ -188,6 +257,12 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
   const [metricsErr, setMetricsErr] = useState('');
   const [metricsUpdated, setMetricsUpdated] = useState<number | null>(null);
   const metricSeq = useRef(0);
+  const [metricHistory, setMetricHistory] = useState<MetricSample[]>(() => loadMetricHistory(settings.baseUrl));
+  const [metricRange, setMetricRange] = useState<5 | 15 | 60>(15);
+  const [metricSort, setMetricSort] = useState<{ key: MetricSortKey; dir: 1 | -1 }>({ key: 'node', dir: 1 });
+  const [metricNode, setMetricNode] = useState<{ pipeline: string; node: string } | null>(null);
+  const metricHistoryRef = useRef(metricHistory);
+  metricHistoryRef.current = metricHistory;
 
   const [status, setStatus] = useState<any>(null);
   const [statusLoading, setStatusLoading] = useState(false);
@@ -196,7 +271,12 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
   const statusSeq = useRef(0);
 
   const [previewNonce, setPreviewNonce] = useState(0);
+  const videoElRef = useRef<HTMLVideoElement>(null);
   const [previewState, setPreviewState] = useState<LivePlayerStatus>('idle');
+  const [previewMeta, setPreviewMeta] = useState<LivePlayerMeta | null>(null);
+  const [previewAlerts, setPreviewAlerts] = useState<{ uid: string; ts: number; type?: string; level?: string }[]>([]);
+  const [streamLowLatency, setStreamLowLatency] = useState(true);
+  const [pipeBusy, setPipeBusy] = useState(false);
   const [copyHint, setCopyHint] = useState('');
 
   const refreshPipelines = useCallback(async (silent = false) => {
@@ -277,8 +357,10 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
       const r = await api.metrics(settings);
       if (seq !== metricSeq.current) return;
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const now = Date.now();
       setMetrics(r.json);
-      setMetricsUpdated(Date.now());
+      setMetricsUpdated(now);
+      setMetricHistory((prev) => [...prev, buildMetricSample(r.json, now)].slice(-720));
     } catch (e: any) {
       if (seq === metricSeq.current) setMetricsErr('指标加载失败：' + (e?.message || e));
     } finally {
@@ -318,7 +400,15 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
     setEvQuery('');
     setEvKind('all');
     setEvSelected(null);
+    setEvLimit(60);
+    setEvRange('all');
+    setEvChecked({});
   }, [sel]);
+
+  useEffect(() => {
+    setEvLimit(60);
+    setEvChecked({});
+  }, [evQuery, evKind, evRange]);
 
   useEffect(() => {
     statusSeq.current += 1;
@@ -340,6 +430,29 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
     const timer = window.setInterval(loadMetrics, 5000);
     return () => window.clearInterval(timer);
   }, [tab, loadMetrics]);
+
+  useEffect(() => {
+    setMetricHistory(loadMetricHistory(settings.baseUrl));
+    setMetricNode(null);
+  }, [settings.baseUrl]);
+
+  useEffect(() => {
+    const key = metricHistoryKey(settings.baseUrl);
+    const save = () => {
+      try {
+        localStorage.setItem(key, JSON.stringify(metricHistoryRef.current.slice(-720)));
+      } catch {
+        // 超出 localStorage 限制时忽略；页面内趋势仍可用
+      }
+    };
+    const timer = window.setInterval(save, 15000);
+    window.addEventListener('beforeunload', save);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('beforeunload', save);
+      save();
+    };
+  }, [settings.baseUrl]);
 
   useEffect(() => {
     if (tab !== 'status') return;
@@ -369,8 +482,29 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
     : '';
 
   useEffect(() => {
-    if (!isRunning) setPreviewState('idle');
+    if (!isRunning) {
+      setPreviewState('idle');
+      setPreviewMeta(null);
+    }
   }, [isRunning]);
+
+  useEffect(() => {
+    if (tab !== 'preview' || !sel) {
+      setPreviewAlerts([]);
+      return;
+    }
+    let alive = true;
+    const load = async () => {
+      const r = await api.alerts(settings, { pipeline: sel, limit: 5, offset: 0 });
+      if (alive && r.ok) setPreviewAlerts(Array.isArray(r.json?.items) ? r.json.items : []);
+    };
+    load();
+    const timer = window.setInterval(load, 10000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [tab, sel, settings]);
 
   const { rows: metricRows, system } = useMemo(() => normalizeMetrics(metrics), [metrics]);
   const metricGroups = useMemo(() => {
@@ -390,25 +524,50 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
   const avgFps = fpsRows.length
     ? fpsRows.reduce((sum, row) => sum + row.fps, 0) / fpsRows.length
     : null;
+  const trendSamples = useMemo(() => {
+    const cutoff = Date.now() - metricRange * 60_000;
+    return metricHistory.filter((sample) => sample.ts >= cutoff);
+  }, [metricHistory, metricRange]);
+  const lastTrend = trendSamples[trendSamples.length - 1];
 
   const evidenceItems = useMemo<EvItem[]>(() => {
     const query = evQuery.trim().toLowerCase();
+    const now = Date.now();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const cutoff = evRange === 'today'
+      ? today.getTime()
+      : evRange === '7d'
+        ? now - 7 * 864e5
+        : evRange === '30d'
+          ? now - 30 * 864e5
+          : 0;
     return files.map((file) => {
       const meta = parseEvidenceName(file.name);
+      const ts = file.mtime_ms && file.mtime_ms > 0 ? file.mtime_ms : meta.ts;
+      const timeText = ts ? new Date(ts).toLocaleString() : meta.timeText;
       const mediaKind: 'image' | 'video' = file.kind === 'video' || /\.(mp4|avi|mkv|mov|webm)$/i.test(file.name)
         ? 'video'
         : 'image';
-      return { ...file, ...meta, mediaKind, key: `${file.dir_index}/${file.name}` };
+      return { ...file, ...meta, ts, timeText, mediaKind, key: `${file.dir_index}/${file.name}` };
     }).filter((item) => {
       if (evKind !== 'all' && item.mediaKind !== evKind) return false;
+      if (cutoff > 0 && (!item.ts || item.ts < cutoff)) return false;
       if (!query) return true;
       return [item.name, item.typeLabel, item.timeText].some((text) => text.toLowerCase().includes(query));
     }).sort((a, b) => (b.ts ?? 0) - (a.ts ?? 0) || b.name.localeCompare(a.name));
-  }, [files, evKind, evQuery]);
+  }, [files, evKind, evQuery, evRange]);
+
+  const evCheckedItems = evidenceItems.filter((item) => evChecked[item.key]);
+
+  const visibleEvidenceItems = useMemo(
+    () => evidenceItems.slice(0, evLimit),
+    [evidenceItems, evLimit],
+  );
 
   const evidenceGroups = useMemo(() => {
     const map = new Map<string, { label: string; items: EvItem[] }>();
-    for (const item of evidenceItems) {
+    for (const item of visibleEvidenceItems) {
       const key = item.ts ? new Date(item.ts).toISOString().slice(0, 10) : 'unknown';
       const label = item.ts
         ? new Date(item.ts).toLocaleDateString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit' })
@@ -423,7 +582,7 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
         if (b.key === 'unknown') return -1;
         return b.key.localeCompare(a.key);
       });
-  }, [evidenceItems]);
+  }, [visibleEvidenceItems]);
 
   const copyStream = async () => {
     if (!streamUrl) return;
@@ -434,6 +593,58 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
       setCopyHint('复制失败');
     }
     window.setTimeout(() => setCopyHint(''), 2000);
+  };
+
+  const takeSnapshot = () => {
+    const video = videoElRef.current;
+    if (!video || !video.videoWidth) {
+      setPipeErr('截图失败：视频尚未就绪');
+      return;
+    }
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('canvas unavailable');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const link = document.createElement('a');
+      link.href = canvas.toDataURL('image/png');
+      link.download = `${sel || 'preview'}-${Date.now()}.png`;
+      link.click();
+    } catch (e: any) {
+      setPipeErr('截图失败：' + (e?.message || e));
+    }
+  };
+
+  const startPipeline = async () => {
+    if (!sel || pipeBusy) return;
+    setPipeBusy(true);
+    setPipeErr('');
+    try {
+      const r = await api.start(settings, sel);
+      if (!r.ok) throw new Error(r.json?.error || r.text || `HTTP ${r.status}`);
+      await refreshPipelines(true);
+    } catch (e: any) {
+      setPipeErr('启动失败：' + (e?.message || e));
+    } finally {
+      setPipeBusy(false);
+    }
+  };
+
+  const stopPipeline = async () => {
+    if (!sel || pipeBusy) return;
+    setPipeBusy(true);
+    setPipeErr('');
+    try {
+      const r = await api.stop(settings, sel);
+      if (!r.ok) throw new Error(r.json?.error || r.text || `HTTP ${r.status}`);
+      await refreshPipelines(true);
+    } catch (e: any) {
+      setPipeErr('停止失败：' + (e?.message || e));
+    } finally {
+      setPipeBusy(false);
+    }
   };
 
   const downloadEvidence = async (item: EvItem) => {
@@ -460,9 +671,26 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
     }
   };
 
+  const downloadSelectedEvidence = async () => {
+    const selected = evidenceItems.filter((item) => evChecked[item.key]);
+    if (!selected.length) return;
+    setEvBatchBusy(true);
+    try {
+      for (const item of selected) await downloadEvidence(item);
+    } finally {
+      setEvBatchBusy(false);
+    }
+  };
+
   const extraStatus = Object.entries(status || {}).filter(
     ([key]) => !['id', 'running', 'state', 'status'].includes(key),
   );
+
+  const toggleMetricSort = (key: MetricSortKey) => {
+    setMetricSort((current) => current.key === key
+      ? { key, dir: current.dir === 1 ? -1 : 1 }
+      : { key, dir: key === 'node' ? 1 : -1 });
+  };
 
   return (
     <div className="preview">
@@ -515,9 +743,10 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
                 title="管道未运行"
                 desc="启动管道后，实时预览会自动重新加载；当前不会显示播放器，避免误判为黑屏。"
                 icon="■"
+                action={<button className="btn sm primary" onClick={startPipeline} disabled={pipeBusy}>{pipeBusy ? '启动中…' : '启动管道'}</button>}
               />
             ) : !cur.play_url ? (
-              <StateBlock title="未配置播放地址" desc="在 sink 节点的“播放地址”里填入 HLS/WHEP 地址后重新构建。" icon="◇" />
+              <StateBlock title="未配置播放地址" desc="在 sink 节点的“播放地址”里填入 HLS 地址后重新构建。" icon="◇" />
             ) : (
               <>
                 <div className="pv-preview-head">
@@ -527,19 +756,35 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
                     <span className={'pv-live-status ' + previewState}>
                       {previewState === 'playing' ? '直播中' : previewState === 'error' ? '流异常' : previewState === 'connecting' ? '连接中' : ''}
                     </span>
+                    <span className="pv-meta">
+                      {previewMeta?.width ? `${previewMeta.width}×${previewMeta.height}` : '—'}
+                      {previewMeta?.bitrateKbps ? ` · ${previewMeta.bitrateKbps} kbps` : ''}
+                    </span>
                   </div>
                   <div className="pv-preview-actions">
                     {copyHint && <span className="pv-copy-hint">{copyHint}</span>}
+                    <button
+                      className={'btn tiny' + (streamLowLatency ? ' active' : '')}
+                      onClick={() => setStreamLowLatency((value) => !value)}
+                      title="低延迟模式对网络抖动更敏感；卡顿时切换稳定模式"
+                    >
+                      {streamLowLatency ? '低延迟' : '稳定'}
+                    </button>
+                    <button className="btn tiny" onClick={takeSnapshot}>截图</button>
                     <button className="btn tiny" onClick={() => setPreviewNonce((n) => n + 1)}>重连</button>
                     <button className="btn tiny" onClick={copyStream}>复制地址</button>
                     <a className="btn tiny" href={streamUrl} target="_blank" rel="noreferrer">打开流</a>
+                    <button className="btn tiny danger" onClick={stopPipeline} disabled={pipeBusy}>{pipeBusy ? '停止中…' : '停止'}</button>
                   </div>
                 </div>
                 <div className="pv-live-wrap">
                   <LivePlayer
                     key={`${cur.id}:${cur.play_url}:${cur.running}:${previewNonce}`}
                     url={cur.play_url}
+                    lowLatency={streamLowLatency}
                     onStatus={setPreviewState}
+                    onMeta={setPreviewMeta}
+                    videoRef={videoElRef}
                   />
                   {previewState === 'connecting' && (
                     <div className="pv-live-overlay"><span className="pv-spinner" />正在连接视频流…</div>
@@ -551,6 +796,26 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
                   <code>{cur.play_url}</code>
                   {previewState === 'error' && <span className="pv-foot-err">流异常，可尝试“重连”或检查播放地址。</span>}
                 </div>
+                {previewAlerts.length > 0 && (
+                  <div className="pv-events">
+                    <span className="pv-events-title">最近告警</span>
+                    {previewAlerts.map((alert) => (
+                      <button
+                        className="pv-event"
+                        key={alert.uid}
+                        onClick={() => {
+                          const params = new URLSearchParams({ pipeline: sel });
+                          location.hash = '#/alerts?' + params.toString();
+                        }}
+                        title={alert.uid}
+                      >
+                        <span className={'pv-event-dot ' + (alert.level || '')} />
+                        {EVIDENCE_LABELS[alert.type || ''] || alert.type || '告警'}
+                        <em>{alert.ts ? new Date(alert.ts).toLocaleTimeString() : '—'}</em>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -577,9 +842,27 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
                   </button>
                 ))}
               </div>
+              <select className="ev-range" value={evRange} onChange={(e) => setEvRange(e.target.value as typeof evRange)} aria-label="证据时间范围">
+                <option value="all">全部时间</option>
+                <option value="today">今天</option>
+                <option value="7d">近 7 天</option>
+                <option value="30d">近 30 天</option>
+              </select>
+              <button
+                className="btn tiny ghost"
+                onClick={() => setEvChecked(Object.fromEntries(visibleEvidenceItems.map((item) => [item.key, true])))}
+                disabled={visibleEvidenceItems.length === 0}
+              >
+                全选本页
+              </button>
+              {evCheckedItems.length > 0 && (
+                <button className="btn tiny" onClick={downloadSelectedEvidence} disabled={evBatchBusy}>
+                  {evBatchBusy ? '下载中…' : `下载选中 ${evCheckedItems.length}`}
+                </button>
+              )}
               <div className="spacer" />
               <span className="ev-count">
-                {evidenceItems.length} 条 · 更新 {fmtTime(filesUpdated)}
+                {visibleEvidenceItems.length}{visibleEvidenceItems.length < evidenceItems.length ? ` / ${evidenceItems.length}` : ''} 条 · 更新 {fmtTime(filesUpdated)}
               </span>
               <button className="btn tiny" onClick={loadEvidence} disabled={filesLoading}>
                 {filesLoading ? '刷新中…' : '刷新'}
@@ -609,7 +892,8 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
             ) : evidenceItems.length === 0 ? (
               <StateBlock title="没有匹配的证据" desc="试试清空搜索或切换图片/视频筛选。" icon="⌕" />
             ) : (
-              <div className="ev-days">
+              <>
+                <div className="ev-days">
                 {evidenceGroups.map((group) => (
                   <section className="ev-day" key={group.key}>
                     <div className="ev-day-title">
@@ -621,6 +905,14 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
                         const url = api.evidenceFileUrl(settings, sel, item.dir_index, item.name);
                         return (
                           <article className="ev-card" key={item.key}>
+                            <label className="ev-select" onClick={(e) => e.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                checked={!!evChecked[item.key]}
+                                onChange={(e) => setEvChecked((current) => ({ ...current, [item.key]: e.target.checked }))}
+                                aria-label={`选择 ${item.typeLabel} 证据`}
+                              />
+                            </label>
                             <button
                               className="ev-card-media"
                               onClick={() => setEvSelected(item)}
@@ -647,6 +939,18 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
                                 >
                                   {downloading === item.key ? '下载中…' : '下载'}
                                 </button>
+                                {item.typeKey && (
+                                  <button
+                                    className="btn tiny ghost"
+                                    title={`查看 ${item.typeLabel} 告警记录`}
+                                    onClick={() => {
+                                      const params = new URLSearchParams({ pipeline: sel, q: item.typeLabel });
+                                      location.hash = '#/alerts?' + params.toString();
+                                    }}
+                                  >
+                                    告警
+                                  </button>
+                                )}
                               </div>
                             </div>
                           </article>
@@ -655,7 +959,15 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
                     </div>
                   </section>
                 ))}
-              </div>
+                </div>
+                {evidenceItems.length > evLimit && (
+                  <div className="ev-more">
+                    <button className="btn sm" onClick={() => setEvLimit((n) => n + 60)}>
+                      加载更多（剩余 {evidenceItems.length - evLimit}）
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}
@@ -691,7 +1003,51 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
                   <Kpi label="总丢帧" value={String(totalDrops)} sub="累计 dropped_packets" tone={totalDrops > 0 ? 'warn' : 'ok'} />
                   <Kpi label="平均 FPS" value={avgFps != null ? avgFps.toFixed(1) : '—'} sub="仅统计 FPS > 0 的节点" />
                   <Kpi label="CPU" value={system.cpu_percent != null ? `${system.cpu_percent}%` : '—'} sub="system.cpu_percent" />
-                  <Kpi label="GPU 显存" value={system.gpu_memory_mb != null ? (system.gpu_memory_mb >= 1024 ? `${(system.gpu_memory_mb / 1024).toFixed(1)} GB` : `${system.gpu_memory_mb} MB`) : '—'} sub="system.gpu_memory_mb" />
+                  <Kpi label="GPU 显存" value={system.gpu_memory_mb != null ? gpuText(system.gpu_memory_mb) : '—'} sub="system.gpu_memory_mb" />
+                </div>
+
+                <div className="pv-trend-head">
+                  <div>
+                    <h3>趋势</h3>
+                    <span className="pv-sub">最近 {metricRange} 分钟 · 每 5 秒采样</span>
+                  </div>
+                  <div className="pv-range">
+                    {[5, 15, 60].map((minutes) => (
+                      <button
+                        key={minutes}
+                        className={'pv-range-btn' + (metricRange === minutes ? ' on' : '')}
+                        onClick={() => setMetricRange(minutes as 5 | 15 | 60)}
+                      >
+                        {minutes} 分钟
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="pv-trends">
+                  <TrendCard
+                    title="CPU"
+                    value={lastTrend ? `${lastTrend.cpu}%` : '—'}
+                    values={trendSamples.map((sample) => sample.cpu)}
+                    color="var(--warn)"
+                  />
+                  <TrendCard
+                    title="GPU 显存"
+                    value={lastTrend ? gpuText(lastTrend.gpu) : '—'}
+                    values={trendSamples.map((sample) => sample.gpu)}
+                    color="var(--primary)"
+                  />
+                  <TrendCard
+                    title="平均 FPS"
+                    value={lastTrend?.fps != null ? lastTrend.fps.toFixed(1) : '—'}
+                    values={trendSamples.map((sample) => sample.fps ?? 0)}
+                    color="var(--node-run)"
+                  />
+                  <TrendCard
+                    title="总丢帧"
+                    value={lastTrend ? String(lastTrend.drops) : '—'}
+                    values={trendSamples.map((sample) => sample.drops)}
+                    color="var(--danger)"
+                  />
                 </div>
 
                 {metricGroups.length === 0 ? (
@@ -707,6 +1063,14 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
                       const pipeline = pipelines.find((p) => p.id === pid);
                       const known = !!pipeline;
                       const drops = items.reduce((sum, row) => sum + row.dropped, 0);
+                      const sortedItems = [...items].sort((a, b) => {
+                        const av = metricSortValue(a, metricSort.key);
+                        const bv = metricSortValue(b, metricSort.key);
+                        if (typeof av === 'string' || typeof bv === 'string') {
+                          return String(av).localeCompare(String(bv)) * metricSort.dir;
+                        }
+                        return (av - bv) * metricSort.dir;
+                      });
                       return (
                         <section className={'pv-metric-group' + (pid === sel ? ' selected' : '')} key={pid}>
                           <div className="pv-metric-head">
@@ -723,16 +1087,27 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
                             <table className="pv-table" aria-label={`${pid} 节点指标`}>
                               <thead>
                                 <tr>
-                                  <th>节点</th>
-                                  <th>FPS</th>
-                                  <th>包数</th>
-                                  <th>丢帧</th>
-                                  <th>延迟(ms)</th>
+                                  <th className="sortable" onClick={() => toggleMetricSort('node')}>节点{sortMark(metricSort.key === 'node', metricSort.dir)}</th>
+                                  <th className="sortable" onClick={() => toggleMetricSort('fps')}>FPS{sortMark(metricSort.key === 'fps', metricSort.dir)}</th>
+                                  <th className="sortable" onClick={() => toggleMetricSort('total')}>包数{sortMark(metricSort.key === 'total', metricSort.dir)}</th>
+                                  <th className="sortable" onClick={() => toggleMetricSort('dropped')}>丢帧{sortMark(metricSort.key === 'dropped', metricSort.dir)}</th>
+                                  <th className="sortable" onClick={() => toggleMetricSort('latency')}>延迟(ms){sortMark(metricSort.key === 'latency', metricSort.dir)}</th>
                                 </tr>
                               </thead>
                               <tbody>
-                                {items.map((row, index) => (
-                                  <tr key={`${row.pipeline}-${row.node}-${index}`}>
+                                {sortedItems.map((row, index) => (
+                                  <tr
+                                    key={`${row.pipeline}-${row.node}-${index}`}
+                                    className="pv-row-click"
+                                    tabIndex={0}
+                                    onClick={() => setMetricNode({ pipeline: row.pipeline, node: row.node })}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault();
+                                        setMetricNode({ pipeline: row.pipeline, node: row.node });
+                                      }
+                                    }}
+                                  >
                                     <td className="pv-node-name">{row.node}</td>
                                     <td>{row.fps.toFixed(1)}</td>
                                     <td>{row.total}</td>
@@ -838,6 +1213,15 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
           onDownload={() => downloadEvidence(evSelected)}
         />
       )}
+      {metricNode && (
+        <MetricNodeDrawer
+          pipeline={metricNode.pipeline}
+          node={metricNode.node}
+          current={metricRows.find((row) => row.pipeline === metricNode.pipeline && row.node === metricNode.node) || null}
+          history={metricHistory}
+          onClose={() => setMetricNode(null)}
+        />
+      )}
     </div>
   );
 }
@@ -864,6 +1248,40 @@ function Kpi({ label, value, sub, tone }: {
       <div className="pv-kpi-value">{value}</div>
       {sub && <div className="pv-kpi-sub">{sub}</div>}
     </div>
+  );
+}
+
+function TrendCard({ title, value, values, color }: {
+  title: string; value: string; values: number[]; color: string;
+}) {
+  return (
+    <div className="pv-trend-card">
+      <div className="pv-trend-top">
+        <span>{title}</span>
+        <b>{value}</b>
+      </div>
+      <Sparkline values={values} color={color} />
+      <div className="pv-trend-sub">{values.length > 1 ? `${values.length} 个采样点` : '等待采样…'}</div>
+    </div>
+  );
+}
+
+function Sparkline({ values, color }: { values: number[]; color: string }) {
+  if (values.length < 2) return <div className="pv-spark-empty">—</div>;
+  const width = 240;
+  const height = 44;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const points = values.map((value, index) => {
+    const x = (index / (values.length - 1)) * width;
+    const y = height - 4 - ((value - min) / span) * (height - 8);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  return (
+    <svg className="pv-spark" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true">
+      <polyline points={points} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke" />
+    </svg>
   );
 }
 
@@ -904,6 +1322,53 @@ function EvThumb({ url, token, alt }: { url: string; token: string; alt: string 
   );
 }
 
+function MetricNodeDrawer({ pipeline, node, current, history, onClose }: {
+  pipeline: string; node: string; current: MetricRow | null; history: MetricSample[]; onClose: () => void;
+}) {
+  useEffect(() => {
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = previous;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [onClose]);
+
+  const samples = history
+    .map((sample) => (Array.isArray(sample.nodes) ? sample.nodes.find((row) => row.pipeline === pipeline && row.node === node) : undefined))
+    .filter((row): row is MetricRow => !!row);
+  const fpsValues = samples.map((row) => row.fps);
+  const dropValues = samples.map((row) => row.dropped);
+  const latencyValues = samples.map((row) => row.latencyAvg ?? row.latencyMax ?? 0);
+
+  return (
+    <div className="pv-drawer-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <aside className="pv-drawer" role="dialog" aria-modal="true" aria-label={`${node} 节点详情`}>
+        <div className="pv-drawer-head">
+          <div>
+            <div className="pv-drawer-title">{node}</div>
+            <div className="pv-drawer-sub">{pipeline}</div>
+          </div>
+          <button className="btn sm ghost" onClick={onClose}>关闭</button>
+        </div>
+        <div className="pv-drawer-kpis">
+          <Kpi label="FPS" value={current ? current.fps.toFixed(1) : '—'} />
+          <Kpi label="包数" value={current ? String(current.total) : '—'} />
+          <Kpi label="丢帧" value={current ? dropText(current) : '—'} tone={current && current.dropped > 0 ? 'warn' : 'ok'} />
+          <Kpi label="延迟(ms)" value={current ? latencyText(current) : '—'} />
+        </div>
+        <div className="pv-drawer-trends">
+          <TrendCard title="FPS 趋势" value={fpsValues.length ? fpsValues[fpsValues.length - 1].toFixed(1) : '—'} values={fpsValues} color="var(--node-run)" />
+          <TrendCard title="丢帧趋势" value={dropValues.length ? String(dropValues[dropValues.length - 1]) : '—'} values={dropValues} color="var(--danger)" />
+          <TrendCard title="延迟趋势" value={latencyValues.length ? latencyValues[latencyValues.length - 1].toFixed(1) : '—'} values={latencyValues} color="var(--warn)" />
+        </div>
+      </aside>
+    </div>
+  );
+}
+
 function EvidenceModal({ item, settings, pipeline, downloading, onClose, onDownload }: {
   item: EvItem; settings: ApiSettings; pipeline: string; downloading: boolean;
   onClose: () => void; onDownload: () => void;
@@ -921,7 +1386,7 @@ function EvidenceModal({ item, settings, pipeline, downloading, onClose, onDownl
         </div>
         <div className="ev-modal-media">
           {item.mediaKind === 'video'
-            ? <MediaVideo className="ev-modal-video" url={url} token={settings.token} />
+            ? <StreamVideo className="ev-modal-video" url={url} token={settings.token} />
             : <MediaImg className="ev-modal-img" url={url} token={settings.token} alt={item.name} />}
         </div>
         <div className="ev-modal-foot">

@@ -1,18 +1,28 @@
 import { useEffect, useRef, useState } from 'react';
+import type { MouseEventHandler, RefObject } from 'react';
 import Hls from 'hls.js';
 
 export type LivePlayerStatus = 'idle' | 'connecting' | 'playing' | 'error';
+export interface LivePlayerMeta {
+  width: number;
+  height: number;
+  bitrateKbps: number | null;
+}
 
 // 实时预览播放器：HLS(.m3u8) 用 hls.js，原生 mp4/webm 用 <video>，其余提示
 // 网络/清单致命错误时自动重试（流刚启动时清单可能还没生成），避免一挂载就"无信号"卡死
-export function LivePlayer({ url, compact = false, onStatus }: {
+export function LivePlayer({ url, compact = false, onStatus, onMeta, lowLatency = true, videoRef }: {
   url: string; compact?: boolean; onStatus?: (status: LivePlayerStatus) => void;
+  onMeta?: (meta: LivePlayerMeta) => void; lowLatency?: boolean; videoRef?: RefObject<HTMLVideoElement>;
 }) {
-  const ref = useRef<HTMLVideoElement>(null);
+  const localRef = useRef<HTMLVideoElement>(null);
+  const ref = videoRef || localRef;
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
   const statusRef = useRef(onStatus);
   statusRef.current = onStatus;
+  const metaRef = useRef(onMeta);
+  metaRef.current = onMeta;
   useEffect(() => {
     const v = ref.current; setError('');
     if (!v || !url) return;
@@ -20,16 +30,31 @@ export function LivePlayer({ url, compact = false, onStatus }: {
     let hls: Hls | null = null;
     let retryTimer: number | undefined;
     let disposed = false;
-    const onPlaying = () => statusRef.current?.('playing');
+    const reportMeta = () => {
+      if (!v) return;
+      const level = hls?.levels?.[0];
+      metaRef.current?.({
+        width: v.videoWidth || 0,
+        height: v.videoHeight || 0,
+        bitrateKbps: level?.bitrate ? Math.round(level.bitrate / 1000) : null,
+      });
+    };
+    const onPlaying = () => { statusRef.current?.('playing'); reportMeta(); };
     const onVideoError = () => statusRef.current?.('error');
+    const onLoadedMeta = () => reportMeta();
     v.addEventListener('playing', onPlaying);
     v.addEventListener('error', onVideoError);
+    v.addEventListener('loadedmetadata', onLoadedMeta);
     const isHls = url.includes('.m3u8');
     if (isHls && Hls.isSupported()) {
-      hls = new Hls({ lowLatencyMode: true, enableWorker: true });
+      hls = new Hls({ lowLatencyMode: lowLatency, enableWorker: true });
       hls.loadSource(url);
       hls.attachMedia(v);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => { v.play().catch(() => { /* 自动播放可能被拦 */ }); });
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        v.play().catch(() => { /* 自动播放可能被拦 */ });
+        reportMeta();
+      });
+      hls.on(Hls.Events.LEVEL_SWITCHED, reportMeta);
       hls.on(Hls.Events.ERROR, (_e, data) => {
         if (!data.fatal) return;
         // 网络/清单错误：流可能刚启动未就绪 → 自动重试（最多 8 次，间隔 2.5s）
@@ -56,10 +81,11 @@ export function LivePlayer({ url, compact = false, onStatus }: {
       disposed = true;
       v.removeEventListener('playing', onPlaying);
       v.removeEventListener('error', onVideoError);
+      v.removeEventListener('loadedmetadata', onLoadedMeta);
       if (retryTimer) clearTimeout(retryTimer);
       hls?.destroy();
     };
-  }, [url, attempt]);
+  }, [url, attempt, lowLatency]);
   if (!url) return <div className="pv-empty">该管道未配置 play_url（在 sink 节点填"播放地址"）</div>;
   if (compact) {
     return (
@@ -77,8 +103,8 @@ export function LivePlayer({ url, compact = false, onStatus }: {
   );
 }
 
-// 用 fetch + Authorization 拉取受保护媒体为 Blob URL（绕开 <img>/<video> 无法带头、
-// 以及本版本 httplib 对开区间 Range 生成畸形 Content-Range 的问题）。
+// 用 fetch + Authorization 拉取受保护图片为 Blob URL（<img> 无法带 Authorization 头；
+// 证据视频优先走 StreamVideo 的 Range 流式播放，失败时再回退到这里）。
 export function useAuthBlobUrl(url: string, token: string): string {
   const [obj, setObj] = useState('');
   useEffect(() => {
@@ -95,7 +121,7 @@ export function useAuthBlobUrl(url: string, token: string): string {
 }
 
 export function MediaImg({ url, token, className, alt, onClick }: {
-  url: string; token: string; className?: string; alt?: string; onClick?: () => void;
+  url: string; token: string; className?: string; alt?: string; onClick?: MouseEventHandler<HTMLElement>;
 }) {
   const u = useAuthBlobUrl(url, token);
   if (!u) return <div className={className} style={{ background: '#000' }} onClick={onClick} />;
@@ -108,4 +134,27 @@ export function MediaVideo({ url, token, className }: {
   const u = useAuthBlobUrl(url, token);
   if (!u) return <div className={className} style={{ background: '#000', minHeight: 60 }} />;
   return <video className={className} src={u} controls autoPlay muted playsInline />;
+}
+
+// 直接带 ?t=<token> 播放，走后端 Range/流式响应，适合较长的证据视频；
+// 后端对 evidence/file 与 alerts/file 的 GET 允许查询参数鉴权。
+export function StreamVideo({ url, token, className }: {
+  url: string; token: string; className?: string;
+}) {
+  const [fallback, setFallback] = useState(false);
+  if (fallback) return <MediaVideo className={className} url={url} token={token} />;
+  const src = token
+    ? `${url}${url.includes('?') ? '&' : '?'}t=${encodeURIComponent(token)}`
+    : url;
+  return (
+    <video
+      className={className}
+      src={src}
+      controls
+      autoPlay
+      muted
+      playsInline
+      onError={() => setFallback(true)}
+    />
+  );
 }

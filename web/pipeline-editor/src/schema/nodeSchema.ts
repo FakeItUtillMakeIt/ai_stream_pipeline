@@ -191,7 +191,7 @@ export const SCHEMA: Record<string, NodeTypeDef> = {
     label: 'RTMP推流', category: 'sink', color: '#e80',
     fields: {
       output_url: { type: 'string', label: '推流地址', required: true, hint: 'rtmp://...' },
-      play_url: { type: 'string', label: '播放地址(HLS/WebRTC)', hint: '示例 mediamtx HLS: http://<IP>:8888/live/<stream>/index.m3u8 ｜ WebRTC(WHEP): http://<IP>:8885/live/<stream>/whep ｜ nginx-rtmp HLS: http://<IP>:<port>/live/<stream>.m3u8' },
+      play_url: { type: 'string', label: '播放地址(HLS)', hint: '示例 mediamtx HLS: http://<IP>:8888/live/<stream>/index.m3u8 ｜ 预览页当前支持 HLS(.m3u8) 与 mp4；WHEP/WebRTC 暂未接入' },
       encoder: { type: 'enum', label: '编码器', values: ['libx264', 'h264_nvenc', 'auto'] },
       bitrate: { type: 'int', label: '码率(kbps)', default: 4000 },
       output_width: { type: 'int', label: '输出宽', default: 1280 },

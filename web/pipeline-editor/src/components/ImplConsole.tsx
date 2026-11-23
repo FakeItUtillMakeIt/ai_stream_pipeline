@@ -128,7 +128,7 @@ function CardPreview({ url }: { url: string }) {
 
 export default function ImplConsole({ settings, setSettings, role, onOpenPreview, onOpenAlerts, onBackToDev }: {
   settings: ApiSettings; setSettings: (s: ApiSettings) => void; role: 'dev' | 'impl' | 'anon' | 'unknown';
-  onOpenPreview: (id: string, tab?: 'preview' | 'evidence') => void; onOpenAlerts: (id?: string) => void; onBackToDev: () => void;
+  onOpenPreview: (id: string, tab?: 'preview' | 'evidence' | 'metrics') => void; onOpenAlerts: (id?: string) => void; onBackToDev: () => void;
 }) {
   const [insts, setInsts] = useState<Inst[]>([]);
   const [err, setErr] = useState('');
@@ -138,6 +138,7 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
   const [tpls, setTpls] = useState<{ name: string; version: string; description: string }[]>([]);
   const [pickTpl, setPickTpl] = useState<{ name: string; version: string; description: string }[] | null>(null);
   const [viewMode, setViewMode] = useState<'card' | 'list'>(() => (localStorage.getItem('implViewMode') === 'list' ? 'list' : 'card'));
+  const [sys, setSys] = useState({ ok: false, cpu: 0, gpu: 0 });
   const [fStatus, setFStatus] = useState('all');   // all|running|load_failed|pending
   const [fPush, setFPush] = useState('all');        // all|on|off
   const [fQ, setFQ] = useState('');
@@ -153,6 +154,23 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
     setTpls(t); return t;
   };
   useEffect(() => { loadTpls(); /* eslint-disable-next-line */ }, [settings.baseUrl, settings.token]);
+
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      const [h, m] = await Promise.all([api.health(settings), api.metrics(settings)]);
+      if (!alive) return;
+      const system = m.ok ? (m.json?.system || {}) : {};
+      setSys({
+        ok: h.ok,
+        cpu: Number(system.cpu_percent) || 0,
+        gpu: Number(system.gpu_memory_mb) || 0,
+      });
+    };
+    load();
+    const timer = window.setInterval(load, 5000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, [settings.baseUrl, settings.token]);
 
   const fetchSc = async (id: string) => {
     setInsts((prev) => prev.map((p) => (p.id === id ? { ...p, scBusy: true } : p)));
@@ -315,6 +333,9 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
         运行中 <b style={{ color: 'var(--ok)' }}>{insts.filter((i) => i.info.state === 'running').length}</b> ·
         异常 <b style={{ color: 'var(--err)' }}>{insts.filter((i) => i.info.state === 'load_failed').length}</b> ·
         待部署 <b style={{ color: 'var(--muted)' }}>{insts.filter((i) => i.info.state !== 'running' && i.info.state !== 'load_failed').length}</b>
+        · API <b style={{ color: sys.ok ? 'var(--ok)' : 'var(--err)' }}>{sys.ok ? '正常' : '异常'}</b>
+        · CPU <b>{sys.cpu}%</b>
+        · GPU <b>{sys.gpu >= 1024 ? `${(sys.gpu / 1024).toFixed(1)} GB` : `${sys.gpu} MB`}</b>
       </div>
 
       <div className="impl-filter">
@@ -339,6 +360,13 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
           return (
             <div key={i.id} className={'impl-card' + (i.info.state === 'load_failed' ? ' st-err' : sc.some((x) => x.level === 'err') ? ' st-err' : sc.some((x) => x.level === 'warn') ? ' st-warn' : '')}>
               <div className="impl-ch">
+                <input
+                  className="impl-chk"
+                  type="checkbox"
+                  checked={!!sel[i.id]}
+                  onChange={(e) => setSel((current) => ({ ...current, [i.id]: e.target.checked }))}
+                  aria-label={`选择 ${i.id}`}
+                />
                 <div><div className="impl-name">{i.id}</div><div className="impl-tpl">child_intrusion_fighting_fusion</div></div>
                 <span className={'impl-st ' + i.info.state}><span className="impl-dot" />{b ? b + '…' : stateText(i.info.state)}</span>
               </div>
@@ -373,6 +401,7 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
                 <button className="btn sm" onClick={() => openEdit(i)} disabled={!i.doc}>配置</button>
                 {i.push && <button className="btn sm" onClick={() => onOpenPreview(i.id, 'preview')}>预览</button>}
                 <button className="btn sm" onClick={() => onOpenPreview(i.id, 'evidence')}>证据</button>
+                <button className="btn sm" onClick={() => onOpenPreview(i.id, 'metrics')}>指标</button>
                 {i.info.state !== 'running' && <button className="btn sm danger" onClick={() => doDel(i.id)}>删除</button>}
                 {role === 'dev' && <button className="btn sm" onClick={() => setLogsFor(i.id)}>日志</button>}
               </div>
@@ -419,6 +448,7 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
                       <button className="btn sm" onClick={() => openEdit(i)} disabled={!i.doc}>配置</button>
                       {i.push && <button className="btn sm" onClick={() => onOpenPreview(i.id, 'preview')}>预览</button>}
                       <button className="btn sm" onClick={() => onOpenPreview(i.id, 'evidence')}>证据</button>
+                      <button className="btn sm" onClick={() => onOpenPreview(i.id, 'metrics')}>指标</button>
                       {i.info.state !== 'running' && <button className="btn sm danger" onClick={() => doDel(i.id)}>删除</button>}
                       {role === 'dev' && <button className="btn sm" onClick={() => setLogsFor(i.id)}>日志</button>}
                     </div></td>
@@ -427,17 +457,18 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
               })}
             </tbody>
           </table>
-          {selIds.length > 0 && (
-            <div className="ilbulk">
-              <span>已选 <b>{selIds.length}</b> 项</span>
-              <button className="btn sm primary" onClick={() => bulk('build')}>批量 Build</button>
-              <button className="btn sm" onClick={() => bulk('start')}>批量 Start</button>
-              <button className="btn sm" onClick={() => bulk('stop')}>批量 Stop</button>
-              <button className="btn sm danger" onClick={() => bulk('del')}>批量删除</button>
-              <div className="spacer" />
-              <button className="btn sm ghost" onClick={() => setSel({})}>取消选择</button>
-            </div>
-          )}
+        </div>
+      )}
+
+      {selIds.length > 0 && (
+        <div className="ilbulk">
+          <span>已选 <b>{selIds.length}</b> 项</span>
+          <button className="btn sm primary" onClick={() => bulk('build')}>批量 Build</button>
+          <button className="btn sm" onClick={() => bulk('start')}>批量 Start</button>
+          <button className="btn sm" onClick={() => bulk('stop')}>批量 Stop</button>
+          <button className="btn sm danger" onClick={() => bulk('del')}>批量删除</button>
+          <div className="spacer" />
+          <button className="btn sm ghost" onClick={() => setSel({})}>取消选择</button>
         </div>
       )}
 
