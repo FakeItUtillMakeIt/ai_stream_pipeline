@@ -549,9 +549,20 @@ void ApiServer::handleEvidenceList(const httplib::Request& req, httplib::Respons
             f["name"] = name;
             f["kind"] = evidenceKind(name);
             f["size"] = static_cast<long long>(entry.file_size(ec));
+            const auto ft = entry.last_write_time(ec);
+            if (!ec) {
+                const auto sctp = std::chrono::time_point_cast<std::chrono::milliseconds>(
+                    ft - fs::file_time_type::clock::now() + std::chrono::system_clock::now());
+                f["mtime_ms"] = sctp.time_since_epoch().count();
+            } else {
+                f["mtime_ms"] = 0;
+            }
             files.push_back(std::move(f));
         }
     }
+    std::sort(files.begin(), files.end(), [](const json& a, const json& b) {
+        return a.value("mtime_ms", (int64_t)0) > b.value("mtime_ms", (int64_t)0);
+    });
     json resp = {{"pipeline", id}, {"play_url", m.play_url}, {"files", files}};
     res.set_content(resp.dump(), "application/json");
 }
@@ -587,7 +598,34 @@ void ApiServer::handleEvidenceFile(const httplib::Request& req, httplib::Respons
     std::ifstream in(absFull, std::ios::binary);
     if (!in) { res.status = 404; res.set_content(R"({"error":"not found"})", "application/json"); return; }
     std::stringstream ss; ss << in.rdbuf();
-    res.set_content(ss.str(), evidenceMime(name));   // set_content 第一参数是"响应体"，须先把文件读进内存
+    const std::string content = ss.str();
+
+    // httplib 的 apply_ranges() 会原样使用 Range 里的 -1 作为开区间结束值，
+    // 生成 "bytes 0-/total" / "bytes -N/total" 这类浏览器不接受的 Content-Range。
+    // 在交给 httplib 之前把开区间/后缀区间规范成闭区间。
+    const auto total = static_cast<ssize_t>(content.size());
+    auto& ranges = const_cast<httplib::Request&>(req).ranges;
+    for (auto& range : ranges) {
+        if (range.first == -1 && range.second != -1) {
+            range.first = std::max<ssize_t>(0, total - range.second);
+            range.second = total - 1;
+        } else if (range.first != -1 && range.second == -1) {
+            range.second = total - 1;
+        }
+    }
+    if (ranges.size() == 1) {
+        const auto& range = ranges.front();
+        if (range.first < 0 || range.first >= total || range.second < range.first) {
+            ranges.clear();
+            res.status = 416;
+            res.set_header("Content-Range", "bytes */" + std::to_string(total));
+            res.set_header("Accept-Ranges", "bytes");
+            res.set_content("", evidenceMime(name));
+            return;
+        }
+    }
+    res.set_header("Accept-Ranges", "bytes");
+    res.set_content(content, evidenceMime(name));   // httplib 按规范化后的 ranges 切片
 }
 
 void ApiServer::handleAlertsList(const httplib::Request& req, httplib::Response& res) {

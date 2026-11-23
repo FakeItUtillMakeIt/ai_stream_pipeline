@@ -238,12 +238,53 @@ void AlertStore::persistProcLocked() {
 json AlertStore::stats(const std::string& pipeline) {
     std::lock_guard<std::mutex> lk(m_);
     json s = {{"new", 0}, {"ack", 0}, {"dismiss", 0}, {"resolve", 0}, {"total", 0}};
+    std::map<std::string, int> type_counts;
+    std::map<std::string, int> decision_counts;
+    std::map<std::string, int> day_counts;
     for (const auto& r : recs_) {
         if (!pipeline.empty() && r.value("pipeline", "") != pipeline) continue;
         s["total"] = s["total"].get<int>() + 1;
         std::string p = r.value("proc", "new");
         if (s.contains(p)) s[p] = s[p].get<int>() + 1;
+
+        std::string type = r.value("type", "");
+        if (type.empty() && r.contains("alert") && r["alert"].is_object()) {
+            type = r["alert"].value("alert_type_name", "");
+        }
+        if (!type.empty()) type_counts[type]++;
+
+        std::string dec = "none";
+        if (r.contains("post_gate") && r["post_gate"].is_object()) {
+            const std::string d = r["post_gate"].value("decision", "");
+            if (!d.empty()) dec = d;
+        }
+        decision_counts[dec]++;
+
+        const int64_t ts = r.value("ts", (int64_t)0);
+        if (ts > 0) {
+            std::time_t tt = static_cast<std::time_t>(ts / 1000);
+            std::tm lt{};
+            localtime_r(&tt, &lt);
+            char buf[16];
+            std::strftime(buf, sizeof(buf), "%Y-%m-%d", &lt);
+            day_counts[buf]++;
+        }
     }
+    s["types"] = type_counts;
+    s["decisions"] = decision_counts;
+
+    json daily = json::array();
+    const auto now = std::chrono::system_clock::now();
+    for (int offset = 6; offset >= 0; --offset) {
+        const auto tp = now - std::chrono::hours(24 * offset);
+        const std::time_t tt = std::chrono::system_clock::to_time_t(tp);
+        std::tm lt{};
+        localtime_r(&tt, &lt);
+        char buf[16];
+        std::strftime(buf, sizeof(buf), "%Y-%m-%d", &lt);
+        daily.push_back({{"date", buf}, {"count", day_counts[buf]}});
+    }
+    s["daily"] = daily;
     return s;
 }
 

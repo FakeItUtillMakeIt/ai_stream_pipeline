@@ -256,7 +256,7 @@
 - `GET /api/v1/alerts?pipeline=&type=&proc=&decision=&from=&to=&q=&limit=&offset=` → `{total, items[]}`（新→旧）
   - `proc ∈ all|new|ack|dismiss|resolve`；`decision ∈ all|PUSH|HOLD|DROP|PASSTHROUGH|none`（`none`=无 post_gate）；`from/to` epoch 毫秒；`q` 匹配 描述/类型/管道；`limit/offset` 分页。
 - `POST /api/v1/alerts/ack` → `{uid, proc, note?, by?}`；非法 proc `400`，不存在 `404`。
-- `GET /api/v1/alerts/stats?pipeline=` → `{new,ack,dismiss,resolve,total}`
+- `GET /api/v1/alerts/stats?pipeline=` → `{new,ack,dismiss,resolve,total,types,decisions,daily}`（`daily` 为最近 7 天日期/数量，`types` 为告警类型分布）
 - `GET /api/v1/alerts/file?path=` → 取告警快照（限服务器运行目录内，越界 `403`；Range 由 httplib 处理）
 
 > 前端 `#/alerts`：时间线 + 过滤(管道/类型/处理状态/**闸门判决**/时间/搜索) + 每行显示「① 触发(证据) / ② 闸门(PUSH/HOLD/DROP+conf)」前后对比 + 缩略图 + 确认/误报/已解决 + 详情 JSON。
@@ -270,8 +270,8 @@
 列出该管道 `evidence_dirs` 内的证据文件（快照图 / 录像片段）：
 ```json
 {"pipeline": "my_pipeline", "play_url": "...", "files": [
-  {"dir_index": 0, "name": "alert_1.jpg", "kind": "image", "size": 88123},
-  {"dir_index": 0, "name": "fight_2.mp4", "kind": "video", "size": 456789}
+  {"dir_index": 0, "name": "alert_1.jpg", "kind": "image", "size": 88123, "mtime_ms": 1795417200000},
+  {"dir_index": 0, "name": "fight_2.mp4", "kind": "video", "size": 456789, "mtime_ms": 1795417260000}
 ]}
 ```
 目录不存在或管道无证据配置 → `files` 为空数组。`kind ∈ image | video | other`。
