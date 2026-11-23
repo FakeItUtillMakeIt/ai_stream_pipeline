@@ -499,6 +499,17 @@ void ApiServer::extractMeta(const std::string& pipeline_id, const json& body) {
                     };
                     if (params.contains("video")) addDir(params["video"]);
                     if (params.contains("snapshot")) addDir(params["snapshot"]);
+                    // rollover 未配置时 evidence 节点默认 24h；显式 enabled=false 表示不清理
+                    int retention = 24;
+                    if (params.contains("rollover") && params["rollover"].is_object()) {
+                        const auto& r = params["rollover"];
+                        if (r.contains("enabled") && r["enabled"].is_boolean() && !r["enabled"].get<bool>()) {
+                            retention = 0;
+                        } else if (r.contains("retention_hours") && r["retention_hours"].is_number_integer()) {
+                            retention = std::max(0, r["retention_hours"].get<int>());
+                        }
+                    }
+                    m.retention_hours = std::max(m.retention_hours, retention);
                 }
             }
         }
@@ -563,7 +574,48 @@ void ApiServer::handleEvidenceList(const httplib::Request& req, httplib::Respons
     std::sort(files.begin(), files.end(), [](const json& a, const json& b) {
         return a.value("mtime_ms", (int64_t)0) > b.value("mtime_ms", (int64_t)0);
     });
-    json resp = {{"pipeline", id}, {"play_url", m.play_url}, {"files", files}};
+
+    std::string kind = req.get_param_value("kind");
+    if (kind == "all") kind.clear();
+    std::string query = req.get_param_value("q");
+    std::transform(query.begin(), query.end(), query.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    const int64_t from_ms = std::atoll(req.get_param_value("from").c_str());
+    const int64_t to_ms = std::atoll(req.get_param_value("to").c_str());
+    const int limit = req.get_param_value("limit").empty()
+        ? 0 : std::max(0, std::atoi(req.get_param_value("limit").c_str()));
+    const int offset = std::max(0, std::atoi(req.get_param_value("offset").c_str()));
+
+    json filtered = json::array();
+    for (const auto& f : files) {
+        if (!kind.empty() && f.value("kind", "") != kind) continue;
+        const int64_t mtime = f.value("mtime_ms", (int64_t)0);
+        if (from_ms > 0 && mtime < from_ms) continue;
+        if (to_ms > 0 && mtime > to_ms) continue;
+        if (!query.empty()) {
+            std::string name = f.value("name", "");
+            std::transform(name.begin(), name.end(), name.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            if (name.find(query) == std::string::npos) continue;
+        }
+        filtered.push_back(f);
+    }
+
+    const int total = static_cast<int>(filtered.size());
+    json page = json::array();
+    for (int i = offset; i < total && (limit <= 0 || static_cast<int>(page.size()) < limit); ++i) {
+        page.push_back(filtered[i]);
+    }
+    const bool has_more = offset + static_cast<int>(page.size()) < total;
+
+    json resp = {
+        {"pipeline", id},
+        {"play_url", m.play_url},
+        {"files", page},
+        {"total", total},
+        {"has_more", has_more},
+        {"retention_hours", m.retention_hours},
+    };
     res.set_content(resp.dump(), "application/json");
 }
 
@@ -1603,7 +1655,11 @@ void ApiServer::handleHealth(const httplib::Request& /*req*/, httplib::Response&
             {"status", "healthy"},
             {"mode", async_mode_ ? "async" : "sync"},
             {"timestamp", std::chrono::duration_cast<std::chrono::seconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count()}
+                std::chrono::system_clock::now().time_since_epoch()).count()},
+            {"checks", {
+                {"mediamtx_hls", scTcpReachable("127.0.0.1", 8888, 300)},
+                {"mediamtx_rtmp", scTcpReachable("127.0.0.1", 1935, 300)}
+            }}
         };
         res.set_content(health.dump(), "application/json");
     }

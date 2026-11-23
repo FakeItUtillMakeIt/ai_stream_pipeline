@@ -25,6 +25,7 @@ namespace http {
 struct PipelineMeta {
     std::string play_url;
     std::vector<std::string> evidence_dirs;
+    int retention_hours = 0;   // 0=未配置/不清理
 };
 
 /**

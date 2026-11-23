@@ -166,6 +166,8 @@
 
 ## GET /health — 健康检查
 
+返回 `{status, mode, timestamp, checks}`；`checks.mediamtx_hls`/`checks.mediamtx_rtmp` 为 127.0.0.1 上 8888/1935 的 TCP 可达性。
+
 ```json
 {"status": "healthy", "mode": "sync|async", "timestamp": 1787023825}
 ```
@@ -266,15 +268,19 @@
 
 实时预览（方案 A）：浏览器不能直接播 RTMP。`rtmp_sink` 推到外部媒体服务器（mediamtx / nginx-rtmp），由其转成 **HLS(.m3u8) 或 WebRTC**；把该播放地址填进 sink 节点的 `play_url`，前端预览页用 hls.js 播放。后端不转码，仅提供播放地址来源与证据文件。
 
-### GET /api/v1/evidence/list?pipeline=<id>
-列出该管道 `evidence_dirs` 内的证据文件（快照图 / 录像片段）：
+### GET /api/v1/evidence/list?pipeline=<id>&limit=&offset=&kind=&q=&from=&to=
+分页列出该管道 `evidence_dirs` 内的证据文件（快照图 / 录像片段），按 `mtime_ms` 新→旧：
 ```json
-{"pipeline": "my_pipeline", "play_url": "...", "files": [
+{"pipeline": "my_pipeline", "play_url": "...", "total": 76, "has_more": true, "retention_hours": 24,
+ "files": [
   {"dir_index": 0, "name": "alert_1.jpg", "kind": "image", "size": 88123, "mtime_ms": 1795417200000},
   {"dir_index": 0, "name": "fight_2.mp4", "kind": "video", "size": 456789, "mtime_ms": 1795417260000}
 ]}
 ```
-目录不存在或管道无证据配置 → `files` 为空数组。`kind ∈ image | video | other`。
+- `limit=0`/缺省返回全部；前端默认每页 60。
+- `kind ∈ image|video|other`；`q` 匹配文件名；`from/to` 为 mtime epoch 毫秒。
+- `retention_hours` 取自 evidence rollover 配置；`0` 表示未配置/不清理。
+- `files` 为空也可能是当前筛选无结果。
 
 ### GET /api/v1/evidence/file?pipeline=<id>&dir=<idx>&name=<filename>
 取回单个证据文件的字节（`dir` 是 `evidence/list` 返回的 `dir_index`）。
