@@ -1,18 +1,29 @@
 import { useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
 
+export type LivePlayerStatus = 'idle' | 'connecting' | 'playing' | 'error';
+
 // 实时预览播放器：HLS(.m3u8) 用 hls.js，原生 mp4/webm 用 <video>，其余提示
 // 网络/清单致命错误时自动重试（流刚启动时清单可能还没生成），避免一挂载就"无信号"卡死
-export function LivePlayer({ url, compact = false }: { url: string; compact?: boolean }) {
+export function LivePlayer({ url, compact = false, onStatus }: {
+  url: string; compact?: boolean; onStatus?: (status: LivePlayerStatus) => void;
+}) {
   const ref = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
+  const statusRef = useRef(onStatus);
+  statusRef.current = onStatus;
   useEffect(() => {
     const v = ref.current; setError('');
     if (!v || !url) return;
+    statusRef.current?.('connecting');
     let hls: Hls | null = null;
     let retryTimer: number | undefined;
     let disposed = false;
+    const onPlaying = () => statusRef.current?.('playing');
+    const onVideoError = () => statusRef.current?.('error');
+    v.addEventListener('playing', onPlaying);
+    v.addEventListener('error', onVideoError);
     const isHls = url.includes('.m3u8');
     if (isHls && Hls.isSupported()) {
       hls = new Hls({ lowLatencyMode: true, enableWorker: true });
@@ -24,6 +35,7 @@ export function LivePlayer({ url, compact = false }: { url: string; compact?: bo
         // 网络/清单错误：流可能刚启动未就绪 → 自动重试（最多 8 次，间隔 2.5s）
         if ((data.type === Hls.ErrorTypes.NETWORK_ERROR || data.type === Hls.ErrorTypes.OTHER_ERROR) && attempt < 8) {
           hls?.destroy();
+          statusRef.current?.('connecting');
           retryTimer = window.setTimeout(() => { if (!disposed) setAttempt((a) => a + 1); }, 2500);
           return;
         }
@@ -32,13 +44,21 @@ export function LivePlayer({ url, compact = false }: { url: string; compact?: bo
         else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) { msg += '（媒体错误：尝试恢复）'; hls?.recoverMediaError(); }
         else if (data.type === Hls.ErrorTypes.OTHER_ERROR) msg += '（无法加载清单，检查 URL/是否 404）';
         setError(msg);
+        statusRef.current?.('error');
       });
     } else if (/\.(mp4|webm|ogg)$/i.test(url) || (isHls && v.canPlayType('application/vnd.apple.mpegurl'))) {
       v.src = url; v.play().catch(() => {});
     } else {
       setError('无法播放该地址：预览目前支持 HLS(.m3u8) 与 mp4/webm。');
+      statusRef.current?.('error');
     }
-    return () => { disposed = true; if (retryTimer) clearTimeout(retryTimer); hls?.destroy(); };
+    return () => {
+      disposed = true;
+      v.removeEventListener('playing', onPlaying);
+      v.removeEventListener('error', onVideoError);
+      if (retryTimer) clearTimeout(retryTimer);
+      hls?.destroy();
+    };
   }, [url, attempt]);
   if (!url) return <div className="pv-empty">该管道未配置 play_url（在 sink 节点填"播放地址"）</div>;
   if (compact) {
