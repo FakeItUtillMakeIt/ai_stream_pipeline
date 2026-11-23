@@ -585,3 +585,6 @@ body { background: var(--bg); }
 a.btn { text-decoration: none; }
 
 .ev-sk-media { height: auto; aspect-ratio: 16 / 9; }
+
+.al-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.al-foot-note { margin-left: auto; color: var(--muted); font-size: 11px; }

@@ -4,7 +4,8 @@ import { MediaImg, MediaVideo, LivePlayer } from './Media';
 import type { LivePlayerStatus } from './Media';
 import { ApiSettings, api, listPipelines, PipelineInfo } from '../api/client';
 
-type Tab = 'preview' | 'evidence' | 'metrics' | 'status';
+export type PreviewTab = 'preview' | 'evidence' | 'metrics' | 'status';
+type Tab = PreviewTab;
 type EvidenceKind = 'all' | 'image' | 'video';
 
 interface EvFile {
@@ -35,7 +36,6 @@ interface MetricRow {
   latencyMin: number | null;
   latencyAvg: number | null;
   latencyMax: number | null;
-  errors: number | null;
 }
 
 const TABS: { id: Tab; label: string }[] = [
@@ -44,6 +44,15 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'metrics', label: '指标' },
   { id: 'status', label: '状态' },
 ];
+
+function previewRouteParams(): URLSearchParams {
+  const raw = (location.hash || '').replace(/^#\/?/, '');
+  return new URLSearchParams(raw.split('?')[1] || '');
+}
+
+function isPreviewTab(value: string | null): value is Tab {
+  return !!value && TABS.some((tab) => tab.id === value);
+}
 
 const EVIDENCE_LABELS: Record<string, string> = {
   person_intrusion: '人员入侵',
@@ -111,7 +120,6 @@ function normalizeMetrics(data: any): { rows: MetricRow[]; system: any } {
       latencyMin: numberOrNull(n?.min_latency_ms ?? latency.min),
       latencyAvg: numberOrNull(n?.avg_latency_ms ?? latency.avg),
       latencyMax: numberOrNull(n?.max_latency_ms ?? latency.max),
-      errors: numberOrNull(n?.error_count),
     });
   };
 
@@ -149,12 +157,18 @@ function dropText(row: MetricRow): string {
   return String(row.dropped);
 }
 
-export default function PreviewView({ settings, initialId, onBack, backLabel = '← 返回编辑' }: {
-  settings: ApiSettings; initialId?: string; onBack: () => void; backLabel?: string;
+export default function PreviewView({ settings, initialId, initialTab, onBack, backLabel = '← 返回编辑' }: {
+  settings: ApiSettings; initialId?: string; initialTab?: PreviewTab; onBack: () => void; backLabel?: string;
 }) {
+  const route = useRef(previewRouteParams()).current;
+  const routeTab = route.get('tab');
   const [pipelines, setPipelines] = useState<PipelineInfo[]>([]);
-  const [sel, setSel] = useState(initialId || '');
-  const [tab, setTab] = useState<Tab>('preview');
+  const [sel, setSel] = useState(initialId || route.get('id') || '');
+  const [tab, setTab] = useState<Tab>(
+    initialId
+      ? (initialTab || 'preview')
+      : (isPreviewTab(routeTab) ? routeTab : (initialTab || 'preview')),
+  );
   const [pipeLoading, setPipeLoading] = useState(false);
   const [pipeErr, setPipeErr] = useState('');
   const [pipeUpdated, setPipeUpdated] = useState<number | null>(null);
@@ -206,6 +220,30 @@ export default function PreviewView({ settings, initialId, onBack, backLabel = '
     return () => window.clearInterval(timer);
   }, [refreshPipelines]);
   useEffect(() => { if (initialId) setSel(initialId); }, [initialId]);
+  useEffect(() => { if (initialTab) setTab(initialTab); }, [initialTab]);
+
+  // 预览页 tab/管道写入 URL，刷新或分享后能回到同一位置
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (sel) params.set('id', sel);
+    params.set('tab', tab);
+    const query = params.toString();
+    const next = '#/preview' + (query ? '?' + query : '');
+    if (location.hash !== next) history.replaceState(null, '', next);
+  }, [sel, tab]);
+
+  // 浏览器前进/后退或手改 hash 时同步当前 tab/管道
+  useEffect(() => {
+    const onHash = () => {
+      const params = previewRouteParams();
+      const id = params.get('id');
+      const nextTab = params.get('tab');
+      if (id) setSel(id);
+      if (isPreviewTab(nextTab)) setTab(nextTab);
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
 
   const loadEvidence = useCallback(async () => {
     const seq = ++evSeq.current;
@@ -690,7 +728,6 @@ export default function PreviewView({ settings, initialId, onBack, backLabel = '
                                   <th>包数</th>
                                   <th>丢帧</th>
                                   <th>延迟(ms)</th>
-                                  <th>错误</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -701,7 +738,6 @@ export default function PreviewView({ settings, initialId, onBack, backLabel = '
                                     <td>{row.total}</td>
                                     <td className={row.dropped > 0 ? 'bad' : ''}>{dropText(row)}</td>
                                     <td>{latencyText(row)}</td>
-                                    <td>{row.errors ?? '—'}</td>
                                   </tr>
                                 ))}
                               </tbody>

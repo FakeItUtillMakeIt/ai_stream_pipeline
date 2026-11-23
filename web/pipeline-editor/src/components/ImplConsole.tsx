@@ -128,7 +128,7 @@ function CardPreview({ url }: { url: string }) {
 
 export default function ImplConsole({ settings, setSettings, role, onOpenPreview, onOpenAlerts, onBackToDev }: {
   settings: ApiSettings; setSettings: (s: ApiSettings) => void; role: 'dev' | 'impl' | 'anon' | 'unknown';
-  onOpenPreview: (id: string) => void; onOpenAlerts: (id?: string) => void; onBackToDev: () => void;
+  onOpenPreview: (id: string, tab?: 'preview' | 'evidence') => void; onOpenAlerts: (id?: string) => void; onBackToDev: () => void;
 }) {
   const [insts, setInsts] = useState<Inst[]>([]);
   const [err, setErr] = useState('');
@@ -371,8 +371,8 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
                       {i.info.state === 'stopped' ? 'Start' : 'Build'}
                     </button>}
                 <button className="btn sm" onClick={() => openEdit(i)} disabled={!i.doc}>配置</button>
-                {i.push && <button className="btn sm" onClick={() => onOpenPreview(i.id)}>预览</button>}
-                <button className="btn sm" onClick={() => onOpenPreview(i.id)}>证据</button>
+                {i.push && <button className="btn sm" onClick={() => onOpenPreview(i.id, 'preview')}>预览</button>}
+                <button className="btn sm" onClick={() => onOpenPreview(i.id, 'evidence')}>证据</button>
                 {i.info.state !== 'running' && <button className="btn sm danger" onClick={() => doDel(i.id)}>删除</button>}
                 {role === 'dev' && <button className="btn sm" onClick={() => setLogsFor(i.id)}>日志</button>}
               </div>
@@ -417,8 +417,8 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
                         ? <button className="btn sm" onClick={() => doStop(i.id)}>停止</button>
                         : <button className="btn sm primary" onClick={() => i.doc ? doStart(i.id) : doBuild(i)}>{i.info.state === 'stopped' ? 'Start' : 'Build'}</button>}
                       <button className="btn sm" onClick={() => openEdit(i)} disabled={!i.doc}>配置</button>
-                      {i.push && <button className="btn sm" onClick={() => onOpenPreview(i.id)}>预览</button>}
-                      <button className="btn sm" onClick={() => onOpenPreview(i.id)}>证据</button>
+                      {i.push && <button className="btn sm" onClick={() => onOpenPreview(i.id, 'preview')}>预览</button>}
+                      <button className="btn sm" onClick={() => onOpenPreview(i.id, 'evidence')}>证据</button>
                       {i.info.state !== 'running' && <button className="btn sm danger" onClick={() => doDel(i.id)}>删除</button>}
                       {role === 'dev' && <button className="btn sm" onClick={() => setLogsFor(i.id)}>日志</button>}
                     </div></td>

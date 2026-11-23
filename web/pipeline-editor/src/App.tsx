@@ -9,6 +9,7 @@ import Palette from './components/Palette';
 import PropertyPanel from './components/PropertyPanel';
 import PipelineNode from './components/PipelineNode';
 import PreviewView from './components/PreviewView';
+import type { PreviewTab } from './components/PreviewView';
 import ImplConsole from './components/ImplConsole';
 import AlertsView from './components/AlertsView';
 import LoginView from './components/LoginView';
@@ -30,8 +31,16 @@ const sig = (d: unknown) => JSON.stringify(d);
 
 // URL(hash) 入口：#/impl=实施台，#/preview=预览，#/alerts=告警记录，其余=研发编辑器
 type ViewName = 'editor' | 'preview' | 'impl' | 'alerts';
+function hashPath(): string {
+  const raw = (location.hash || '').replace(/^#\/?/, '');
+  return raw.split('?')[0].toLowerCase();
+}
+function hashParams(): URLSearchParams {
+  const raw = (location.hash || '').replace(/^#\/?/, '');
+  return new URLSearchParams(raw.split('?')[1] || '');
+}
 function viewFromHash(): ViewName {
-  const h = (location.hash || '').toLowerCase();
+  const h = hashPath();
   if (h.includes('impl')) return 'impl';
   if (h.includes('preview')) return 'preview';
   if (h.includes('alert')) return 'alerts';
@@ -77,6 +86,7 @@ function Editor() {
   const [status, setStatus] = useState<Status>('waiting');
   const [view, setView] = useState<ViewName>(viewFromHash);
   const [previewId, setPreviewId] = useState('');
+  const [previewTab, setPreviewTab] = useState<PreviewTab | undefined>(undefined);
   const [previewFrom, setPreviewFrom] = useState<'editor' | 'impl'>('editor');
   const [role, setRole] = useState<'dev' | 'impl' | 'anon' | 'unknown'>('unknown');
   const [authEnabled, setAuthEnabled] = useState(false);
@@ -96,8 +106,25 @@ function Editor() {
   useEffect(() => { localStorage.setItem('editorSavedSig', JSON.stringify(savedSig)); }, [savedSig]);
   useEffect(() => { localStorage.setItem('editorOverwrite', JSON.stringify(overwrite)); }, [overwrite]);
   // view ↔ URL 双向同步：#/editor #/impl #/preview 可直达/收藏/前进后退
-  useEffect(() => { const want = '#/' + view; if (location.hash !== want) location.hash = want; }, [view]);
-  useEffect(() => { const onHash = () => setView(viewFromHash()); window.addEventListener('hashchange', onHash); return () => window.removeEventListener('hashchange', onHash); }, []);
+  // 预览/告警的查询参数由各自组件维护；这里只在 path 不匹配时改写，避免把 ?tab= 冲掉
+  useEffect(() => {
+    if (viewFromHash() !== view) location.hash = '#/' + view;
+  }, [view]);
+  useEffect(() => {
+    const onHash = () => {
+      const next = viewFromHash();
+      const params = hashParams();
+      // 从地址栏/前进后退进入带参数的预览或告警：让组件以 URL 为准
+      if (next === 'preview' && (params.has('id') || params.has('tab'))) {
+        setPreviewId('');
+        setPreviewTab(undefined);
+      }
+      if (next === 'alerts' && Array.from(params.keys()).length > 0) setPreviewId('');
+      setView(next);
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
   // 角色探测：非 dev 锁在实施台（后端对 dev-only 接口另有 403 兜底）
   useEffect(() => {
     let alive = true;
@@ -325,7 +352,7 @@ function Editor() {
     const r = await api.start(settings, activeId);
     appendLog(`Start ${activeId} → ${r.status} ${JSON.stringify(r.json)}`, r.ok ? 'info' : 'error');
     setStatus(r.ok ? 'running' : 'error'); refreshStatus();
-    if (r.ok) { setPreviewFrom('editor'); setView('preview'); }
+    if (r.ok) { setPreviewId(activeId); setPreviewTab('preview'); setPreviewFrom('editor'); setView('preview'); }
   };
   const doStop = async () => {
     if (!activeId) return;
@@ -426,7 +453,7 @@ function Editor() {
     return (
       <div className={`app theme-${theme}`}>
         <ImplConsole settings={settings} setSettings={setSettings} role={role}
-          onOpenPreview={(id) => { setPreviewId(id); setPreviewFrom('impl'); setView('preview'); }}
+          onOpenPreview={(id, tab) => { setPreviewId(id); setPreviewTab(tab || 'preview'); setPreviewFrom('impl'); setView('preview'); }}
           onOpenAlerts={(id) => { setPreviewId(id || ''); setPreviewFrom('impl'); setView('alerts'); }}
           onBackToDev={() => { setView('editor'); refreshStatus(); }} />
       </div>
@@ -446,9 +473,9 @@ function Editor() {
   if (view === 'preview') {
     return (
       <div className={`app theme-${theme}`}>
-        <PreviewView settings={settings} initialId={previewId || activeId}
+        <PreviewView settings={settings} initialId={previewId} initialTab={previewTab}
           backLabel={previewFrom === 'impl' ? '← 返回实施' : '← 返回编辑'}
-          onBack={() => { setView(previewFrom); setPreviewId(''); refreshStatus(); }} />
+          onBack={() => { setView(previewFrom); setPreviewId(''); setPreviewTab(undefined); refreshStatus(); }} />
       </div>
     );
   }
@@ -497,7 +524,7 @@ function Editor() {
         <div className="seg">
           <button className="on" onClick={() => setView('editor')}>编辑器</button>
           <button onClick={() => { commitActive(); setView('impl'); }}>实施台</button>
-          <button onClick={() => { commitActive(); setPreviewFrom('editor'); setView('preview'); }}>预览</button>
+          <button onClick={() => { commitActive(); setPreviewId(activeId); setPreviewTab('preview'); setPreviewFrom('editor'); setView('preview'); }}>预览</button>
         </div>
         <button className="btn ghost icon" onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))} title="主题">{theme === 'dark' ? '☀' : '🌙'}</button>
         {authEnabled && <button className="btn ghost icon" onClick={() => setSettings({ ...settings, token: '' })} title="退出登录">⏻</button>}
