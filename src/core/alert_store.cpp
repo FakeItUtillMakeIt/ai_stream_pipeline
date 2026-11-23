@@ -176,8 +176,8 @@ static bool matchText(const json& r, const std::string& q) {
 }
 
 json AlertStore::query(const std::string& pipeline, const std::string& type, const std::string& proc,
-                       int64_t from_ms, int64_t to_ms, const std::string& q, int limit, int offset,
-                       int& total_out) {
+                       const std::string& decision, int64_t from_ms, int64_t to_ms,
+                       const std::string& q, int limit, int offset, int& total_out) {
     std::lock_guard<std::mutex> lk(m_);
     json items = json::array();
     int total = 0, idx = 0;
@@ -188,6 +188,17 @@ json AlertStore::query(const std::string& pipeline, const std::string& type, con
         if (!type.empty() && rtype != type) continue;
         std::string rp = r.value("proc", "new");
         if (!proc.empty() && proc != "all" && rp != proc) continue;
+        std::string rdec;
+        if (r.contains("post_gate") && r["post_gate"].is_object()) {
+            rdec = r["post_gate"].value("decision", "");
+        }
+        if (!decision.empty() && decision != "all") {
+            if (decision == "none") {
+                if (!rdec.empty()) continue;
+            } else if (rdec != decision) {
+                continue;
+            }
+        }
         int64_t ts = r.value("ts", (int64_t)0);
         if (from_ms > 0 && ts < from_ms) continue;
         if (to_ms > 0 && ts > to_ms) continue;

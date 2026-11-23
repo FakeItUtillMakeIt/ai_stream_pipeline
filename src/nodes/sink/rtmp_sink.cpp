@@ -87,6 +87,7 @@ void RTMPSinkNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
         return;
     }
     connected_ = true;
+    recordMetrics(utils::TimeUtil::currentTimeMs() - in_time_ms_);
 }
 
 bool RTMPSinkNode::initEncoder(int width, int height) {

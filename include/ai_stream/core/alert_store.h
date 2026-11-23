@@ -31,10 +31,10 @@ public:
     // 追加/更新一条告警（record 需含 uid 或由本函数生成；proc 字段由确认接口维护）
     void append(nlohmann::json record);
 
-    // 查询：按 pipeline/type/proc/时间范围/关键字过滤，返回 {total, items[]}（新→旧）
+    // 查询：按 pipeline/type/proc/判决/时间范围/关键字过滤，返回 {total, items[]}（新→旧）
     nlohmann::json query(const std::string& pipeline, const std::string& type, const std::string& proc,
-                         int64_t from_ms, int64_t to_ms, const std::string& q, int limit, int offset,
-                         int& total_out);
+                         const std::string& decision, int64_t from_ms, int64_t to_ms,
+                         const std::string& q, int limit, int offset, int& total_out);
 
     // 更新处理状态：proc ∈ new|ack|dismiss|resolve
     bool setProc(const std::string& uid, const std::string& proc, const std::string& note, const std::string& by);

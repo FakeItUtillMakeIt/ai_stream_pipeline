@@ -594,13 +594,14 @@ void ApiServer::handleAlertsList(const httplib::Request& req, httplib::Response&
     const std::string pipeline = req.get_param_value("pipeline");
     const std::string type = req.get_param_value("type");
     const std::string proc = req.get_param_value("proc");
+    const std::string decision = req.get_param_value("decision");
     const std::string q = req.get_param_value("q");
     int64_t from = std::atoll(req.get_param_value("from").c_str());
     int64_t to = std::atoll(req.get_param_value("to").c_str());
     int limit = req.get_param_value("limit").empty() ? 50 : std::atoi(req.get_param_value("limit").c_str());
     int offset = std::atoi(req.get_param_value("offset").c_str());
     int total = 0;
-    json out = core::AlertStore::instance().query(pipeline, type, proc, from, to, q, limit, offset, total);
+    json out = core::AlertStore::instance().query(pipeline, type, proc, decision, from, to, q, limit, offset, total);
     res.set_content(out.dump(), "application/json");
 }
 

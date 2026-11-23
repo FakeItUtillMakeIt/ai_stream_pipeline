@@ -253,8 +253,8 @@
 存储：`<state>/alerts-YYYYMMDD[.N].jsonl`（事件，**按天轮转**，同天超 `AI_STREAM_ALERT_MAX_FILE_MB` 再切片）+ `<state>/alert_proc.json`（处理状态）。启动只加载最近 `AI_STREAM_ALERT_LOAD_DAYS` 天、内存裁 `cap`(5000) 条；删除超过 `AI_STREAM_ALERT_RETENTION_DAYS` 天的旧文件。记录字段：`uid/pipeline/ts/type/level/description/proc/pre_gate/post_gate/snapshot/vlm/alert`。
 > 环境变量：`AI_STREAM_ALERT_RETENTION_DAYS`(默认90)、`AI_STREAM_ALERT_MAX_FILE_MB`(默认50)、`AI_STREAM_ALERT_LOAD_DAYS`(默认90)。
 
-- `GET /api/v1/alerts?pipeline=&type=&proc=&from=&to=&q=&limit=&offset=` → `{total, items[]}`（新→旧）
-  - `proc ∈ all|new|ack|dismiss|resolve`；`from/to` epoch 毫秒；`q` 匹配 描述/类型/管道。
+- `GET /api/v1/alerts?pipeline=&type=&proc=&decision=&from=&to=&q=&limit=&offset=` → `{total, items[]}`（新→旧）
+  - `proc ∈ all|new|ack|dismiss|resolve`；`decision ∈ all|PUSH|HOLD|DROP|PASSTHROUGH|none`（`none`=无 post_gate）；`from/to` epoch 毫秒；`q` 匹配 描述/类型/管道；`limit/offset` 分页。
 - `POST /api/v1/alerts/ack` → `{uid, proc, note?, by?}`；非法 proc `400`，不存在 `404`。
 - `GET /api/v1/alerts/stats?pipeline=` → `{new,ack,dismiss,resolve,total}`
 - `GET /api/v1/alerts/file?path=` → 取告警快照（限服务器运行目录内，越界 `403`；Range 由 httplib 处理）
