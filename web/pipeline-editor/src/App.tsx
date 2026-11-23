@@ -10,6 +10,8 @@ import PropertyPanel from './components/PropertyPanel';
 import PipelineNode from './components/PipelineNode';
 import PreviewView from './components/PreviewView';
 import type { PreviewTab } from './components/PreviewView';
+import GlobalNav from './components/GlobalNav';
+import type { NavView } from './components/GlobalNav';
 import ImplConsole from './components/ImplConsole';
 import AlertsView from './components/AlertsView';
 import LoginView from './components/LoginView';
@@ -176,6 +178,21 @@ function Editor() {
   };
 
   const commitActive = () => { if (!activeId) return; const doc = buildDoc(activeId); setStore((s) => ({ ...s, [activeId]: doc })); };
+
+  const navigate = (next: NavView) => {
+    if (next === 'preview') {
+      if (view === 'editor') commitActive();
+      setPreviewId(activeId);
+      setPreviewTab('preview');
+      setPreviewFrom(view === 'impl' ? 'impl' : 'editor');
+    } else if (next === 'alerts') {
+      setPreviewId('');
+      setPreviewFrom(view === 'impl' ? 'impl' : 'editor');
+    } else if (next === 'impl' && view === 'editor') {
+      commitActive();
+    }
+    setView(next);
+  };
 
   const switchTo = (id: string) => { if (id === activeId) return; commitActive(); const doc = store[id]; if (doc) loadDoc(doc); };
 
@@ -452,6 +469,7 @@ function Editor() {
   if (view === 'impl') {
     return (
       <div className={`app theme-${theme}`}>
+        <GlobalNav settings={settings} view="impl" role={role} onNavigate={navigate} />
         <ImplConsole settings={settings} setSettings={setSettings} role={role}
           onOpenPreview={(id, tab) => { setPreviewId(id); setPreviewTab(tab || 'preview'); setPreviewFrom('impl'); setView('preview'); }}
           onOpenAlerts={(id) => { setPreviewId(id || ''); setPreviewFrom('impl'); setView('alerts'); }}
@@ -463,6 +481,7 @@ function Editor() {
   if (view === 'alerts') {
     return (
       <div className={`app theme-${theme}`}>
+        <GlobalNav settings={settings} view="alerts" role={role} onNavigate={navigate} />
         <AlertsView settings={settings} initialPipeline={previewId}
           backLabel={previewFrom === 'impl' ? '← 返回实施' : '← 返回编辑'}
           onBack={() => { setView(previewFrom); refreshStatus(); }} />
@@ -473,6 +492,7 @@ function Editor() {
   if (view === 'preview') {
     return (
       <div className={`app theme-${theme}`}>
+        <GlobalNav settings={settings} view="preview" role={role} onNavigate={navigate} />
         <PreviewView settings={settings} initialId={previewId} initialTab={previewTab}
           backLabel={previewFrom === 'impl' ? '← 返回实施' : '← 返回编辑'}
           onBack={() => { setView(previewFrom); setPreviewId(''); setPreviewTab(undefined); refreshStatus(); }} />
@@ -482,6 +502,7 @@ function Editor() {
 
   return (
     <div className={`app theme-${theme}`}>
+      <GlobalNav settings={settings} view="editor" role={role} onNavigate={navigate} />
       <div className="topbar">
         <div className="brand"><span className="logo" />Pipeline Editor</div>
         <div className="sep" />
@@ -521,11 +542,6 @@ function Editor() {
         <div className="spacer" />
         <label className={'switch' + (overwrite ? ' on' : '')} onClick={() => setOverwrite(!overwrite)} title="已存在同 id 时先停止销毁再重建"><span className="track" />覆盖重建</label>
         <button className="btn ghost icon" onClick={() => syncFromServer()} title="同步服务器（拉运行态并导入外部新建管道）">⟳</button>
-        <div className="seg">
-          <button className="on" onClick={() => setView('editor')}>编辑器</button>
-          <button onClick={() => { commitActive(); setView('impl'); }}>实施台</button>
-          <button onClick={() => { commitActive(); setPreviewId(activeId); setPreviewTab('preview'); setPreviewFrom('editor'); setView('preview'); }}>预览</button>
-        </div>
         <button className="btn ghost icon" onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))} title="主题">{theme === 'dark' ? '☀' : '🌙'}</button>
         {authEnabled && <button className="btn ghost icon" onClick={() => setSettings({ ...settings, token: '' })} title="退出登录">⏻</button>}
       </div>

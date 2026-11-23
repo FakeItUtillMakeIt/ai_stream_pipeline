@@ -682,3 +682,23 @@ a.btn { text-decoration: none; }
 .pv-event-dot.error, .pv-event-dot.critical { background: var(--danger); }
 
 .impl-chk { margin-right: 2px; cursor: pointer; }
+
+.al-new { padding: 3px 9px; border: 1px solid #6a5a2a; border-radius: 20px; background: rgba(210,153,34,.12); color: #e8c46a; font-size: 11px; cursor: pointer; }
+.al-new:hover { border-color: var(--warn); }
+
+/* ===== 全局导航 + 健康条 P1 ===== */
+.gnav { display: flex; align-items: center; gap: 10px; flex: none; flex-wrap: wrap; padding: 6px 12px; background: #0b1016; color: #e6edf3; border-bottom: 1px solid var(--border); }
+.gnav .spacer { flex: 1; }
+.gnav-brand { font-size: 13px; font-weight: 700; letter-spacing: .02em; }
+.gnav-tabs { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid #2c3644; border-radius: 8px; background: #151c26; }
+.gnav-tabs button { padding: 4px 10px; border: 0; border-radius: 6px; background: transparent; color: #9fb0c3; font-size: 12px; cursor: pointer; }
+.gnav-tabs button:hover { color: #e6edf3; }
+.gnav-tabs button.on { background: var(--primary); color: #fff; }
+.gnav-health { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.gnav-pill { display: inline-flex; align-items: center; gap: 4px; color: #9fb0c3; font-size: 11px; }
+.gnav-pill i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+.gnav-pill.ok i { background: #3fb950; box-shadow: 0 0 0 2px rgba(63,185,80,.12); }
+.gnav-pill.bad i { background: #f85149; }
+.gnav-metric { color: #9fb0c3; font-size: 11px; white-space: nowrap; }
+.gnav-role { padding: 2px 8px; border: 1px solid #3a5a8c; border-radius: 20px; color: #9cc2ff; font-size: 11px; }
+.app > .preview, .app > .impl, .app > .alerts { height: auto; flex: 1; min-height: 0; }

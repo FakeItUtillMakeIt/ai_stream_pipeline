@@ -18,7 +18,12 @@ interface AlertStats {
 }
 
 const PROC_LABEL: Record<string, string> = { new: '未处理', ack: '已确认', dismiss: '误报', resolve: '已解决' };
-const TYPE_LABEL: Record<string, string> = { '人员入侵': '人员入侵', '打架': '打架', '儿童靠近边界': '儿童靠近边界', '攀爬': '攀爬', '人员徘徊': '人员徘徊', '跌倒': '跌倒' };
+const TYPE_LABEL: Record<string, string> = {
+  '人员入侵': '人员入侵', '打架': '打架', '儿童靠近边界': '儿童靠近边界', '攀爬': '攀爬', '人员徘徊': '人员徘徊', '跌倒': '跌倒',
+  person_intrusion: '人员入侵', child_near_boundary: '儿童靠近边界', child_near_wall: '儿童靠近边界',
+  fighting: '打架', climb: '攀爬', loitering: '人员徘徊', fall_down: '跌倒',
+};
+const ALERT_TYPES = ['person_intrusion', 'child_near_boundary', 'fighting', 'climb', 'loitering', 'fall_down'];
 const ALERT_PAGE = 100;
 
 function alertRouteParams(): URLSearchParams {
@@ -46,6 +51,9 @@ export default function AlertsView({ settings, initialPipeline, onBack, backLabe
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const [moreBusy, setMoreBusy] = useState(false);
+  const [newAlert, setNewAlert] = useState(0);
+  const filterKeyRef = useRef('');
+  const lastTotalRef = useRef(0);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [bulkBusy, setBulkBusy] = useState(false);
   const [lightbox, setLightbox] = useState<{ url: string; name: string } | null>(null);
@@ -82,7 +90,14 @@ export default function AlertsView({ settings, initialPipeline, onBack, backLabe
         } else {
           setItems(incoming);
         }
-        setTotal(Number(r.json?.total) || 0);
+        const nextTotal = Number(r.json?.total) || 0;
+        const filterKey = [pipeline, type, proc, decision, range, q].join('|');
+        if (filterKeyRef.current === filterKey && nextTotal > lastTotalRef.current) {
+          setNewAlert((count) => count + (nextTotal - lastTotalRef.current));
+        }
+        filterKeyRef.current = filterKey;
+        lastTotalRef.current = nextTotal;
+        setTotal(nextTotal);
         setErr('');
       } else {
         setErr('查询失败: ' + JSON.stringify(r.json));
@@ -139,7 +154,12 @@ export default function AlertsView({ settings, initialPipeline, onBack, backLabe
   const doAck = async (uid: string, p: string) => { await api.alertsAck(settings, uid, p); refresh(); };
 
   // 筛选条件变化时清空选择；自动刷新/加载更多不会打断勾选
-  useEffect(() => { setSelected({}); }, [pipeline, type, proc, decision, range, q]);
+  useEffect(() => {
+    setSelected({});
+    setNewAlert(0);
+    filterKeyRef.current = '';
+    lastTotalRef.current = 0;
+  }, [pipeline, type, proc, decision, range, q]);
 
   useEffect(() => {
     if (!lightbox) return;
@@ -218,6 +238,12 @@ export default function AlertsView({ settings, initialPipeline, onBack, backLabe
           <option value="">全部管道</option>
           {pipes.map((p) => <option key={p.id} value={p.id}>{p.id}</option>)}
         </select>
+        <select value={type} onChange={(e) => setType(e.target.value)}>
+          <option value="">全部类型</option>
+          {Array.from(new Set([...ALERT_TYPES, ...Object.keys(stats.types || {})])).map((t) => (
+            <option key={t} value={t}>{TYPE_LABEL[t] || t}</option>
+          ))}
+        </select>
         <select value={proc} onChange={(e) => setProc(e.target.value)}>
           <option value="all">全部状态</option>
           <option value="new">未处理</option><option value="ack">已确认</option>
@@ -235,6 +261,11 @@ export default function AlertsView({ settings, initialPipeline, onBack, backLabe
         </select>
         <input className="al-q" placeholder="搜索 描述/类型/管道" value={q} onChange={(e) => setQ(e.target.value)} />
         <div className="spacer" />
+        {newAlert > 0 && (
+          <button className="al-new" onClick={() => { setNewAlert(0); refresh(); }} title="有新告警，点击刷新到最新">
+            ● 新告警 {newAlert}
+          </button>
+        )}
         <span className="al-stat">
           未处理 <b style={{ color: 'var(--err)' }}>{stats.new || 0}</b> ·
           已确认 <b style={{ color: 'var(--primary)' }}>{stats.ack || 0}</b> ·

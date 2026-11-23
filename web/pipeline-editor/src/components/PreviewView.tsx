@@ -239,12 +239,16 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
   const [pipeUpdated, setPipeUpdated] = useState<number | null>(null);
 
   const [files, setFiles] = useState<EvFile[]>([]);
+  const filesRef = useRef<EvFile[]>([]);
+  filesRef.current = files;
+  const [filesTotal, setFilesTotal] = useState(0);
+  const [filesHasMore, setFilesHasMore] = useState(false);
+  const [retentionHours, setRetentionHours] = useState(0);
   const [filesLoading, setFilesLoading] = useState(false);
   const [filesErr, setFilesErr] = useState('');
   const [filesUpdated, setFilesUpdated] = useState<number | null>(null);
   const [evQuery, setEvQuery] = useState('');
   const [evKind, setEvKind] = useState<EvidenceKind>('all');
-  const [evLimit, setEvLimit] = useState(60);
   const [evRange, setEvRange] = useState<'all' | 'today' | '7d' | '30d'>('all');
   const [evChecked, setEvChecked] = useState<Record<string, boolean>>({});
   const [evBatchBusy, setEvBatchBusy] = useState(false);
@@ -325,10 +329,13 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  const loadEvidence = useCallback(async () => {
+  const loadEvidence = useCallback(async (append = false) => {
     const seq = ++evSeq.current;
     if (!sel) {
       setFiles([]);
+      setFilesTotal(0);
+      setFilesHasMore(false);
+      setRetentionHours(0);
       setFilesErr('');
       setFilesLoading(false);
       setFilesUpdated(Date.now());
@@ -337,17 +344,49 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
     setFilesLoading(true);
     setFilesErr('');
     try {
-      const r = await api.evidenceList(settings, sel);
+      const now = Date.now();
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const from = evRange === 'today'
+        ? today.getTime()
+        : evRange === '7d'
+          ? now - 7 * 864e5
+          : evRange === '30d'
+            ? now - 30 * 864e5
+            : 0;
+      const r = await api.evidenceList(settings, sel, {
+        limit: 60,
+        offset: append ? filesRef.current.length : 0,
+        kind: evKind !== 'all' ? evKind : undefined,
+        q: evQuery.trim() || undefined,
+        from: from > 0 ? from : undefined,
+      });
       if (seq !== evSeq.current) return;
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      setFiles(Array.isArray(r.json?.files) ? r.json.files : []);
+      const incoming: EvFile[] = Array.isArray(r.json?.files) ? r.json.files : [];
+      if (append) {
+        setFiles((prev) => {
+          const seen = new Set(prev.map((f) => `${f.dir_index}/${f.name}`));
+          const merged = prev.slice();
+          for (const file of incoming) {
+            const key = `${file.dir_index}/${file.name}`;
+            if (!seen.has(key)) { seen.add(key); merged.push(file); }
+          }
+          return merged;
+        });
+      } else {
+        setFiles(incoming);
+      }
+      setFilesTotal(Number(r.json?.total) || incoming.length);
+      setFilesHasMore(!!r.json?.has_more);
+      setRetentionHours(Number(r.json?.retention_hours) || 0);
       setFilesUpdated(Date.now());
     } catch (e: any) {
       if (seq === evSeq.current) setFilesErr('证据加载失败：' + (e?.message || e));
     } finally {
       if (seq === evSeq.current) setFilesLoading(false);
     }
-  }, [sel, settings]);
+  }, [sel, settings, evKind, evQuery, evRange]);
 
   const loadMetrics = useCallback(async () => {
     const seq = ++metricSeq.current;
@@ -400,13 +439,14 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
     setEvQuery('');
     setEvKind('all');
     setEvSelected(null);
-    setEvLimit(60);
+    setFilesTotal(0);
+    setFilesHasMore(false);
+    setRetentionHours(0);
     setEvRange('all');
     setEvChecked({});
   }, [sel]);
 
   useEffect(() => {
-    setEvLimit(60);
     setEvChecked({});
   }, [evQuery, evKind, evRange]);
 
@@ -419,8 +459,10 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
 
   useEffect(() => {
     if (tab !== 'evidence') return;
-    loadEvidence();
-    const timer = window.setInterval(loadEvidence, 10000);
+    loadEvidence(false);
+    const timer = window.setInterval(() => {
+      if (filesRef.current.length <= 60) loadEvidence(false);
+    }, 10000);
     return () => window.clearInterval(timer);
   }, [tab, loadEvidence]);
 
@@ -560,14 +602,9 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
 
   const evCheckedItems = evidenceItems.filter((item) => evChecked[item.key]);
 
-  const visibleEvidenceItems = useMemo(
-    () => evidenceItems.slice(0, evLimit),
-    [evidenceItems, evLimit],
-  );
-
   const evidenceGroups = useMemo(() => {
     const map = new Map<string, { label: string; items: EvItem[] }>();
-    for (const item of visibleEvidenceItems) {
+    for (const item of evidenceItems) {
       const key = item.ts ? new Date(item.ts).toISOString().slice(0, 10) : 'unknown';
       const label = item.ts
         ? new Date(item.ts).toLocaleDateString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit' })
@@ -582,7 +619,7 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
         if (b.key === 'unknown') return -1;
         return b.key.localeCompare(a.key);
       });
-  }, [visibleEvidenceItems]);
+  }, [evidenceItems]);
 
   const copyStream = async () => {
     if (!streamUrl) return;
@@ -850,8 +887,8 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
               </select>
               <button
                 className="btn tiny ghost"
-                onClick={() => setEvChecked(Object.fromEntries(visibleEvidenceItems.map((item) => [item.key, true])))}
-                disabled={visibleEvidenceItems.length === 0}
+                onClick={() => setEvChecked(Object.fromEntries(evidenceItems.map((item) => [item.key, true])))}
+                disabled={evidenceItems.length === 0}
               >
                 全选本页
               </button>
@@ -862,9 +899,9 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
               )}
               <div className="spacer" />
               <span className="ev-count">
-                {visibleEvidenceItems.length}{visibleEvidenceItems.length < evidenceItems.length ? ` / ${evidenceItems.length}` : ''} 条 · 更新 {fmtTime(filesUpdated)}
+                {files.length} / {filesTotal || files.length} 条 · 更新 {fmtTime(filesUpdated)}{retentionHours > 0 ? ` · 保留 ${retentionHours}h` : ''}
               </span>
-              <button className="btn tiny" onClick={loadEvidence} disabled={filesLoading}>
+              <button className="btn tiny" onClick={() => loadEvidence(false)} disabled={filesLoading}>
                 {filesLoading ? '刷新中…' : '刷新'}
               </button>
             </div>
@@ -878,7 +915,7 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
                 title="证据加载失败"
                 desc={filesErr}
                 icon="!"
-                action={<button className="btn sm" onClick={loadEvidence}>重试</button>}
+                action={<button className="btn sm" onClick={() => loadEvidence(false)}>重试</button>}
               />
             ) : files.length === 0 && filesUpdated === null ? (
               <EvidenceSkeleton />
@@ -887,7 +924,7 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
                 title="暂无证据"
                 desc="有告警且管道包含 evidence 节点时，会自动生成图片/视频证据。"
                 icon="□"
-                action={<button className="btn sm" onClick={loadEvidence}>重新扫描</button>}
+                action={<button className="btn sm" onClick={() => loadEvidence(false)}>重新扫描</button>}
               />
             ) : evidenceItems.length === 0 ? (
               <StateBlock title="没有匹配的证据" desc="试试清空搜索或切换图片/视频筛选。" icon="⌕" />
@@ -960,10 +997,10 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
                   </section>
                 ))}
                 </div>
-                {evidenceItems.length > evLimit && (
+                {filesHasMore && (
                   <div className="ev-more">
-                    <button className="btn sm" onClick={() => setEvLimit((n) => n + 60)}>
-                      加载更多（剩余 {evidenceItems.length - evLimit}）
+                    <button className="btn sm" onClick={() => loadEvidence(true)} disabled={filesLoading}>
+                      {filesLoading ? '加载中…' : `加载更多（剩余 ${Math.max(0, filesTotal - files.length)}）`}
                     </button>
                   </div>
                 )}

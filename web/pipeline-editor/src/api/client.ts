@@ -37,8 +37,15 @@ export const api = {
   getConfig: (s: ApiSettings, id: string) => req(s, 'GET', '/api/v1/pipeline/get-config?id=' + encodeURIComponent(id)),
   metrics: (s: ApiSettings) => req(s, 'GET', '/api/v1/metrics'),
   health: (s: ApiSettings) => req(s, 'GET', '/health'),
-  evidenceList: (s: ApiSettings, pipeline: string) =>
-    req(s, 'GET', '/api/v1/evidence/list?pipeline=' + encodeURIComponent(pipeline)),
+  evidenceList: (s: ApiSettings, pipeline: string, params: {
+    limit?: number; offset?: number; kind?: string; q?: string; from?: number; to?: number;
+  } = {}) => {
+    const qs = new URLSearchParams({ pipeline });
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== '') qs.set(key, String(value));
+    }
+    return req(s, 'GET', '/api/v1/evidence/list?' + qs.toString());
+  },
   selfcheck: (s: ApiSettings, id: string) =>
     req(s, 'GET', '/api/v1/selfcheck?id=' + encodeURIComponent(id)),
   whoami: (s: ApiSettings) => req(s, 'GET', '/api/v1/whoami'),
