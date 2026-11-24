@@ -76,8 +76,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # CUDA 语言按需启用
 if(WITH_CUDA)
-    # nvcc 通常不在默认 PATH（如 Jetson 上的 /usr/local/cuda/bin），
-    # 这里先主动探测常见安装路径，避免 enable_language 失败后污染缓存
+    # nvcc 通常不在默认 PATH（如 Jetson 上的 /usr/local/cuda/bin）。
+    # 先按 PATH 查找，保持 x86 上 module/环境选择 CUDA 版本的既有行为；
+    # 只有 PATH 里找不到时才探测常见安装路径，避免 enable_language 失败后污染缓存。
+    if(NOT CMAKE_CUDA_COMPILER OR CMAKE_CUDA_COMPILER MATCHES "NOTFOUND$")
+        find_program(CMAKE_CUDA_COMPILER NAMES nvcc)
+    endif()
     if(NOT CMAKE_CUDA_COMPILER OR CMAKE_CUDA_COMPILER MATCHES "NOTFOUND$")
         find_program(CMAKE_CUDA_COMPILER
             NAMES nvcc
