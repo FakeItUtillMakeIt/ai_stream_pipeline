@@ -27,6 +27,8 @@ public:
     bool encode(const uint8_t* yuv420p, size_t size, int64_t pts,
                 std::vector<EncodedPacket>& packets) override;
     bool flush(std::vector<EncodedPacket>& packets) override;
+    // 每个证据文件开头强制 IDR：复用编码器时不能从 P 帧开始，否则播放器黑屏
+    void requestKeyframe() override;
     void close() override;
 
     const uint8_t* getExtradata(size_t& size) const override {
@@ -44,6 +46,7 @@ private:
     GstElement* pipeline_ = nullptr;
     GstElement* appsrc_ = nullptr;
     GstElement* appsink_ = nullptr;
+    GstElement* enc_ = nullptr;
     GstAppSrc* app_src_ = nullptr;
     GstAppSink* app_sink_ = nullptr;
 

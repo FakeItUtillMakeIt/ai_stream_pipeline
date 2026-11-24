@@ -148,6 +148,7 @@ bool GstV4l2VideoEncoder::buildPipeline() {
                       gst_element_state_get_name(current_state));
         return false;
     }
+    enc_ = enc;
     return true;
 }
 
@@ -333,6 +334,16 @@ bool GstV4l2VideoEncoder::flush(std::vector<EncodedPacket>& packets) {
     return pullPackets(packets, 100);
 }
 
+void GstV4l2VideoEncoder::requestKeyframe() {
+    // nvv4l2h264enc 提供 force-IDR action signal：让下一帧编码为 IDR。
+    // 证据录像复用编码器写多个文件时，新文件必须从 IDR 开始，
+    // 否则首帧是引用上一个文件的 P 帧，播放器会黑屏（或到下一个 IDR 前无法解码）。
+    if (enc_) {
+        g_signal_emit_by_name(enc_, "force-IDR");
+        LOG_DEBUG("[GstV4l2VideoEncoder] Requested IDR for next frame");
+    }
+}
+
 void GstV4l2VideoEncoder::close() {
     if (pipeline_) {
         gst_element_set_state(pipeline_, GST_STATE_NULL);
@@ -340,6 +351,7 @@ void GstV4l2VideoEncoder::close() {
         pipeline_ = nullptr;
         appsrc_ = nullptr;
         appsink_ = nullptr;
+        enc_ = nullptr;
         app_src_ = nullptr;
         app_sink_ = nullptr;
     }
