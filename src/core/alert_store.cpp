@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <chrono>
+#include <unordered_map>
 
 namespace fs = std::filesystem;
 using nlohmann::json;
@@ -113,24 +114,36 @@ void AlertStore::loadLocked() {
         if (dates.size() >= (size_t)load_days_) break;
         if (std::find(dates.begin(), dates.end(), it->first) == dates.end()) dates.push_back(it->first);
     }
-    // 旧→新读入选文件（保证同 uid 后读的行覆盖，merge 正确）
-    std::vector<json> tmp;
+    // 旧→新读入选文件（保证同 uid 后读的行覆盖）。
+    // uid 索引避免 O(n²) 扫描：告警文件到几十 MB 时启动会从分钟级降到秒级。
+    std::vector<json> merged;
+    std::unordered_map<std::string, size_t> uid_index;
     for (auto& f : files) {
         if (std::find(dates.begin(), dates.end(), f.first) == dates.end()) continue;
         std::ifstream in(f.second); std::string line;
-        while (std::getline(in, line)) { if (line.empty()) continue; try { tmp.push_back(json::parse(line)); } catch (...) {} }
-    }
-    std::vector<json> merged;
-    for (auto& r : tmp) {
-        std::string uid = uidOf(r); r["uid"] = uid;
-        bool done = false;
-        for (auto& m : merged) { if (m.value("uid", "") == uid) { m.merge_patch(r); done = true; break; } }
-        if (!done) merged.push_back(r);
+        while (std::getline(in, line)) {
+            if (line.empty()) continue;
+            try {
+                json r = json::parse(line);
+                std::string uid = uidOf(r);
+                r["uid"] = uid;
+                auto it = uid_index.find(uid);
+                if (it != uid_index.end()) {
+                    merged[it->second].merge_patch(r);
+                } else {
+                    uid_index.emplace(std::move(uid), merged.size());
+                    merged.push_back(std::move(r));
+                }
+            } catch (...) {}
+        }
     }
     std::sort(merged.begin(), merged.end(), [](const json& a, const json& b) {
         return a.value("ts", (int64_t)0) > b.value("ts", (int64_t)0);
     });
-    if (merged.size() > cap_) merged.resize(cap_);
+    if (merged.size() > cap_) {
+        merged.resize(cap_);
+        merged.shrink_to_fit();   // 释放大文件载入时的高水位容量
+    }
     for (auto& r : merged) {
         std::string uid = r.value("uid", "");
         auto it = proc_.find(uid);

@@ -106,5 +106,11 @@ private:
 /** 当前进程常驻内存（RSS，MB）；非 Linux 返回 0 */
 int processRssMb();
 
+/** 将 glibc arena 中已释放的空闲页归还 OS（非 glibc 平台为空操作） */
+void trimAllocator();
+
+/** malloc_trim 周期（秒），环境变量 AI_STREAM_MALLOC_TRIM_INTERVAL_S，默认 300；<=0 关闭 */
+int mallocTrimIntervalS();
+
 } // namespace core
 } // namespace ai_stream

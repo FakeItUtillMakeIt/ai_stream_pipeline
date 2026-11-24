@@ -1,10 +1,14 @@
 // src/core/metrics.cpp
 #include "ai_stream/core/metrics.h"
 #include "3rd_party/log_mgr/log_mgr.h"
+#include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <iomanip>
 #include <nlohmann/json.hpp>
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 
 namespace ai_stream {
 namespace core {
@@ -39,6 +43,19 @@ int processRssMb() {
     }
 #endif
     return 0;
+}
+
+void trimAllocator() {
+#if defined(__GLIBC__)
+    malloc_trim(0);
+#endif
+}
+
+int mallocTrimIntervalS() {
+    const char* env = std::getenv("AI_STREAM_MALLOC_TRIM_INTERVAL_S");
+    if (!env || !*env) return 300;
+    const int v = std::atoi(env);
+    return v > 0 ? v : 0;
 }
 
 MetricsCollector& MetricsCollector::instance() {

@@ -928,6 +928,8 @@ void ApiServer::monitorSystemResources() {
     auto last_time = std::chrono::steady_clock::now();
     unsigned long long last_idle = 0;
     unsigned long long last_total = 0;
+    const int trim_interval_s = core::mallocTrimIntervalS();
+    auto last_trim = std::chrono::steady_clock::now();
 
     while (resource_running_.load()) {
 #ifdef WITH_CUDA
@@ -942,6 +944,17 @@ void ApiServer::monitorSystemResources() {
         mc.setMemoryMb(core::processRssMb());
 
         const auto now = std::chrono::steady_clock::now();
+        // 周期性归还 glibc arena 空闲页，避免碎片造成 RSS 缓慢爬升
+        if (trim_interval_s > 0 &&
+            now - last_trim >= std::chrono::seconds(trim_interval_s)) {
+            const int before = core::processRssMb();
+            core::trimAllocator();
+            const int after = core::processRssMb();
+            if (before != after) {
+                LOG_INFO_FMT("[SystemMetrics] malloc_trim: RSS {} MB -> {} MB", before, after);
+            }
+            last_trim = now;
+        }
         const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             now - last_time).count();
         if (elapsed >= 1000) {

@@ -439,6 +439,8 @@ void AsyncPipelineManager::processLoadTask(PipelineTask& task) {
 }
 
 void AsyncPipelineManager::monitorResourceUsage() {
+    const int trim_interval_s = mallocTrimIntervalS();
+    auto last_trim = std::chrono::steady_clock::now();
     while (running_) {
         // 监控 GPU 内存使用
 #ifdef WITH_CUDA
@@ -456,6 +458,17 @@ void AsyncPipelineManager::monitorResourceUsage() {
         static auto last_total = 0ULL;
 
         auto now = std::chrono::steady_clock::now();
+        // 周期性归还 glibc arena 空闲页，避免碎片造成 RSS 缓慢爬升
+        if (trim_interval_s > 0 &&
+            now - last_trim >= std::chrono::seconds(trim_interval_s)) {
+            const int before = processRssMb();
+            trimAllocator();
+            const int after = processRssMb();
+            if (before != after) {
+                LOG_INFO_FMT("[AsyncPipelineManager] malloc_trim: RSS {} MB -> {} MB", before, after);
+            }
+            last_trim = now;
+        }
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_time).count();
 
         if (elapsed > 1000) { // 每秒更新一次
