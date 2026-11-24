@@ -8,6 +8,12 @@ project(ai_stream_pipeline
     LANGUAGES CXX
 )
 
+# 使用 <PACKAGE>_ROOT 变量（如 FFMPEG_ROOT）作为 find_package 的搜索根，
+# 避免 CMake 3.27+ 的 CMP0144 开发警告刷屏
+if(POLICY CMP0144)
+    cmake_policy(SET CMP0144 NEW)
+endif()
+
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
     message(FATAL_ERROR "ai_stream_pipeline currently supports Linux only; use a Linux target or add a platform port first")
 endif()
@@ -70,6 +76,34 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # CUDA 语言按需启用
 if(WITH_CUDA)
+    # nvcc 通常不在默认 PATH（如 Jetson 上的 /usr/local/cuda/bin），
+    # 这里先主动探测常见安装路径，避免 enable_language 失败后污染缓存
+    if(NOT CMAKE_CUDA_COMPILER OR CMAKE_CUDA_COMPILER MATCHES "NOTFOUND$")
+        find_program(CMAKE_CUDA_COMPILER
+            NAMES nvcc
+            HINTS
+                $ENV{CUDA_HOME}
+                $ENV{CUDA_PATH}
+                /usr/local/cuda
+                /usr/local/cuda-13
+                /usr/local/cuda-12
+            PATH_SUFFIXES bin
+        )
+    endif()
+    if(NOT CMAKE_CUDA_COMPILER OR CMAKE_CUDA_COMPILER MATCHES "NOTFOUND$")
+        message(FATAL_ERROR
+            "WITH_CUDA=ON but nvcc was not found. Install the CUDA toolkit or "
+            "point CMake at it with -DCMAKE_CUDA_COMPILER=/path/to/nvcc "
+            "(e.g. /usr/local/cuda/bin/nvcc), and make sure it is on PATH.")
+    endif()
+
+    # 之前失败配置可能把空的 CMAKE_CUDA_ARCHITECTURES 写进缓存，
+    # 这种情况下 enable_language 会直接报 "must be non-empty"，需先清除。
+    if(DEFINED CACHE{CMAKE_CUDA_ARCHITECTURES}
+       AND CMAKE_CUDA_ARCHITECTURES STREQUAL "")
+        unset(CMAKE_CUDA_ARCHITECTURES CACHE)
+    endif()
+
     enable_language(CUDA)
     set(CMAKE_CUDA_STANDARD_REQUIRED ON)
     set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
@@ -176,6 +210,21 @@ if(WITH_FTP)
     else()
         message(STATUS "System CURL not found, fetching libcurl from GitHub...")
         include(FetchContent)
+        # curl 默认启用 OpenSSL 后端；系统缺少 OpenSSL 开发包时
+        # find_package(OpenSSL REQUIRED) 会直接失败，这里回退到无 TLS 构建，
+        # 保证 FTP 上传（明文）可用；HTTPS/FTPS 需安装 libssl-dev 后重配。
+        find_package(OpenSSL QUIET)
+        if(NOT OpenSSL_FOUND)
+            message(WARNING
+                "OpenSSL development files not found: libcurl will be built "
+                "without TLS. HTTPS/FTPS transfers (e.g. VLM reporting) will "
+                "fail at runtime. Install libssl-dev (and libcurl4-openssl-dev) "
+                "to enable TLS.")
+            set(CURL_USE_OPENSSL OFF CACHE BOOL "" FORCE)
+        else()
+            # 之前无 OpenSSL 时可能把 OFF 写进缓存，装上开发包后要恢复 TLS
+            set(CURL_USE_OPENSSL ON CACHE BOOL "" FORCE)
+        endif()
         FetchContent_Declare(
             curl
             GIT_REPOSITORY https://github.com/curl/curl.git
@@ -305,8 +354,13 @@ if(WITH_CUDA)
         endif()
 
         if(_SUPPORTED_ARCHS)
-            list(SORT _SUPPORTED_ARCHS)
-            list(GET _SUPPORTED_ARCHS -1 _MAX_SUPPORTED)
+            # 数值比较取最大值（list(SORT) 是字典序，会把 90 排在 121 之后）
+            set(_MAX_SUPPORTED "")
+            foreach(_arch ${_SUPPORTED_ARCHS})
+                if(_MAX_SUPPORTED STREQUAL "" OR _arch GREATER _MAX_SUPPORTED)
+                    set(_MAX_SUPPORTED "${_arch}")
+                endif()
+            endforeach()
             if(_GPU_ARCH GREATER _MAX_SUPPORTED)
                 message(WARNING
                     "Local GPU compute capability ${_GPU_ARCH} exceeds max architecture "

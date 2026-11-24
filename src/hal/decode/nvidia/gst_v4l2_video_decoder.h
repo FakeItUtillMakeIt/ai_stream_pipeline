@@ -57,6 +57,7 @@ private:
 
     std::vector<uint8_t> extradata_;
     bool fed_extradata_ = false;
+    bool is_h264_ = true;
 
     bool initialized_ = false;
 };

@@ -63,11 +63,33 @@ int main(int argc, char *argv[])
     }
     json config = json::parse(config_file);
 
+    // 兼容两种格式：
+    //   1) 已保存的 pipeline 配置：{ "id": ..., "graph": { nodes, edges } }
+    //   2) 模板库配置：{ "name": ..., "doc": { "graph": { nodes, edges } }, "overrides": ... }
+    json graph;
+    std::string pipeline_id;
+    if (config.contains("graph") && config["graph"].is_object())
+    {
+        graph = config["graph"];
+        pipeline_id = config.value("id", "example_pipeline");
+    }
+    else if (config.contains("doc") && config["doc"].is_object() &&
+             config["doc"].contains("graph") && config["doc"]["graph"].is_object())
+    {
+        graph = config["doc"]["graph"];
+        pipeline_id = config.value("name", "example_pipeline");
+    }
+    else
+    {
+        LOG_ERROR_FMT("Config has neither 'graph' nor 'doc.graph': {}", argv[1]);
+        LogManager::get_instance().shutdown();
+        return 1;
+    }
+
     // 创建管道并构建
-    std::string pipeline_id = config.value("id", "example_pipeline");
     auto pipeline = std::make_shared<Pipeline>(pipeline_id);
 
-    if (!pipeline->buildFromJson(config["graph"]))
+    if (!pipeline->buildFromJson(graph))
     {
         LOG_ERROR_FMT("Failed to build pipeline from config");
         LogManager::get_instance().shutdown();

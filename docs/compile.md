@@ -116,6 +116,16 @@ cmake -B build -DWITH_CUDA=ON -DWITH_TENSORRT=ON -DBUILD_TESTS=ON \
       -DENABLE_COVERAGE=ON
 ```
 
+> **FFmpeg 装在非系统前缀**（如 `/opt/ffmpeg`、`$HOME/jetson-deps/ffmpeg`）时，
+> 用 `-DFFMPEG_ROOT=<prefix>` 指定；该前缀下需有 `include/` 与 `lib/`。
+>
+> **nvcc 不在 PATH**（Jetson 常见 `/usr/local/cuda/bin`）时，CMake 会自动探测
+> `/usr/local/cuda*`，也可显式传 `-DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc`。
+>
+> **没有 libcurl/OpenSSL 开发包**时，`WITH_FTP=ON` 会自动 FetchContent 构建
+> 无 TLS 版 libcurl（仅明文 FTP 可用，HTTPS/FTPS 需安装 `libssl-dev`）；
+> 完全不需要 FTP/VLM 可用 `-DWITH_FTP=OFF -DWITH_VLM=OFF` 跳过。
+
 ## 4. 构建与测试
 
 ```bash

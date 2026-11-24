@@ -86,10 +86,15 @@ IMG=448
 build_yoloe() {
     resolve_precision "$YOLOE_ONNX"
     echo "[YOLOE] $PREC_ONNX -> .engine (TRT ${TRT_MAJOR}, ${PRECISION})"
+    # --timingCacheFile：复用 tactic 计时，重复构建可快数倍
+    # --skipInference：构建完立即保存退出。模型输出维随检出数动态变化时，
+    #   trtexec 的基准测试阶段可能报 enqueueV3 CUDA 错误并触发重建，白等十几分钟
     trtexec \
         --onnx="$PREC_ONNX" \
         --saveEngine="${YOLOE_ONNX%.onnx}.engine" \
         --builderOptimizationLevel=5 \
+        --timingCacheFile="${YOLOE_ONNX%.onnx}.timingcache" \
+        --skipInference \
         "${PREC_FLAGS[@]}"
 }
 
@@ -104,6 +109,8 @@ build_relateanything() {
         --minShapes="image:1x3x${IMG}x${IMG},boxes:1x2x4,box_counts:1,W:${VOCAB}x${DIM},alpha:${VOCAB}"
         --optShapes="image:1x3x${IMG}x${IMG},boxes:1x${MAX_BOXES}x4,box_counts:1,W:${VOCAB}x${DIM},alpha:${VOCAB}"
         --maxShapes="image:1x3x${IMG}x${IMG},boxes:1x${MAX_BOXES}x4,box_counts:1,W:${VOCAB}x${DIM},alpha:${VOCAB}"
+        --timingCacheFile="${RA_ONNX%.onnx}.timingcache"
+        --skipInference
         "${PREC_FLAGS[@]}"
     )
     trtexec "${common[@]}"

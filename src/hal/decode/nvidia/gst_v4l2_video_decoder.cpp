@@ -19,6 +19,59 @@ std::once_flag g_gst_init_flag;
 void ensureGstInit() {
     std::call_once(g_gst_init_flag, []() { gst_init(nullptr, nullptr); });
 }
+
+bool hasAnnexBStartCode(const uint8_t* d, int n) {
+    return n >= 4 && d[0] == 0 && d[1] == 0 && (d[2] == 1 || (d[2] == 0 && d[3] == 1));
+}
+
+// MP4/RTSP 的 H.264 包通常是 AVCC（4 字节大端长度 + NAL），
+// 而 h264parse 的 byte-stream caps 需要 Annex-B 起始码，必须转换。
+bool avccToAnnexB(const uint8_t* d, int n, std::vector<uint8_t>& out) {
+    out.clear();
+    out.reserve(static_cast<size_t>(n) + 64);
+    int i = 0;
+    while (i + 4 <= n) {
+        const uint32_t len = (static_cast<uint32_t>(d[i]) << 24) |
+                             (static_cast<uint32_t>(d[i + 1]) << 16) |
+                             (static_cast<uint32_t>(d[i + 2]) << 8) |
+                             static_cast<uint32_t>(d[i + 3]);
+        i += 4;
+        if (len == 0 || i + static_cast<int>(len) > n) {
+            return false;
+        }
+        out.insert(out.end(), {0, 0, 0, 1});
+        out.insert(out.end(), d + i, d + i + len);
+        i += static_cast<int>(len);
+    }
+    return i == n && !out.empty();
+}
+
+// avcC (AVCDecoderConfigurationRecord) → Annex-B 的 SPS/PPS
+std::vector<uint8_t> avcCToAnnexB(const std::vector<uint8_t>& ex) {
+    std::vector<uint8_t> out;
+    if (ex.size() < 7 || ex[0] != 1) return out;
+    size_t p = 5;
+    const int num_sps = ex[p++] & 0x1f;
+    for (int k = 0; k < num_sps && p + 2 <= ex.size(); ++k) {
+        const int len = (ex[p] << 8) | ex[p + 1];
+        p += 2;
+        if (p + static_cast<size_t>(len) > ex.size()) return {};
+        out.insert(out.end(), {0, 0, 0, 1});
+        out.insert(out.end(), ex.begin() + p, ex.begin() + p + len);
+        p += len;
+    }
+    if (p >= ex.size()) return out;
+    const int num_pps = ex[p++];
+    for (int k = 0; k < num_pps && p + 2 <= ex.size(); ++k) {
+        const int len = (ex[p] << 8) | ex[p + 1];
+        p += 2;
+        if (p + static_cast<size_t>(len) > ex.size()) return {};
+        out.insert(out.end(), {0, 0, 0, 1});
+        out.insert(out.end(), ex.begin() + p, ex.begin() + p + len);
+        p += len;
+    }
+    return out;
+}
 } // namespace
 
 GstV4l2VideoDecoder::GstV4l2VideoDecoder() {
@@ -44,10 +97,11 @@ bool GstV4l2VideoDecoder::buildPipeline(const std::string& codec_name) {
     GstElement* parser = gst_element_factory_make(parser_name, "parser");
     GstElement* dec = gst_element_factory_make("nvv4l2decoder", "dec");
     GstElement* conv = gst_element_factory_make("nvvidconv", "conv");
+    GstElement* conv_caps_filter = gst_element_factory_make("capsfilter", "conv_caps");
     GstElement* vconv = gst_element_factory_make("videoconvert", "vconv");
     appsrc_ = gst_element_factory_make("appsrc", "src");
     appsink_ = gst_element_factory_make("appsink", "sink");
-    if (!parser || !dec || !conv || !vconv || !appsrc_ || !appsink_) {
+    if (!parser || !dec || !conv || !conv_caps_filter || !vconv || !appsrc_ || !appsink_) {
         LOG_ERROR("[GstV4l2VideoDecoder] Failed to create pipeline elements");
         return false;
     }
@@ -63,10 +117,12 @@ bool GstV4l2VideoDecoder::buildPipeline(const std::string& codec_name) {
                  "is-live", FALSE, "max-bytes", (guint64)-1, nullptr);
     gst_caps_unref(src_caps);
 
-    // nvvidconv：NVMM → 系统内存 NV12
+    // nvvidconv 默认输出可能是 NVMM 显存，videoconvert 无法读取 NVMM；
+    // 必须在 nvvidconv 之后用 capsfilter 显式要求系统内存 NV12。
+    // 注意：nvvidconv 没有 src-caps 属性（旧代码 g_object_set 该属性是无效的）。
     GstCaps* conv_caps = gst_caps_from_string(
-        "video/x-raw(memory:NVMM), format=(string)NV12, width=(int)[16,8192], height=(int)[16,8192]");
-    g_object_set(G_OBJECT(conv), "src-caps", conv_caps, nullptr);
+        "video/x-raw(memory:SystemMemory), format=(string)NV12");
+    g_object_set(G_OBJECT(conv_caps_filter), "caps", conv_caps, nullptr);
     gst_caps_unref(conv_caps);
 
     // appsink 输出 caps：BGR24（CPU 内存）
@@ -76,8 +132,10 @@ bool GstV4l2VideoDecoder::buildPipeline(const std::string& codec_name) {
                  "max-buffers", 4, "drop", FALSE, nullptr);
     gst_caps_unref(sink_caps);
 
-    gst_bin_add_many(GST_BIN(pipeline_), appsrc_, parser, dec, conv, vconv, appsink_, nullptr);
-    if (!gst_element_link_many(appsrc_, parser, dec, conv, vconv, appsink_, nullptr)) {
+    gst_bin_add_many(GST_BIN(pipeline_), appsrc_, parser, dec, conv, conv_caps_filter,
+                     vconv, appsink_, nullptr);
+    if (!gst_element_link_many(appsrc_, parser, dec, conv, conv_caps_filter,
+                               vconv, appsink_, nullptr)) {
         LOG_ERROR("[GstV4l2VideoDecoder] Failed to link pipeline");
         return false;
     }
@@ -93,6 +151,7 @@ bool GstV4l2VideoDecoder::init(const std::string& codec_name,
                              const uint8_t* extradata,
                              int extradata_size) {
     ensureGstInit();
+    is_h264_ = (codec_name == "h264" || codec_name == "H264");
     if (extradata && extradata_size > 0) {
         extradata_.assign(extradata, extradata + extradata_size);
     }
@@ -105,14 +164,40 @@ bool GstV4l2VideoDecoder::init(const std::string& codec_name,
 }
 
 bool GstV4l2VideoDecoder::pushPacket(const uint8_t* data, int size) {
+    if (!data || size <= 0) return false;
+
     std::vector<uint8_t> tmp;
-    if (!fed_extradata_ && !extradata_.empty()) {
-        tmp.reserve(static_cast<size_t>(size) + extradata_.size());
-        tmp.insert(tmp.end(), extradata_.begin(), extradata_.end());
-        tmp.insert(tmp.end(), data, data + size);
+    if (hasAnnexBStartCode(data, size)) {
+        // 已是 Annex-B：首包前补 SPS/PPS（avcC 需转成 Annex-B）
+        if (!fed_extradata_ && !extradata_.empty()) {
+            auto ex = is_h264_ ? avcCToAnnexB(extradata_) : std::vector<uint8_t>{};
+            if (!ex.empty()) {
+                tmp.assign(ex.begin(), ex.end());
+            }
+            fed_extradata_ = true;
+        }
+        if (!tmp.empty()) {
+            tmp.insert(tmp.end(), data, data + size);
+            data = tmp.data();
+            size = static_cast<int>(tmp.size());
+        }
+    } else {
+        // AVCC（4 字节长度前缀）→ Annex-B
+        std::vector<uint8_t> converted;
+        if (!avccToAnnexB(data, size, converted)) {
+            // 解析失败则原样发送，避免整条流直接停止
+            converted.assign(data, data + size);
+        }
+        if (!fed_extradata_ && !extradata_.empty()) {
+            auto ex = is_h264_ ? avcCToAnnexB(extradata_) : std::vector<uint8_t>{};
+            if (!ex.empty()) {
+                converted.insert(converted.begin(), ex.begin(), ex.end());
+            }
+            fed_extradata_ = true;
+        }
+        tmp.swap(converted);
         data = tmp.data();
         size = static_cast<int>(tmp.size());
-        fed_extradata_ = true;
     }
 
     GstBuffer* buf = gst_buffer_new_allocate(nullptr, size, nullptr);

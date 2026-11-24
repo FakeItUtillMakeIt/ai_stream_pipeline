@@ -60,11 +60,12 @@ bool GstV4l2VideoEncoder::isAvailable() const {
 
 bool GstV4l2VideoEncoder::buildPipeline() {
     GstElement* conv = gst_element_factory_make("nvvidconv", "conv");
+    GstElement* conv_caps_filter = gst_element_factory_make("capsfilter", "conv_caps");
     GstElement* enc = gst_element_factory_make("nvv4l2h264enc", "enc");
     GstElement* parse = gst_element_factory_make("h264parse", "parse");
     appsrc_ = gst_element_factory_make("appsrc", "src");
     appsink_ = gst_element_factory_make("appsink", "sink");
-    if (!conv || !enc || !parse || !appsrc_ || !appsink_) {
+    if (!conv || !conv_caps_filter || !enc || !parse || !appsrc_ || !appsink_) {
         LOG_ERROR("[GstV4l2VideoEncoder] Failed to create pipeline elements");
         return false;
     }
@@ -84,13 +85,15 @@ bool GstV4l2VideoEncoder::buildPipeline() {
                  "is-live", FALSE, "max-bytes", (guint64)-1, nullptr);
     gst_caps_unref(src_caps);
 
-    // nvvidconv → NVMM NV12（编码器要求 NVMM 内存）
+    // nvvidconv → NVMM NV12（编码器要求 NVMM 内存）。
+    // nvvidconv 没有 src-caps 属性，必须用 capsfilter 显式要求 NVMM 输出，
+    // 否则默认输出系统内存，nvv4l2h264enc 会因 caps 协商失败（HAL encode failed）。
     char conv_caps_str[256];
     snprintf(conv_caps_str, sizeof(conv_caps_str),
              "video/x-raw(memory:NVMM), format=(string)NV12, width=(int)%d, height=(int)%d",
              width_, height_);
     GstCaps* conv_caps = gst_caps_from_string(conv_caps_str);
-    g_object_set(G_OBJECT(conv), "src-caps", conv_caps, nullptr);
+    g_object_set(G_OBJECT(conv_caps_filter), "caps", conv_caps, nullptr);
     gst_caps_unref(conv_caps);
 
     g_object_set(G_OBJECT(enc),
@@ -108,8 +111,10 @@ bool GstV4l2VideoEncoder::buildPipeline() {
                  "max-buffers", 8, "drop", FALSE, nullptr);
     gst_caps_unref(sink_caps);
 
-    gst_bin_add_many(GST_BIN(pipeline_), appsrc_, conv, enc, parse, appsink_, nullptr);
-    if (!gst_element_link_many(appsrc_, conv, enc, parse, appsink_, nullptr)) {
+    gst_bin_add_many(GST_BIN(pipeline_), appsrc_, conv, conv_caps_filter, enc, parse,
+                     appsink_, nullptr);
+    if (!gst_element_link_many(appsrc_, conv, conv_caps_filter, enc, parse,
+                               appsink_, nullptr)) {
         LOG_ERROR("[GstV4l2VideoEncoder] Failed to link pipeline");
         return false;
     }
