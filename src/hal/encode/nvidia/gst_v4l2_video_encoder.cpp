@@ -323,7 +323,13 @@ bool GstV4l2VideoEncoder::flush(std::vector<EncodedPacket>& packets) {
     if (!opened_) {
         return true;
     }
-    gst_app_src_end_of_stream(app_src_);
+    // 注意：不能在这里发 EOS。
+    // 证据录像会复用同一个编码器连续写多个文件（EncoderBase::finishFile →
+    // flush → startFile 复用），appsrc 一旦收到 EOS 会进入永久的 EOS 状态，
+    // 后续 push 全部返回 GST_FLOW_EOS，表现为 "appsrc push failed"、
+    // "HAL encode failed"，第二个文件只有 262B 的 mp4 头。
+    // 编码器是 I/P-only，直接把已产出的包拉完即可；真正的 EOS 交给 close()
+    // （pipeline 置 NULL）处理。
     return pullPackets(packets, 100);
 }
 
