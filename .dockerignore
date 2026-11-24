@@ -1,0 +1,15 @@
+# Docker 构建上下文排除项（加快构建，避免把模型/产物打进镜像）
+.git
+.gitignore
+build
+build-*
+models
+logs
+evidence
+api_state
+draw_snapshot
+web/pipeline-editor/node_modules
+web/pipeline-editor/dist
+**/*.engine
+__pycache__
+*.pyc

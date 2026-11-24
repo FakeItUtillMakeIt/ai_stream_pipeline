@@ -1,0 +1,129 @@
+# ==============================================================================
+# ai_stream_pipeline — JetPack 7.2 (L4T r39.2 / Orin) 开发 + 运行镜像
+#
+# 构建（在仓库根目录执行，或使用 docker/build-jp72.sh）：
+#   docker build -f docker/Dockerfile.jp72 -t ai_stream_pipeline:jp72 .
+#
+# 说明：
+#   - 基础镜像 ubuntu:24.04，NVIDIA 组件来自 Jetson 官方 apt 源 r39.2；
+#   - OpenCV 固定 Ubuntu 4.6（带 contrib/freetype，中文面板需要），
+#     用 pin 阻止 Jetson 源的 4.8 抢占（4.8 不含 freetype）；
+#   - 镜像内保留 /src 源码和完整工具链，可在容器里直接增量编译；
+#   - 模型不入镜像（.dockerignore 已排除），运行时挂载 workspace；
+#   - 通过 Jetson som 源安装 nvidia-l4t-gstreamer / jetson-multimedia-api，
+#     镜像内含 nvv4l2decoder / nvvidconv / nvv4l2h264enc（容器内硬解/硬编）；
+#     运行容器时需要映射 /dev/v4l2-nvdec、/dev/v4l2-nvenc（run-jp72.sh 已处理）。
+# ==============================================================================
+# 可用 --build-arg BASE_IMAGE=nvcr.io/nvidia/l4t-jetpack:r39.2.0 换成自带
+# L4T GStreamer/multimedia 的基础镜像（需能访问 nvcr.io）。
+ARG BASE_IMAGE=ubuntu:24.04
+FROM ${BASE_IMAGE}
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG NVIDIA_REPO=https://repo.download.nvidia.com/jetson
+ARG L4T_MAJOR=39
+ARG L4T_MINOR=2
+ARG CUDA_PKG=cuda-toolkit-13-2
+ARG CUDA_ARCH=87
+ARG JOBS=
+# 传给 CMake 的额外参数（含空格），例如：
+#   --build-arg CMAKE_ARGS="-DWITH_FTP=OFF -DWITH_VLM=OFF"
+ARG CMAKE_ARGS="-DWITH_CUDA=ON -DWITH_TENSORRT=ON -DBUILD_TESTS=OFF"
+
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    CUDA_HOME=/usr/local/cuda \
+    OpenCV_DIR=/usr/lib/aarch64-linux-gnu/cmake/opencv4
+
+# ---------------------------------------------------------------------------
+# 1. NVIDIA Jetson apt 源（CUDA / TensorRT / cuDNN）
+# ---------------------------------------------------------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates wget gnupg \
+    && wget -qO /usr/share/keyrings/jetson-ota-public.asc \
+        "${NVIDIA_REPO}/jetson-ota-public.asc" \
+    && for c in common som; do \
+         echo "deb [arch=arm64 signed-by=/usr/share/keyrings/jetson-ota-public.asc] ${NVIDIA_REPO}/$c r${L4T_MAJOR}.${L4T_MINOR} main"; \
+       done > /etc/apt/sources.list.d/nvidia-jetson.list \
+    && apt-get update
+
+# ---------------------------------------------------------------------------
+# 2. 编译 + 运行依赖
+#
+# OpenCV 固定用 Ubuntu 24.04 的 4.6（带 contrib/freetype）。
+# Jetson 源的 libopencv-dev 4.8 不含 contrib，会退化成 cv::putText（中文变问号）。
+# ---------------------------------------------------------------------------
+RUN printf 'Package: libopencv*\nPin: origin "ports.ubuntu.com"\nPin-Priority: 1001\n' \
+        > /etc/apt/preferences.d/opencv-ubuntu \
+    && apt-get install -y --no-install-recommends \
+        build-essential cmake pkg-config git curl unzip \
+        ${CUDA_PKG} \
+        libnvinfer-dev libnvinfer-plugin-dev libnvonnxparsers-dev libnvinfer-bin \
+        libcudnn9-dev-cuda-13 \
+        nvidia-l4t-jetson-multimedia-api nvidia-l4t-gstreamer \
+        libopencv-dev libopencv-contrib-dev \
+        libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev \
+        libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+        gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-tools \
+        libssl-dev libcurl4-openssl-dev \
+        ffmpeg python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# cuda-toolkit-13-2 安装到 /usr/local/cuda-13.2，补 /usr/local/cuda 软链。
+# libcuda.so stub 仅供链接；运行期由 --gpus all / --runtime nvidia 挂载真实驱动。
+RUN ln -sfn /usr/local/cuda-13.2 /usr/local/cuda \
+    && ln -sfn /usr/local/cuda/lib64/stubs/libcuda.so /usr/lib/aarch64-linux-gnu/libcuda.so
+
+# 编译阶段就需要 nvcc 在 PATH 里
+ENV PATH=/usr/local/cuda/bin:${PATH}
+
+# ---------------------------------------------------------------------------
+# 3. 编译源码并安装到 /opt/ai_stream
+#
+# INSTALL_RPATH 让安装后的 binary/so 在镜像任意目录都能找到同目录及 ../lib 的库，
+# 不依赖宿主机 build 目录的绝对路径。
+# ---------------------------------------------------------------------------
+WORKDIR /src
+COPY . .
+
+RUN set -eux; \
+    rm -rf /tmp/build; \
+    cmake -S /src -B /tmp/build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/ai_stream \
+        -DCMAKE_INSTALL_RPATH='$ORIGIN;$ORIGIN/../lib' \
+        -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCH}" \
+        -DOpenCV_DIR="${OpenCV_DIR}" \
+        ${CMAKE_ARGS}; \
+    cmake --build /tmp/build -j"${JOBS:-$(nproc)}"; \
+    cmake --install /tmp/build; \
+    mkdir -p /opt/ai_stream/bin; \
+    cp -f /tmp/build/examples/simple_detection/simple_detection /opt/ai_stream/bin/ 2>/dev/null || true; \
+    cp -f /tmp/build/tools/benchmark/bench /opt/ai_stream/bin/ 2>/dev/null || true; \
+    rm -rf /tmp/build
+
+# ---------------------------------------------------------------------------
+# 4. 运行时目录与资源
+#
+# 程序按相对工作目录读取 config/、写 logs/、api_state/、evidence/。
+# 安装规则把 config 放到 share/ai_stream_pipeline/config，这里软链到根目录。
+# ---------------------------------------------------------------------------
+RUN set -eux; \
+    cd /opt/ai_stream; \
+    ln -sfn share/ai_stream_pipeline/config config; \
+    mkdir -p resources logs api_state evidence draw_snapshot; \
+    cp -f /src/resources/ai.ttf resources/ 2>/dev/null || true; \
+    cp -f /src/resources/logo.png resources/ 2>/dev/null || true; \
+    chmod -R a+rwX logs api_state evidence draw_snapshot
+
+# 镜像内编译辅助脚本
+COPY docker/build-in-container.sh /usr/local/bin/build-ai-stream
+RUN chmod +x /usr/local/bin/build-ai-stream
+
+WORKDIR /opt/ai_stream
+
+ENV PATH=/usr/local/cuda/bin:${PATH} \
+    LD_LIBRARY_PATH=/opt/ai_stream/lib:/usr/local/cuda/lib64:/opt/nvidia/l4t-gpu-libs/nvgpu
+
+# 默认进入 shell（开发镜像）；运行服务时用 docker/run-jp72.sh 覆盖命令
+CMD ["/bin/bash"]
