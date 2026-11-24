@@ -14,7 +14,24 @@
 
 - aarch64 主机（Orin 等），已安装 Docker 与 NVIDIA Container Runtime
 - 主机 JetPack 7.2 驱动正常（`nvidia-smi` 可用）
-- 构建需要访问 GitHub（CMake FetchContent 拉取 spdlog / cpp-httplib / curl）
+- 需要能访问 Ubuntu ports 与 NVIDIA Jetson apt 源（r39.2）
+- **源码依赖已内置**：`3rd_party/spdlog`、`3rd_party/httplib/httplib.h`，
+  配置阶段不再访问 GitHub
+
+## 离线部署
+
+网络受限环境建议在联网机器上构建一次，再分发镜像：
+
+```bash
+# 联网机器
+docker/build-jp72.sh
+docker save ai_stream_pipeline:jp72 | gzip > ai_stream_jp72.tar.gz
+
+# 目标机器
+gunzip -c ai_stream_jp72.tar.gz | docker load
+```
+
+目标机器只需运行容器（`docker/run-jp72.sh`），无需联网或重新编译。
 
 ## 构建
 
@@ -81,21 +98,26 @@ OpenCV 4.8（无 contrib）抢占。
 
 ## 关于 nvv4l2 硬解/硬编
 
-镜像已通过 Jetson `som` 源安装：
+镜像通过 Jetson `common` + `som` 源安装：
 
 - `nvidia-l4t-gstreamer`：提供 `nvv4l2decoder` / `nvvidconv` / `nvv4l2h264enc`
-- `nvidia-l4t-jetson-multimedia-api`：提供 `v4l2_nv_extensions.h`（V4L2 解码后端编译需要）
+- `nvidia-l4t-jetson-multimedia-api`：提供 `v4l2_nv_extensions.h`（裸 V4L2 解码后端）
 
-因此容器内可以使用 Jetson 硬件编解码。前提是运行容器时映射设备节点
-（`run-jp72.sh` 会自动映射存在的 `/dev/v4l2-nvdec`、`/dev/v4l2-nvenc`、`/dev/nvmap`）。
+安装前会创建 `/opt/nvidia/l4t-packages/.nv-l4t-disable-boot-fw-update-in-preinstall`，
+跳过 `nvidia-l4t-core` 对 `/proc/device-tree/compatible` 的检查（`docker build` 环境没有该节点）。
 
-如果设备节点没有映射，程序会自动回退：
+运行时确保映射设备节点（`run-jp72.sh` 自动处理）：
 
-- 解码：NVDEC/GStreamer 不可用 → FFmpeg 软解
-- 编码：`nvv4l2_h264` 不可用 → `libx264` 软编
+- `/dev/v4l2-nvdec`、`/dev/v4l2-nvenc`、`/dev/nvmap`
+- `/opt/nvidia/l4t-gpu-libs/nvgpu`（JP7 的真实 `libcuda.so.1`）
 
-> 若宿主较旧、`som` 源不可用，可用 `--build-arg BASE_IMAGE=...` 换成自带
-> L4T 多媒体的基础镜像。
+验证：
+
+```bash
+docker/run-jp72.sh bash -lc "gst-inspect-1.0 nvv4l2decoder | head -3; gst-inspect-1.0 nvv4l2h264enc | head -3"
+```
+
+如果设备/驱动未映射，程序会自动回退 FFmpeg 软解 / libx264 软编。
 
 ## 备注
 

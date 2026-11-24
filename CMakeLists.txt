@@ -142,26 +142,40 @@ include(GNUInstallDirs)
 include(cmake/dependencies.cmake)
 
 # 查找或获取基础依赖（spdlog, nlohmann_json）
-# 优先使用系统 spdlog，找不到时从 GitHub 下载
-find_package(spdlog QUIET)
-if(NOT spdlog_FOUND)
-    message(STATUS "System spdlog not found, fetching v1.9.2 from GitHub...")
-    include(FetchContent)
-    FetchContent_Declare(
-        spdlog
-        GIT_REPOSITORY https://github.com/gabime/spdlog.git
-        GIT_TAG v1.9.2
-        GIT_SHALLOW TRUE
-    )
+# 顺序：仓库内置源码（离线可构建）→ 系统安装 → GitHub FetchContent
+set(SPDLOG_BUNDLED_DIR "${CMAKE_SOURCE_DIR}/3rd_party/spdlog")
+if(EXISTS "${SPDLOG_BUNDLED_DIR}/CMakeLists.txt")
+    message(STATUS "Using bundled spdlog: ${SPDLOG_BUNDLED_DIR}")
     set(SPDLOG_BUILD_SHARED ON CACHE BOOL "" FORCE)
     set(SPDLOG_INSTALL OFF CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(spdlog)
-    # 注意：FetchContent_MakeAvailable 会自动创建 spdlog::spdlog 目标
-    # 设置一个变量表示使用FetchContent版本
+    set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(SPDLOG_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
+    set(SPDLOG_BUILD_BENCH OFF CACHE BOOL "" FORCE)
+    add_subdirectory("${SPDLOG_BUNDLED_DIR}" "${CMAKE_BINARY_DIR}/3rd_party/spdlog")
+    # 供后续 install 规则复用
+    set(spdlog_SOURCE_DIR "${SPDLOG_BUNDLED_DIR}")
     set(SPDLOG_FETCHED TRUE)
 else()
-    find_package(spdlog REQUIRED)
-    set(SPDLOG_FETCHED FALSE)
+    find_package(spdlog QUIET)
+    if(NOT spdlog_FOUND)
+        message(STATUS "System spdlog not found, fetching v1.9.2 from GitHub...")
+        include(FetchContent)
+        FetchContent_Declare(
+            spdlog
+            GIT_REPOSITORY https://github.com/gabime/spdlog.git
+            GIT_TAG v1.9.2
+            GIT_SHALLOW TRUE
+        )
+        set(SPDLOG_BUILD_SHARED ON CACHE BOOL "" FORCE)
+        set(SPDLOG_INSTALL OFF CACHE BOOL "" FORCE)
+        FetchContent_MakeAvailable(spdlog)
+        # 注意：FetchContent_MakeAvailable 会自动创建 spdlog::spdlog 目标
+        # 设置一个变量表示使用FetchContent版本
+        set(SPDLOG_FETCHED TRUE)
+    else()
+        find_package(spdlog REQUIRED)
+        set(SPDLOG_FETCHED FALSE)
+    endif()
 endif()
 
 # FetchContent 方式获取的 spdlog 是普通（非 find_package 导入）目标，
@@ -293,14 +307,27 @@ endif()
 
 # HTTP 服务依赖（如果构建 HTTP 服务器）
 if(BUILD_HTTP_SERVER)
-    include(FetchContent)
-    FetchContent_Declare(
-        httplib
-        GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
-        GIT_TAG        v0.14.3   # 或者使用最新的稳定版本
-    )
-    FetchContent_MakeAvailable(httplib)
-    # 注意：FetchContent 之后，httplib 的目标名称通常是 httplib::httplib
+    set(HTTPLIB_BUNDLED_DIR "${CMAKE_SOURCE_DIR}/3rd_party/httplib")
+    if(EXISTS "${HTTPLIB_BUNDLED_DIR}/httplib.h")
+        message(STATUS "Using bundled cpp-httplib: ${HTTPLIB_BUNDLED_DIR}")
+        add_library(httplib_bundled INTERFACE)
+        target_include_directories(httplib_bundled INTERFACE "${HTTPLIB_BUNDLED_DIR}")
+        add_library(httplib::httplib ALIAS httplib_bundled)
+        find_package(ZLIB QUIET)
+        if(ZLIB_FOUND)
+            target_link_libraries(httplib_bundled INTERFACE ZLIB::ZLIB)
+            target_compile_definitions(httplib_bundled INTERFACE CPPHTTPLIB_ZLIB_SUPPORT)
+        endif()
+    else()
+        include(FetchContent)
+        FetchContent_Declare(
+            httplib
+            GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+            GIT_TAG        v0.14.3   # 或者使用最新的稳定版本
+        )
+        FetchContent_MakeAvailable(httplib)
+        # 注意：FetchContent 之后，httplib 的目标名称通常是 httplib::httplib
+    endif()
 endif()
 
 # 推理后端可选依赖

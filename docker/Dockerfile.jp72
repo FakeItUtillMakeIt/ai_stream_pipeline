@@ -10,9 +10,11 @@
 #     用 pin 阻止 Jetson 源的 4.8 抢占（4.8 不含 freetype）；
 #   - 镜像内保留 /src 源码和完整工具链，可在容器里直接增量编译；
 #   - 模型不入镜像（.dockerignore 已排除），运行时挂载 workspace；
-#   - 通过 Jetson som 源安装 nvidia-l4t-gstreamer / jetson-multimedia-api，
-#     镜像内含 nvv4l2decoder / nvvidconv / nvv4l2h264enc（容器内硬解/硬编）；
-#     运行容器时需要映射 /dev/v4l2-nvdec、/dev/v4l2-nvenc（run-jp72.sh 已处理）。
+#   - 通过 sor/common+som 源安装 nvidia-l4t-gstreamer 与 jetson-multimedia-api，
+#     镜像内含 nvv4l2decoder / nvvidconv / nvv4l2h264enc。
+#     安装前创建 /opt/nvidia/l4t-packages/.nv-l4t-disable-boot-fw-update-in-preinstall，
+#     跳过 nvidia-l4t-core 对 /proc/device-tree 的检查（docker build 环境没有该节点）。
+#     运行容器时需映射 /dev/v4l2-nvdec、/dev/v4l2-nvenc、/dev/nvmap（run-jp72.sh 已处理）。
 # ==============================================================================
 # 可用 --build-arg BASE_IMAGE=nvcr.io/nvidia/l4t-jetpack:r39.2.0 换成自带
 # L4T GStreamer/multimedia 的基础镜像（需能访问 nvcr.io）。
@@ -55,12 +57,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ---------------------------------------------------------------------------
 RUN printf 'Package: libopencv*\nPin: origin "ports.ubuntu.com"\nPin-Priority: 1001\n' \
         > /etc/apt/preferences.d/opencv-ubuntu \
+    && mkdir -p /opt/nvidia/l4t-packages \
+    && touch /opt/nvidia/l4t-packages/.nv-l4t-disable-boot-fw-update-in-preinstall \
     && apt-get install -y --no-install-recommends \
         build-essential cmake pkg-config git curl unzip \
         ${CUDA_PKG} \
         libnvinfer-dev libnvinfer-plugin-dev libnvonnxparsers-dev libnvinfer-bin \
         libcudnn9-dev-cuda-13 \
-        nvidia-l4t-jetson-multimedia-api nvidia-l4t-gstreamer \
+        nvidia-l4t-gstreamer nvidia-l4t-jetson-multimedia-api \
         libopencv-dev libopencv-contrib-dev \
         libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev \
         libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \

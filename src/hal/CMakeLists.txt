@@ -66,10 +66,25 @@ if(WITH_CUDA)
     # Jetson V4L2 NVDEC/NVENC 后端（aarch64 平台，设备节点 + 头文件仅存在于 Jetson）
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
         list(APPEND HAL_SOURCES
-            decode/nvidia/v4l2_video_decoder.cpp
             decode/nvidia/gst_v4l2_video_decoder.cpp
             encode/nvidia/gst_v4l2_video_encoder.cpp
         )
+        # 裸 V4L2 解码后端依赖 L4T 的 v4l2_nv_extensions.h
+        # （nvidia-l4t-jetson-multimedia-api）。该头文件在普通 Docker 构建环境里
+        # 不一定存在，缺失时跳过该后端，保留 GStreamer / 软件解码回退。
+        find_path(V4L2_NV_EXT_INCLUDE_DIR
+            NAMES v4l2_nv_extensions.h
+            PATHS
+                /usr/src/jetson_multimedia_api/include
+                /usr/local/include/jetson_multimedia_api
+        )
+        if(V4L2_NV_EXT_INCLUDE_DIR)
+            list(APPEND HAL_SOURCES decode/nvidia/v4l2_video_decoder.cpp)
+            include_directories(${V4L2_NV_EXT_INCLUDE_DIR})
+            message(STATUS "Found v4l2_nv_extensions.h: ${V4L2_NV_EXT_INCLUDE_DIR}")
+        else()
+            message(STATUS "v4l2_nv_extensions.h not found, skipping raw V4L2 NVDEC backend")
+        endif()
     endif()
 endif()
 

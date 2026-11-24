@@ -29,6 +29,9 @@ for dev in /dev/v4l2-nvdec /dev/v4l2-nvenc /dev/nvmap; do
         DEV_ARGS+=(--device "$dev")
     fi
 done
+if [ -d /dev/dma_heap ]; then
+    DEV_ARGS+=(--device /dev/dma_heap)
+fi
 if [ -d /dev/dri ]; then
     DEV_ARGS+=(--device /dev/dri)
 fi
