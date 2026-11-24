@@ -72,6 +72,15 @@ docker/run-jp72.sh /opt/ai_stream/bin/simple_detection \
 可覆盖的环境变量：`IMAGE`、`REPO_ROOT`、`DOCKER_USER`，以及透传
 `VLM_API_KEY`、`AI_STREAM_API_TOKEN`、`AI_STREAM_STATE_DIR`。
 
+如果管道引用的视频/模型不在仓库目录内（例如 `file:///home/nvidia/lj/child_on_wall.mp4`），
+用 `MOUNT_DIR` 额外挂载该目录（容器内保持相同绝对路径）：
+
+```bash
+MOUNT_DIR=/home/nvidia/lj HW_CODEC=1 docker/run-jp72.sh \
+    /opt/ai_stream/bin/simple_detection \
+    /home/nvidia/lj/ai_stream_pipeline/build/api_state/templates/child_intrusion_fighting_fusion.json
+```
+
 ## 模型与配置
 
 - 模型（`models/`）和引擎文件**不打进镜像**（`.dockerignore` 已排除），
@@ -104,20 +113,27 @@ OpenCV 4.8（无 contrib）抢占。
 - `nvidia-l4t-jetson-multimedia-api`：提供 `v4l2_nv_extensions.h`（裸 V4L2 解码后端）
 
 安装前会创建 `/opt/nvidia/l4t-packages/.nv-l4t-disable-boot-fw-update-in-preinstall`，
-跳过 `nvidia-l4t-core` 对 `/proc/device-tree/compatible` 的检查（`docker build` 环境没有该节点）。
+跳过 `nvidia-l4t-core` 对 `/proc/device-tree/compatible` 的检查。
 
-运行时确保映射设备节点（`run-jp72.sh` 自动处理）：
-
-- `/dev/v4l2-nvdec`、`/dev/v4l2-nvenc`、`/dev/nvmap`
-- `/opt/nvidia/l4t-gpu-libs/nvgpu`（JP7 的真实 `libcuda.so.1`）
-
-验证：
+注意：L4T 用户态库必须与宿主驱动版本严格匹配。默认模式下若无法初始化，
+使用 **HW_CODEC 模式**（挂载宿主机的 `/usr/lib/aarch64-linux-gnu` 与 `/dev`）：
 
 ```bash
-docker/run-jp72.sh bash -lc "gst-inspect-1.0 nvv4l2decoder | head -3; gst-inspect-1.0 nvv4l2h264enc | head -3"
+HW_CODEC=1 docker/run-jp72.sh /opt/ai_stream/bin/simple_detection \
+    /home/nvidia/lj/ai_stream_pipeline/build/api_state/templates/child_intrusion_fighting_fusion.json
 ```
 
-如果设备/驱动未映射，程序会自动回退 FFmpeg 软解 / libx264 软编。
+该模式会：
+
+- `--privileged -v /dev:/dev`
+- `-v /usr/lib/aarch64-linux-gnu:/usr/lib/aarch64-linux-gnu:ro`
+- `LD_LIBRARY_PATH` 优先使用宿主的 `nvidia` 用户态库
+
+代价是与宿主机用户态强耦合（镜像内同名库被覆盖），适合“同型号 Jetson 整机部署”。
+默认模式（不设 `HW_CODEC`）只挂载必要设备，编解码不可用时自动回退软解/软编。
+
+> TensorRT 已按宿主 JetPack 固定为 **10.16.2.10**（`TRT_PKG_VERSION` 可覆盖），
+> 避免 som 源的 11.x 导致宿主机导出的 engine 无法在容器内反序列化。
 
 ## 备注
 

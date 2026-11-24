@@ -27,6 +27,9 @@ ARG L4T_MAJOR=39
 ARG L4T_MINOR=2
 ARG CUDA_PKG=cuda-toolkit-13-2
 ARG CUDA_ARCH=87
+# 与宿主 JetPack 版本对齐，避免镜像里装了 som 源更新的 TensorRT 11.x，
+# 导致宿主机上转好的 TRT 10.16 engine 在容器内无法反序列化。
+ARG TRT_PKG_VERSION=10.16.2.10-1+cuda13.2
 ARG JOBS=
 # 传给 CMake 的额外参数（含空格），例如：
 #   --build-arg CMAKE_ARGS="-DWITH_FTP=OFF -DWITH_VLM=OFF"
@@ -55,8 +58,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # OpenCV 固定用 Ubuntu 24.04 的 4.6（带 contrib/freetype）。
 # Jetson 源的 libopencv-dev 4.8 不含 contrib，会退化成 cv::putText（中文变问号）。
 # ---------------------------------------------------------------------------
-RUN printf 'Package: libopencv*\nPin: origin "ports.ubuntu.com"\nPin-Priority: 1001\n' \
-        > /etc/apt/preferences.d/opencv-ubuntu \
+RUN printf 'Package: libopencv*\nPin: origin "ports.ubuntu.com"\nPin-Priority: 1001\n\nPackage: libnvinfer*\nPin: version %s\nPin-Priority: 1001\n\nPackage: libnvonnxparsers*\nPin: version %s\nPin-Priority: 1001\n' "${TRT_PKG_VERSION}" "${TRT_PKG_VERSION}" \
+        > /etc/apt/preferences.d/jetson-pin \
     && mkdir -p /opt/nvidia/l4t-packages \
     && touch /opt/nvidia/l4t-packages/.nv-l4t-disable-boot-fw-update-in-preinstall \
     && apt-get install -y --no-install-recommends \
@@ -68,7 +71,7 @@ RUN printf 'Package: libopencv*\nPin: origin "ports.ubuntu.com"\nPin-Priority: 1
         libopencv-dev libopencv-contrib-dev \
         libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev \
         libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
-        gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-tools \
+        gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-tools \
         libssl-dev libcurl4-openssl-dev \
         ffmpeg python3 \
     && rm -rf /var/lib/apt/lists/*
@@ -115,10 +118,10 @@ RUN set -eux; \
 RUN set -eux; \
     cd /opt/ai_stream; \
     ln -sfn share/ai_stream_pipeline/config config; \
-    mkdir -p resources logs api_state evidence draw_snapshot; \
+    mkdir -p resources logs api_state evidence draw_snapshot alerts; \
     cp -f /src/resources/ai.ttf resources/ 2>/dev/null || true; \
     cp -f /src/resources/logo.png resources/ 2>/dev/null || true; \
-    chmod -R a+rwX logs api_state evidence draw_snapshot
+    chmod -R a+rwX logs api_state evidence draw_snapshot alerts
 
 # 镜像内编译辅助脚本
 COPY docker/build-in-container.sh /usr/local/bin/build-ai-stream

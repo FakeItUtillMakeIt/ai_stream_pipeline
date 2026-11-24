@@ -11,6 +11,8 @@
 #   REPO_ROOT    要挂载的源码/工作目录，默认本仓库根目录
 #                挂载到容器内相同绝对路径，这样管道 JSON 里的绝对模型路径不用改
 #   DOCKER_USER  容器内 UID:GID，默认当前用户
+#   HW_CODEC=1   硬解硬编模式：挂载宿主机 /usr/lib/aarch64-linux-gnu 和 /dev，
+#                使用宿主同版本的 L4T/TRT/GStreamer 用户态库（需要 --privileged）
 set -euo pipefail
 
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -22,24 +24,58 @@ if [ -f /opt/nvidia/l4t-gpu-libs/nvgpu/libcuda.so.1 ]; then
     GPU_LIB_MOUNT=(-v /opt/nvidia/l4t-gpu-libs/nvgpu:/opt/nvidia/l4t-gpu-libs/nvgpu:ro)
 fi
 
-# Jetson 编解码设备（存在才挂载）
-DEV_ARGS=()
-for dev in /dev/v4l2-nvdec /dev/v4l2-nvenc /dev/nvmap; do
-    if [ -e "$dev" ]; then
-        DEV_ARGS+=(--device "$dev")
-    fi
+GPU_ARGS=()
+if docker info -f '{{json .Runtimes}}' 2>/dev/null | grep -q '"nvidia"'; then
+    # Jetson 常见：l4t 的 nvidia runtime 不支持 --gpus
+    GPU_ARGS=(--runtime nvidia)
+else
+    GPU_ARGS=(--gpus all)
+fi
+
+# 组权限：/dev/nvmap 等属于 video 组；容器内组名可能不全，用宿主 GID 添加
+GROUP_ARGS=()
+for g in video render; do
+    gid=$(getent group "$g" 2>/dev/null | cut -d: -f3 || true)
+    [ -n "$gid" ] && GROUP_ARGS+=(--group-add "$gid")
 done
-if [ -d /dev/dma_heap ]; then
-    DEV_ARGS+=(--device /dev/dma_heap)
-fi
-if [ -d /dev/dri ]; then
-    DEV_ARGS+=(--device /dev/dri)
-fi
 
 ENV_ARGS=(-e HOME=/tmp)
 [ -n "${VLM_API_KEY:-}" ] && ENV_ARGS+=(-e "VLM_API_KEY=$VLM_API_KEY")
 [ -n "${AI_STREAM_API_TOKEN:-}" ] && ENV_ARGS+=(-e "AI_STREAM_API_TOKEN=$AI_STREAM_API_TOKEN")
 [ -n "${AI_STREAM_STATE_DIR:-}" ] && ENV_ARGS+=(-e "AI_STREAM_STATE_DIR=$AI_STREAM_STATE_DIR")
+
+# 额外挂载目录（同一路径）。例如视频素材在仓库外：
+#   MOUNT_DIR=/home/nvidia/lj docker/run-jp72.sh ...
+MOUNT_ARGS=()
+[ -n "${MOUNT_DIR:-}" ] && MOUNT_ARGS+=(-v "$MOUNT_DIR:$MOUNT_DIR")
+
+# HW_CODEC=1：使用宿主机用户态库（NVIDIA/L4T/TRT/OpenCV/GStreamer 插件），
+# 容器内 nvv4l2 硬解硬编才能和宿主驱动版本完全匹配。
+# 代价：与宿主机用户态强耦合，镜像内自带的同名库会被覆盖。
+HW_CODEC="${HW_CODEC:-0}"
+if [ "$HW_CODEC" = "1" ]; then
+    EXTRA_ARGS=(--privileged -v /dev:/dev
+                -v /usr/lib/aarch64-linux-gnu:/usr/lib/aarch64-linux-gnu:ro)
+    ENV_ARGS+=(-e "LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/nvidia:/opt/ai_stream/lib:/usr/local/cuda/lib64:/opt/nvidia/l4t-gpu-libs/nvgpu")
+else
+    EXTRA_ARGS=()
+fi
+
+# Jetson 编解码设备（存在才挂载；HW_CODEC=1 时已整体挂载 /dev）
+DEV_ARGS=()
+if [ "$HW_CODEC" != "1" ]; then
+    for dev in /dev/v4l2-nvdec /dev/v4l2-nvenc /dev/nvmap; do
+        if [ -e "$dev" ]; then
+            DEV_ARGS+=(--device "$dev")
+        fi
+    done
+    if [ -d /dev/dma_heap ]; then
+        DEV_ARGS+=(--device /dev/dma_heap)
+    fi
+    if [ -d /dev/dri ]; then
+        DEV_ARGS+=(--device /dev/dri)
+    fi
+fi
 
 if [ "$#" -eq 0 ]; then
     set -- bash
@@ -51,13 +87,16 @@ echo "==> 用户:     $DOCKER_USER"
 [ "${#DEV_ARGS[@]}" -gt 0 ] && echo "==> 设备:     ${DEV_ARGS[*]}"
 
 exec docker run --rm -it \
-    --gpus all \
+    "${GPU_ARGS[@]}" \
     --net host \
     --ipc host \
     --user "$DOCKER_USER" \
+    "${GROUP_ARGS[@]}" \
     "${GPU_LIB_MOUNT[@]}" \
     "${DEV_ARGS[@]}" \
+    "${EXTRA_ARGS[@]}" \
     "${ENV_ARGS[@]}" \
+    "${MOUNT_ARGS[@]}" \
     -v "$REPO_ROOT:$REPO_ROOT" \
     -w "$REPO_ROOT" \
     "$IMAGE" "$@"
