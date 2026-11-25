@@ -1,11 +1,19 @@
 // src/core/metrics.cpp
 #include "ai_stream/core/metrics.h"
 #include "3rd_party/log_mgr/log_mgr.h"
+#include <chrono>
+#include <cmath>
 #include <cstdlib>
+#include <cctype>
 #include <fstream>
 #include <sstream>
 #include <iomanip>
+#include <vector>
 #include <nlohmann/json.hpp>
+#if defined(__linux__)
+#include <unistd.h>
+#include <sys/resource.h>
+#endif
 #if defined(__GLIBC__)
 #include <malloc.h>
 #endif
@@ -43,6 +51,74 @@ int processRssMb() {
     }
 #endif
     return 0;
+}
+
+int processGpuMemoryMb() {
+#ifdef __linux__
+    // NvMap（GPU 专用/共享内存）按进程统计；由 run-jp72.sh 把
+    // /sys/kernel/debug/nvmap 只读挂到 /run/nvmap。
+    const char* env = std::getenv("AI_STREAM_NVMAP_CLIENTS");
+    const std::string path = (env && *env) ? env : "/run/nvmap/iovmm/clients";
+    std::ifstream f(path);
+    if (!f.is_open()) return -1;
+
+    const int self = static_cast<int>(::getpid());
+    std::string line;
+    std::getline(f, line);  // 表头
+    long long bytes = 0;
+    bool found = false;
+    while (std::getline(f, line)) {
+        std::istringstream iss(line);
+        std::vector<std::string> tok;
+        std::string t;
+        while (iss >> t) tok.push_back(t);
+        if (tok.size() < 4) continue;
+        // 列：CLIENT PROCESS PID SIZE；进程名可能被截断但不含空格，
+        // 从右取仍然安全。
+        const std::string& pid_s = tok[tok.size() - 2];
+        const std::string& size_s = tok.back();
+        const bool digits = !pid_s.empty() &&
+            std::all_of(pid_s.begin(), pid_s.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+        if (!digits || std::atoi(pid_s.c_str()) != self) continue;
+
+        char unit = size_s.empty() ? 'B' : size_s.back();
+        double val = std::atof(size_s.c_str());
+        if (unit == 'K' || unit == 'k') val *= 1024.0;
+        else if (unit == 'M' || unit == 'm') val *= 1024.0 * 1024.0;
+        else if (unit == 'G' || unit == 'g') val *= 1024.0 * 1024.0 * 1024.0;
+        bytes += static_cast<long long>(val);
+        found = true;
+    }
+    if (!found) return 0;  // 进程当前没有 NvMap 分配
+    return static_cast<int>(bytes / (1024 * 1024));
+#else
+    return -1;
+#endif
+}
+
+int processCpuPercentSample() {
+#if defined(__linux__)
+    struct rusage ru;
+    if (getrusage(RUSAGE_SELF, &ru) != 0) return 0;
+    const double cpu = static_cast<double>(ru.ru_utime.tv_sec + ru.ru_stime.tv_sec) +
+                       static_cast<double>(ru.ru_utime.tv_usec + ru.ru_stime.tv_usec) / 1e6;
+    static double last_cpu = -1.0;
+    static auto last_tp = std::chrono::steady_clock::now();
+    const auto now = std::chrono::steady_clock::now();
+    if (last_cpu < 0.0) {
+        last_cpu = cpu;
+        last_tp = now;
+        return 0;
+    }
+    const double dt = std::chrono::duration<double>(now - last_tp).count();
+    const double delta = cpu - last_cpu;
+    last_cpu = cpu;
+    last_tp = now;
+    if (dt <= 0.0) return 0;
+    return static_cast<int>(std::lround(100.0 * (delta < 0.0 ? 0.0 : delta) / dt));
+#else
+    return 0;
+#endif
 }
 
 void trimAllocator() {
@@ -139,6 +215,10 @@ void MetricsCollector::setCpuUsagePercent(int pct) {
     cpu_usage_percent_.store(pct);
 }
 
+void MetricsCollector::setProcessCpuPercent(int pct) {
+    process_cpu_percent_.store(pct);
+}
+
 void MetricsCollector::setMemoryMb(int mb) {
     memory_mb_.store(mb);
 }
@@ -188,6 +268,7 @@ MetricsCollector::SystemMetrics MetricsCollector::getSystemMetrics() const {
     SystemMetrics s;
     s.gpu_memory_mb = gpu_memory_mb_.load();
     s.cpu_usage_percent = cpu_usage_percent_.load();
+    s.process_cpu_percent = process_cpu_percent_.load();
     s.memory_mb = memory_mb_.load();
     s.active_pipelines = active_pipelines_.load();
     s.total_pipelines = total_pipelines_.load();
@@ -242,6 +323,7 @@ std::string MetricsCollector::formatJson() const {
     j["system"] = {
         {"gpu_memory_mb", sys.gpu_memory_mb},
         {"cpu_percent", sys.cpu_usage_percent},
+        {"process_cpu_percent", sys.process_cpu_percent},
         {"memory_mb", sys.memory_mb},
         {"active_pipelines", sys.active_pipelines},
         {"total_pipelines", sys.total_pipelines}
@@ -312,7 +394,7 @@ std::string MetricsCollector::formatPrometheus() const {
         }
     }
 
-    oss << "\n# HELP ai_stream_system_gpu_memory_mb GPU memory usage in MB\n";
+    oss << "\n# HELP ai_stream_system_gpu_memory_mb Process GPU dedicated memory (NvMap) in MB, -1 if unavailable\n";
     oss << "# TYPE ai_stream_system_gpu_memory_mb gauge\n";
     oss << "ai_stream_system_gpu_memory_mb " << sys.gpu_memory_mb << "\n";
 
@@ -320,9 +402,13 @@ std::string MetricsCollector::formatPrometheus() const {
     oss << "# TYPE ai_stream_system_memory_mb gauge\n";
     oss << "ai_stream_system_memory_mb " << sys.memory_mb << "\n";
 
-    oss << "\n# HELP ai_stream_system_cpu_percent CPU usage percent\n";
+    oss << "\n# HELP ai_stream_system_cpu_percent System CPU usage percent (all cores average)\n";
     oss << "# TYPE ai_stream_system_cpu_percent gauge\n";
     oss << "ai_stream_system_cpu_percent " << sys.cpu_usage_percent << "\n";
+
+    oss << "\n# HELP ai_stream_system_process_cpu_percent Process CPU percent (100 = one core)\n";
+    oss << "# TYPE ai_stream_system_process_cpu_percent gauge\n";
+    oss << "ai_stream_system_process_cpu_percent " << sys.process_cpu_percent << "\n";
 
     oss << "\n# HELP ai_stream_system_active_pipelines Active pipeline count\n";
     oss << "# TYPE ai_stream_system_active_pipelines gauge\n";

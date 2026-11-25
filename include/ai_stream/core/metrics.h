@@ -49,6 +49,7 @@ public:
 
     void setGpuMemoryMb(int mb);
     void setCpuUsagePercent(int pct);
+    void setProcessCpuPercent(int pct);
     void setMemoryMb(int mb);
     void setActivePipelines(int count);
     void setTotalPipelines(int count);
@@ -64,8 +65,9 @@ public:
     void resetAll();
 
     struct SystemMetrics {
-        int gpu_memory_mb = 0;
-        int cpu_usage_percent = 0;
+        int gpu_memory_mb = 0;          // 本进程 NvMap（GPU 专用/共享）占用；-1 表示不可读
+        int cpu_usage_percent = 0;      // 整机所有核心平均（0~100）
+        int process_cpu_percent = 0;    // 本进程 CPU%（100 = 1 个核）
         int memory_mb = 0;          // 当前进程 RSS
         int active_pipelines = 0;
         int total_pipelines = 0;
@@ -98,6 +100,7 @@ private:
 
     std::atomic<int> gpu_memory_mb_{0};
     std::atomic<int> cpu_usage_percent_{0};
+    std::atomic<int> process_cpu_percent_{0};
     std::atomic<int> memory_mb_{0};
     std::atomic<int> active_pipelines_{0};
     std::atomic<int> total_pipelines_{0};
@@ -105,6 +108,14 @@ private:
 
 /** 当前进程常驻内存（RSS，MB）；非 Linux 返回 0 */
 int processRssMb();
+
+/** 当前进程 GPU 专用内存（NvMap，MB）；不可读返回 -1。
+ *  数据源：/run/nvmap/iovmm/clients（run-jp72.sh 会把
+ *  /sys/kernel/debug/nvmap 只读挂载到 /run/nvmap）。 */
+int processGpuMemoryMb();
+
+/** 当前进程 CPU 使用率（100 = 1 个核心），需周期性调用（约 1s 一次） */
+int processCpuPercentSample();
 
 /** 将 glibc arena 中已释放的空闲页归还 OS（非 glibc 平台为空操作） */
 void trimAllocator();

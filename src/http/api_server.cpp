@@ -974,15 +974,8 @@ void ApiServer::monitorSystemResources() {
     auto last_trim = std::chrono::steady_clock::now();
 
     while (resource_running_.load()) {
-#ifdef WITH_CUDA
-        // cudaMemGetInfo 返回的是当前设备的全局空闲/总量，包含其他进程占用。
-        size_t free_mem = 0;
-        size_t total_mem = 0;
-        if (cudaMemGetInfo(&free_mem, &total_mem) == cudaSuccess && total_mem > 0) {
-            const size_t used_mb = (total_mem - free_mem) / (1024 * 1024);
-            mc.setGpuMemoryMb(static_cast<int>(used_mb));
-        }
-#endif
+        // GPU 专用内存：本进程 NvMap（与 jtop 口径一致），不可读时为 -1
+        mc.setGpuMemoryMb(core::processGpuMemoryMb());
         mc.setMemoryMb(core::processRssMb());
 
         const auto now = std::chrono::steady_clock::now();
@@ -1020,6 +1013,7 @@ void ApiServer::monitorSystemResources() {
                             const int usage = static_cast<int>(
                                 100.0 * static_cast<double>(total_diff - idle_diff) / total_diff);
                             mc.setCpuUsagePercent(std::clamp(usage, 0, 100));
+                            mc.setProcessCpuPercent(core::processCpuPercentSample());
                         }
                         last_idle = current_idle;
                         last_total = current_total;

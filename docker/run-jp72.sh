@@ -32,6 +32,13 @@ else
     GPU_ARGS=(--gpus all)
 fi
 
+# 进程 GPU 专用内存（NvMap）统计：把 debugfs 子树只读挂进来，
+# 非 root 也能读取 /run/nvmap/iovmm/clients（对齐 jtop 口径）
+NVMAP_ARGS=()
+if [ -d /sys/kernel/debug/nvmap ]; then
+    NVMAP_ARGS=(-v /sys/kernel/debug/nvmap:/run/nvmap:ro)
+fi
+
 # 组权限：/dev/nvmap 等属于 video 组；容器内组名可能不全，用宿主 GID 添加
 GROUP_ARGS=()
 for g in video render; do
@@ -97,7 +104,7 @@ fi
 echo "==> 用户:     $DOCKER_USER"
 [ "${#DEV_ARGS[@]}" -gt 0 ] && echo "==> 设备:     ${DEV_ARGS[*]}"
 
-exec docker run --rm -it \
+exec docker run -itd --name ai_stream\
     "${GPU_ARGS[@]}" \
     --net host \
     --ipc host \
@@ -108,6 +115,7 @@ exec docker run --rm -it \
     "${EXTRA_ARGS[@]}" \
     "${ENV_ARGS[@]}" \
     "${MOUNT_ARGS[@]}" \
+    "${NVMAP_ARGS[@]}" \
     "${REPO_MOUNT[@]}" \
     -w "$WORKDIR" \
     "$IMAGE" "$@"

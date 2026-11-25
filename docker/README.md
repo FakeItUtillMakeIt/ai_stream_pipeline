@@ -64,7 +64,8 @@ CMAKE_ARGS="-DWITH_CUDA=ON -DWITH_TENSORRT=ON -DWITH_FTP=OFF -DWITH_VLM=OFF" \
   `relateanything`、`action_recognition.rebuild`
 - relateanything 的 `predicate_bank.json` 等配置、`resources/ai.ttf`、`logo.png`
 - `scripts/`、demo 管道配置、测试视频 `child_on_wall.mp4`
-- `mediamtx`（RTMP 1935 / HLS 8888）
+- `mediamtx`（RTMP 1935 / HLS 8888；`http_server` 会在 8080 上把 `/live/*` 反向代理到它，
+  浏览器只需访问 8080）
 - 前端 dist（`/opt/ai_stream/web`）
 
 默认 CMD 会同时启动 mediamtx 和 http_server（前端与 API 同源 8080）：
@@ -78,8 +79,14 @@ AI_STREAM_API_TOKEN=yanfa AI_STREAM_IMPL_TOKEN=shishi \
 docker run --rm --runtime nvidia --privileged -v /dev:/dev \
     -v /opt/nvidia/l4t-gpu-libs/nvgpu:/opt/nvidia/l4t-gpu-libs/nvgpu:ro \
     -v /usr/lib/aarch64-linux-gnu:/usr/lib/aarch64-linux-gnu:ro \
+    -v /sys/kernel/debug/nvmap:/run/nvmap:ro \
     --net host --ipc host ai_stream_pipeline:jp72
 ```
+
+> 页面指标口径：
+> - **CPU**：进程 CPU，显示为“核数”（100% = 1 核，可超过 8）
+> - **GPU 专用内存**：本进程 NvMap（与 jtop 一致），来自 `/run/nvmap/iovmm/clients`；
+>   没有挂载 debugfs 时显示 `—`
 
 浏览器访问 `http://<IP>:8080/`。
 
