@@ -900,6 +900,48 @@ void ApiServer::setupRoutes() {
         }
     });
 
+    // ===== HLS 反向代理：/live/* -> mediamtx HLS =====
+    // 浏览器只访问 http_server 的 8080，避免额外暴露 8888（防火墙/NAT）
+    // 以及跨端口的 CORS/Cookie 问题。上游可用 AI_STREAM_HLS_UPSTREAM 覆盖。
+    {
+        const char* up = std::getenv("AI_STREAM_HLS_UPSTREAM");
+        const std::string upstream = (up && *up) ? up : "127.0.0.1:8888";
+        const auto pos = upstream.rfind(':');
+        const std::string hls_host = pos == std::string::npos ? upstream : upstream.substr(0, pos);
+        const int hls_port = pos == std::string::npos ? 8888 : std::atoi(upstream.c_str() + pos + 1);
+
+        server_.Get(R"(/live/.*)", [hls_host, hls_port](const httplib::Request& req, httplib::Response& res) {
+            httplib::Client cli(hls_host, hls_port);
+            cli.set_connection_timeout(2, 0);
+            cli.set_read_timeout(30, 0);
+            cli.set_follow_location(true);
+
+            httplib::Headers headers;
+            for (const char* key : {"Cookie", "Origin", "Referer", "Range", "User-Agent"}) {
+                if (req.has_header(key)) headers.emplace(key, req.get_header_value(key));
+            }
+
+            auto r = cli.Get(req.target, headers);
+            if (!r) {
+                res.status = 502;
+                res.set_content("hls upstream unavailable", "text/plain");
+                return;
+            }
+            res.status = r->status;
+            std::string content_type = "application/octet-stream";
+            for (const auto& hdr : r->headers) {
+                if (hdr.first == "Transfer-Encoding" || hdr.first == "Connection" ||
+                    hdr.first == "Content-Type") {
+                    if (hdr.first == "Content-Type") content_type = hdr.second;
+                    continue;
+                }
+                res.set_header(hdr.first.c_str(), hdr.second.c_str());
+            }
+            res.set_content(r->body, content_type);
+        });
+        LOG_INFO_FMT("Proxying HLS /live/* -> http://{}:{}", hls_host, hls_port);
+    }
+
     // ===== 静态托管：Web 管道编辑器（同源，免 CORS）=====
     // 根目录用 AI_STREAM_WEB_ROOT 指定，默认 ./web/pipeline-editor/dist
     {

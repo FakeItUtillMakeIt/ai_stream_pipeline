@@ -17,11 +17,9 @@ export function LivePlayer({ url, compact = false, onStatus, onMeta, lowLatency 
 }) {
   const localRef = useRef<HTMLVideoElement>(null);
   const ref = videoRef || localRef;
-  // 相对 HLS 地址（/live/xxx/index.m3u8）属于 mediamtx 的 8888 端口，
-  // 不能按 http_server 的 origin（8080）解析，否则清单 404、预览一直打不开。
-  const srcUrl = url && !/^https?:/i.test(url) && url.includes('.m3u8')
-    ? `${window.location.protocol}//${window.location.hostname}:8888${url.startsWith('/') ? url : '/' + url}`
-    : url;
+  // 相对地址由浏览器按当前 origin（http_server 8080）解析；
+  // /live/* 由 http_server 反向代理到 mediamtx 8888，无需再拼端口。
+  const srcUrl = url;
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
   const statusRef = useRef(onStatus);
