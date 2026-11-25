@@ -62,7 +62,21 @@ int processGpuMemoryMb() {
     std::ifstream f(path);
     if (!f.is_open()) return -1;
 
-    const int self = static_cast<int>(::getpid());
+    // debugfs 里的 PID 是宿主 PID；容器内 getpid() 是命名空间 PID（通常是 1）。
+    // /proc/self/status 的 NSpid 从外到内列出：取第一个（宿主 PID）。
+    int self = static_cast<int>(::getpid());
+    {
+        std::ifstream st("/proc/self/status");
+        std::string line;
+        while (std::getline(st, line)) {
+            if (line.rfind("NSpid:", 0) != 0) continue;
+            std::istringstream iss(line.substr(6));
+            int pid = 0;
+            if (iss >> pid) self = pid;
+            break;
+        }
+    }
+
     std::string line;
     std::getline(f, line);  // 表头
     long long bytes = 0;

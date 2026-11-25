@@ -1,0 +1,119 @@
+# ==============================================================================
+# ai_stream_pipeline — JetPack 7.2 运行镜像（slim）
+#
+# 只包含运行期依赖 + 程序/模型/前端/mediamtx，不含编译器、CUDA Toolkit、
+# TensorRT 静态库/builder resources、源码 /src、node_modules。
+#
+# 构建顺序：
+#   docker/build-jp72.sh            # 先构建完整 dev 镜像
+#   docker/build-jp72-runtime.sh    # 基于 dev 镜像产出 slim 运行镜像
+#
+# 或：WITH_RUNTIME=1 docker/build-jp72.sh
+#
+# 注意：slim 镜像不能在容器内编译，也不能用 trtexec 生成 engine；
+# 需要编译/转模型请使用 ai_stream_pipeline:jp72（dev 镜像）。
+# ==============================================================================
+ARG BUILDER_IMAGE=ai_stream_pipeline:jp72
+FROM ${BUILDER_IMAGE} AS builder
+
+FROM ubuntu:24.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG NVIDIA_REPO=https://repo.download.nvidia.com/jetson
+ARG L4T_MAJOR=39
+ARG L4T_MINOR=2
+# 与 dev 镜像保持完全一致的运行库版本
+ARG CUDA_RUNTIME_VERSION=13.2.86-1
+ARG CUBLAS_VERSION=13.4.1.3-1
+ARG CUFFT_VERSION=12.2.0.57-1
+ARG NVJITLINK_VERSION=13.2.86-1
+ARG CUDNN_VERSION=9.20.0.46-1
+ARG TRT_PKG_VERSION=10.16.2.10-1+cuda13.2
+
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    DEBIAN_FRONTEND=noninteractive \
+    TZ=Asia/Shanghai
+
+# ---------------------------------------------------------------------------
+# 1. Jetson apt 源（common + som）
+# ---------------------------------------------------------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates wget gnupg \
+    && wget -qO /usr/share/keyrings/jetson-ota-public.asc \
+        "${NVIDIA_REPO}/jetson-ota-public.asc" \
+    && for c in common som; do \
+         echo "deb [arch=arm64 signed-by=/usr/share/keyrings/jetson-ota-public.asc] ${NVIDIA_REPO}/$c r${L4T_MAJOR}.${L4T_MINOR} main"; \
+       done > /etc/apt/sources.list.d/nvidia-jetson.list \
+    && apt-get update
+
+# ---------------------------------------------------------------------------
+# 2. 运行期依赖（不含 -dev、编译器、CUDA Toolkit）
+#
+# OpenCV 固定 Ubuntu 4.6（贡献模块含 freetype）；TensorRT 固定 10.16.2.10，
+# 与 dev 镜像/宿主 engine 一致。安装后删除只有“构建 engine”才需要的
+# builder resources 与 lean/dispatch/vc 运行时，进一步减小体积。
+# ---------------------------------------------------------------------------
+RUN printf 'Package: libnvinfer*\nPin: version %s\nPin-Priority: 1001\n\nPackage: libnvonnxparsers*\nPin: version %s\nPin-Priority: 1001\n' \
+        "${TRT_PKG_VERSION}" "${TRT_PKG_VERSION}" \
+        > /etc/apt/preferences.d/jetson-pin \
+    && printf 'Package: libopencv*\nPin: origin "ports.ubuntu.com"\nPin-Priority: 1001\n' \
+        > /etc/apt/preferences.d/opencv-ubuntu \
+    && mkdir -p /opt/nvidia/l4t-packages \
+    && touch /opt/nvidia/l4t-packages/.nv-l4t-disable-boot-fw-update-in-preinstall \
+    && apt-get install -y --no-install-recommends \
+        tzdata \
+        cuda-cudart-13-2="${CUDA_RUNTIME_VERSION}" \
+        libcublas-13-2="${CUBLAS_VERSION}" \
+        libcufft-13-2="${CUFFT_VERSION}" \
+        libnvjitlink-13-2="${NVJITLINK_VERSION}" \
+        libcudnn9-cuda-13="${CUDNN_VERSION}" \
+        libnvinfer10="${TRT_PKG_VERSION}" \
+        libnvinfer-plugin10="${TRT_PKG_VERSION}" \
+        libnvonnxparsers10="${TRT_PKG_VERSION}" \
+        libopencv-core406t64 libopencv-imgproc406t64 libopencv-imgcodecs406t64 \
+        libopencv-videoio406t64 libopencv-dnn406t64 libopencv-contrib406t64 \
+        libavcodec60 libavformat60 libavutil58 libswscale7 libswresample4 \
+        libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 \
+        gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
+        nvidia-l4t-gstreamer \
+        libcurl4t64 libssl3t64 zlib1g libgomp1 libfreetype6 \
+    && rm -f /usr/lib/aarch64-linux-gnu/libnvinfer_builder_resource_* \
+             /usr/lib/aarch64-linux-gnu/libnvinfer_lean* \
+             /usr/lib/aarch64-linux-gnu/libnvinfer_dispatch* \
+             /usr/lib/aarch64-linux-gnu/libnvinfer_vc_plugin* \
+    && rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man
+
+# CUDA 运行库路径 + /usr/local/cuda 软链
+RUN mkdir -p /etc/ld.so.conf.d \
+    && printf '/usr/local/cuda/lib64\n/usr/local/cuda/targets/aarch64-linux/lib\n' \
+        > /etc/ld.so.conf.d/cuda-runtime.conf \
+    && if [ -d /usr/local/cuda-13.2 ]; then ln -sfn /usr/local/cuda-13.2 /usr/local/cuda; fi \
+    && ldconfig
+
+# 时区
+RUN ln -sfn /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+    && echo "Asia/Shanghai" > /etc/timezone
+
+# ---------------------------------------------------------------------------
+# 3. 从 dev 镜像拷贝程序、模型、前端和运行脚本
+# ---------------------------------------------------------------------------
+COPY --from=builder /opt/ai_stream /opt/ai_stream
+COPY --from=builder /usr/local/bin/mediamtx /usr/local/bin/mediamtx
+COPY --from=builder /etc/mediamtx.yml /etc/mediamtx.yml
+COPY --from=builder /usr/local/bin/start-ai-stream /usr/local/bin/start-ai-stream
+COPY --from=builder /usr/local/bin/run-demo /usr/local/bin/run-demo
+
+RUN set -eux; \
+    cd /opt/ai_stream; \
+    ln -sfn share/ai_stream_pipeline/config config; \
+    mkdir -p logs api_state evidence draw_snapshot alerts; \
+    chmod -R a+rwX logs api_state evidence draw_snapshot alerts; \
+    chmod +x /usr/local/bin/mediamtx /usr/local/bin/start-ai-stream /usr/local/bin/run-demo
+
+WORKDIR /opt/ai_stream
+
+ENV AI_STREAM_WEB_ROOT=/opt/ai_stream/web \
+    LD_LIBRARY_PATH=/opt/ai_stream/lib:/usr/local/cuda/lib64:/opt/nvidia/l4t-gpu-libs/nvgpu
+
+CMD ["/usr/local/bin/start-ai-stream"]

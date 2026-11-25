@@ -56,6 +56,30 @@ CMAKE_ARGS="-DWITH_CUDA=ON -DWITH_TENSORRT=ON -DWITH_FTP=OFF -DWITH_VLM=OFF" \
 > 直接用 `docker build -f docker/Dockerfile.jp72 .` 时，需要先执行
 > `docker/stage-assets.sh` 准备模型与 mediamtx；`docker/build-jp72.sh` 会自动执行。
 
+## Slim 运行镜像
+
+在 dev 镜像基础上再产出一个只含运行依赖的镜像（约 **6.6 GB**，dev 镜像 28 GB）：
+
+```bash
+docker/build-jp72-runtime.sh
+# 或构建 dev 时一并产出：
+WITH_RUNTIME=1 docker/build-jp72.sh
+```
+
+- 镜像：`ai_stream_pipeline:jp72-runtime`
+- 包含：程序库、模型、前端 dist、mediamtx、运行库（CUDA Runtime/TensorRT/cuDNN/OpenCV/FFmpeg/GStreamer/L4T 插件）
+- 不含：编译器、CUDA Toolkit、TensorRT builder resources/静态库、源码 `/src`、node/npm
+- 因此 slim 镜像**不能在容器内编译，也不能用 trtexec 生成 engine**；
+  这些操作请用 `ai_stream_pipeline:jp72`（dev 镜像）
+
+运行：
+
+```bash
+IMAGE=ai_stream_pipeline:jp72-runtime \
+AI_STREAM_API_TOKEN=yanfa AI_STREAM_IMPL_TOKEN=shishi \
+NO_MOUNT=1 HW_CODEC=1 docker/run-jp72.sh
+```
+
 ## 运行（不挂载仓库，镜像已自包含）
 
 镜像内置：

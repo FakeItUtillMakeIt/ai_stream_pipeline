@@ -23,3 +23,8 @@ args+=("$REPO_ROOT")
 echo "==> docker ${args[*]}"
 docker "${args[@]}"
 echo "==> 镜像已生成：$IMAGE"
+
+# 可选：继续产出 slim 运行镜像
+if [ "${WITH_RUNTIME:-0}" = "1" ]; then
+    DEV_IMAGE="$IMAGE" "$REPO_ROOT/docker/build-jp72-runtime.sh"
+fi
