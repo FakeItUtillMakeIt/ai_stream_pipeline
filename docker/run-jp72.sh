@@ -108,6 +108,7 @@ exec docker run -itd --name ai_stream\
     "${GPU_ARGS[@]}" \
     --net host \
     --ipc host \
+    --pid host \
     --user "$DOCKER_USER" \
     "${GROUP_ARGS[@]}" \
     "${GPU_LIB_MOUNT[@]}" \

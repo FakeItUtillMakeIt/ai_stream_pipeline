@@ -104,12 +104,13 @@ docker run --rm --runtime nvidia --privileged -v /dev:/dev \
     -v /opt/nvidia/l4t-gpu-libs/nvgpu:/opt/nvidia/l4t-gpu-libs/nvgpu:ro \
     -v /usr/lib/aarch64-linux-gnu:/usr/lib/aarch64-linux-gnu:ro \
     -v /sys/kernel/debug/nvmap:/run/nvmap:ro \
-    --net host --ipc host ai_stream_pipeline:jp72
+    --net host --ipc host --pid host ai_stream_pipeline:jp72
 ```
 
 > 页面指标口径：
 > - **CPU**：进程 CPU，显示为“核数”（100% = 1 核，可超过 8）
 > - **GPU 专用内存**：本进程 NvMap（与 jtop 一致），来自 `/run/nvmap/iovmm/clients`；
+>   需要 `--pid host` 才能把容器 PID 映射到 debugfs 里的宿主 PID（run 脚本已带），
 >   没有挂载 debugfs 时显示 `—`
 
 浏览器访问 `http://<IP>:8080/`。
