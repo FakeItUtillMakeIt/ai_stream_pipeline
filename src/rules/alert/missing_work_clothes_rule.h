@@ -15,7 +15,7 @@ namespace rules {
         void reset() override;
 
         AlertType getType() const override{ return AlertType::MISSING_WORK_CLOTHES; };
-        AlertItemType getAlertItemType() const override { return AlertItemType::ITEM_SAFETY_ITEM; };
+        AlertItemType getAlertItemType() const override { return AlertItemType::ITEM_PERSON_BEHAVIOR; };
         nlohmann::json getStatistics() const override;
 
     private:

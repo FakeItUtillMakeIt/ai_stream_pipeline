@@ -14,14 +14,14 @@ void IDrawNode::addPanel(cv::Mat& origin, const std::vector<rules::AlertResult>&
     // 1. 按业务类别分组
     // ============================================================
     std::vector<rules::AlertEvent> person_behaviors;
-    std::vector<rules::AlertEvent> safety_items;
+    std::vector<rules::AlertEvent> relation_items;
     std::vector<rules::AlertEvent> scene_recognitions;
 
     for (const auto& alert : alert_results) {
         for (const auto& alert_event : alert.alert_events) {
             LOG_INFO_FMT("[IDrawNode] Alert: {}, Type: {}", alert_event.alert_name, static_cast<int>(alert_event.alert_type));
-            if (alert_event.alert_item_type == rules::AlertItemType::ITEM_SAFETY_ITEM) {
-                safety_items.push_back(alert_event);
+            if (alert_event.alert_item_type == rules::AlertItemType::ITEM_RELATION_RECOGNITION) {
+                relation_items.push_back(alert_event);
             }
             else if (alert_event.alert_item_type == rules::AlertItemType::ITEM_PERSON_BEHAVIOR)
             {
@@ -63,11 +63,11 @@ void IDrawNode::addPanel(cv::Mat& origin, const std::vector<rules::AlertResult>&
 
     int total_lines = 0;
     int person_rows = static_cast<int>((person_behaviors.size() + 3 - 1) / 3);
-    int safety_rows = static_cast<int>((safety_items.size() + 2 - 1) / 2);
+    int safety_rows = static_cast<int>((relation_items.size() + 2 - 1) / 2);
     int scene_rows = static_cast<int>((scene_recognitions.size() + 2 - 1) / 2);
 
     if (!person_behaviors.empty()) total_lines += person_rows + 2;
-    if (!safety_items.empty())     total_lines += safety_rows + 2;
+    if (!relation_items.empty())     total_lines += safety_rows + 2;
     if (!scene_recognitions.empty()) total_lines += scene_rows + 2;
     if (total_lines == 0)          total_lines = 2;
 
@@ -196,7 +196,7 @@ void IDrawNode::addPanel(cv::Mat& origin, const std::vector<rules::AlertResult>&
     };
 
     drawCategory(person_behaviors, "人员行为", 3, 8);
-    drawCategory(safety_items, "劳保用品", 2, 12);
+    drawCategory(relation_items, "关系识别", 2, 12);
     drawCategory(scene_recognitions, "场景识别", 2, 12);
 
     // ============================================================
