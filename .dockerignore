@@ -1,6 +1,7 @@
-# Docker 构建上下文排除项（加快构建，避免把模型/产物打进镜像）
+# Docker 构建上下文排除项（加快构建，避免把模型/产物/文档打进镜像）
 .git
 .gitignore
+.github
 build
 build-*
 models
@@ -13,3 +14,13 @@ web/pipeline-editor/dist
 **/*.engine
 __pycache__
 *.pyc
+
+# 这些文件只影响镜像构建/运行方式，不参与编译；
+# 排除后修改 Dockerfile/脚本/文档不会让 COPY . . 缓存失效、重复编译源码。
+docs
+readme.md
+docker/Dockerfile.jp72
+docker/Dockerfile.*
+docker/README.md
+docker/run-jp72.sh
+docker/build-jp72.sh

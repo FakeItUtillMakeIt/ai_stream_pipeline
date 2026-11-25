@@ -14,9 +14,10 @@
 
 - aarch64 主机（Orin 等），已安装 Docker 与 NVIDIA Container Runtime
 - 主机 JetPack 7.2 驱动正常（`nvidia-smi` 可用）
-- 需要能访问 Ubuntu ports 与 NVIDIA Jetson apt 源（r39.2）
+- 需要能访问 Ubuntu ports、NVIDIA Jetson apt 源（r39.2）以及 npm registry
+  （用于构建前端；可用 `--build-arg NPM_REGISTRY=https://registry.npmmirror.com` 切换）
 - **源码依赖已内置**：`3rd_party/spdlog`、`3rd_party/httplib/httplib.h`，
-  配置阶段不再访问 GitHub
+  CMake 配置阶段不再访问 GitHub
 
 ## 离线部署
 
@@ -104,6 +105,44 @@ build-ai-stream -DWITH_FTP=OFF   # 追加参数
 镜像内 OpenCV 固定为 Ubuntu 24.04 的 **4.6**（自带 `opencv_freetype`），
 `freetype` 可用，`resources/ai.ttf` 能正常渲染中文；不会被 Jetson 源的
 OpenCV 4.8（无 contrib）抢占。
+
+## Web 流水线编辑器
+
+### 运行（不挂载仓库，推荐）
+
+镜像在构建时已执行 `npm ci && npm run build`，产物在 `/opt/ai_stream/web`，
+并设置 `AI_STREAM_WEB_ROOT=/opt/ai_stream/web`。`http_server` 会**同源托管**
+前端页面，因此只需要启动一个进程：
+
+```bash
+MOUNT_DIR=/home/nvidia/lj HW_CODEC=1 docker/run-jp72.sh \
+    /opt/ai_stream/bin/http_server 0.0.0.0 8080
+```
+
+浏览器直接访问 `http://<设备IP>:8080/`，前端与 `/api` 同源，无需 npm。
+
+### 开发（挂载仓库）
+
+镜像内保留 `/src` 源码、完整编译工具链、Node 18/npm 9 和前端 `node_modules`。
+挂载仓库后可以编译后端：
+
+```bash
+docker/run-jp72.sh bash -lc 'cd "$PWD" && SRC="$PWD" build-ai-stream'
+```
+
+前端热更新（可选）：
+
+```bash
+docker/run-jp72.sh bash -lc \
+  'cd "$PWD/web/pipeline-editor" && npm run dev -- --host 0.0.0.0'
+```
+
+浏览器访问 5173；Vite 会把 `/api` 代理到 `127.0.0.1:8080`。
+
+- 挂载仓库时前端依赖直接复用仓库里的 `node_modules`；没有则 `npm install`。
+- 使用镜像内自带的源码/依赖（不挂载仓库）时，路径是 `/src/web/pipeline-editor`。
+- 构建镜像时可用 `NPM_REGISTRY=https://registry.npmmirror.com` 切换 npm 源：
+  `docker build --build-arg NPM_REGISTRY=...`。
 
 ## 关于 nvv4l2 硬解/硬编
 

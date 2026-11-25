@@ -127,7 +127,40 @@ RUN set -eux; \
 COPY docker/build-in-container.sh /usr/local/bin/build-ai-stream
 RUN chmod +x /usr/local/bin/build-ai-stream
 
+# ---------------------------------------------------------------------------
+# 5. Web 流水线编辑器开发依赖（vite dev 需要 Node/npm）
+#
+# Ubuntu 24.04 自带 Node 18.19 + npm 9.2，满足 Vite 5（^18 || >=20）。
+# node_modules 不打进镜像：run-jp72.sh 会把仓库挂载到相同路径，
+# 直接复用宿主 web/pipeline-editor/node_modules；缺失时在容器内 npm install。
+# ---------------------------------------------------------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# 6. 构建前端静态资源
+#
+# http_server 会用 AI_STREAM_WEB_ROOT（默认 ./web/pipeline-editor/dist）挂载
+# 静态目录，所以把 dist 打进镜像后，运行时只启动一个 http_server 即可同时
+# 提供 API 和前端页面，不需要 npm / 外网。挂载源码时仍可用 image 里的 Node/npm
+# 跑 npm run dev 做热更新。
+# ---------------------------------------------------------------------------
+ARG NPM_REGISTRY=https://registry.npmjs.org
+RUN set -eux; \
+    cd /src/web/pipeline-editor; \
+    npm config set registry "${NPM_REGISTRY}"; \
+    npm ci --no-audit --no-fund; \
+    npm run build; \
+    mkdir -p /opt/ai_stream/web; \
+    cp -r dist/. /opt/ai_stream/web/
+
 WORKDIR /opt/ai_stream
+
+# 默认前端目录（同源托管）
+ENV AI_STREAM_WEB_ROOT=/opt/ai_stream/web
+
+# 允许普通用户挂载源码后在容器内 cmake --install 到 /opt/ai_stream
+RUN chmod -R a+rwX /opt/ai_stream
 
 ENV PATH=/usr/local/cuda/bin:${PATH} \
     LD_LIBRARY_PATH=/opt/ai_stream/lib:/usr/local/cuda/lib64:/opt/nvidia/l4t-gpu-libs/nvgpu

@@ -8,13 +8,14 @@ set -euo pipefail
 
 SRC="${SRC:-/src}"
 BUILD_DIR="${BUILD_DIR:-$SRC/build}"
+INSTALL_PREFIX="${INSTALL_PREFIX:-/opt/ai_stream}"
 JOBS="${JOBS:-$(nproc)}"
 
 cd "$SRC"
 
 OPTS=(
     -DCMAKE_BUILD_TYPE=Release
-    -DCMAKE_INSTALL_PREFIX=/opt/ai_stream
+    -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX"
     -DCMAKE_INSTALL_RPATH='$ORIGIN;$ORIGIN/../lib'
     -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCH:-87}"
     -DOpenCV_DIR=/usr/lib/aarch64-linux-gnu/cmake/opencv4
@@ -26,7 +27,7 @@ echo "==> cmake -S $SRC -B $BUILD_DIR ${OPTS[*]} $*"
 cmake -S "$SRC" -B "$BUILD_DIR" "${OPTS[@]}" "$@"
 cmake --build "$BUILD_DIR" -j"$JOBS"
 cmake --install "$BUILD_DIR"
-mkdir -p /opt/ai_stream/bin
-cp -f "$BUILD_DIR/examples/simple_detection/simple_detection" /opt/ai_stream/bin/ 2>/dev/null || true
-cp -f "$BUILD_DIR/tools/benchmark/bench" /opt/ai_stream/bin/ 2>/dev/null || true
-echo "==> 完成：/opt/ai_stream/bin/"
+mkdir -p "$INSTALL_PREFIX/bin"
+cp -f "$BUILD_DIR/examples/simple_detection/simple_detection" "$INSTALL_PREFIX/bin/" 2>/dev/null || true
+cp -f "$BUILD_DIR/tools/benchmark/bench" "$INSTALL_PREFIX/bin/" 2>/dev/null || true
+echo "==> 完成：$INSTALL_PREFIX/bin/"
