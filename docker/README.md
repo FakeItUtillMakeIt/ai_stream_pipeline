@@ -220,5 +220,7 @@ HW_CODEC=1 docker/run-jp72.sh /opt/ai_stream/bin/simple_detection \
 
 ## 备注
 
+- 时区默认 `TZ=Asia/Shanghai`（`/etc/localtime` 指向上海），日志与证据文件名均为北京时间；
+  如需覆盖：`TZ=UTC docker/run-jp72.sh ...`（run 脚本会透传 `TZ`）。
 - 本镜像仅适用于 aarch64 + JetPack 7.2；x86 请直接在宿主机编译。
 - 日志、证据、`api_state/` 写在挂载目录，持久化在宿主机。

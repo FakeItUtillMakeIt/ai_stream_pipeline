@@ -44,6 +44,7 @@ ENV_ARGS=(-e HOME=/tmp)
 [ -n "${AI_STREAM_API_TOKEN:-}" ] && ENV_ARGS+=(-e "AI_STREAM_API_TOKEN=$AI_STREAM_API_TOKEN")
 [ -n "${AI_STREAM_IMPL_TOKEN:-}" ] && ENV_ARGS+=(-e "AI_STREAM_IMPL_TOKEN=$AI_STREAM_IMPL_TOKEN")
 [ -n "${AI_STREAM_STATE_DIR:-}" ] && ENV_ARGS+=(-e "AI_STREAM_STATE_DIR=$AI_STREAM_STATE_DIR")
+[ -n "${TZ:-}" ] && ENV_ARGS+=(-e "TZ=$TZ")
 
 # 额外挂载目录（同一路径）。例如视频素材在仓库外：
 #   MOUNT_DIR=/home/nvidia/lj docker/run-jp72.sh ...

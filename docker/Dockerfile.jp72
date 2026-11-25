@@ -201,6 +201,11 @@ ENV AI_STREAM_WEB_ROOT=/opt/ai_stream/web
 # 允许普通用户挂载源码后在容器内 cmake --install 到 /opt/ai_stream
 RUN chmod -R a+rwX /opt/ai_stream
 
+# 时区对齐北京时间（日志/证据文件时间戳）
+ENV TZ=Asia/Shanghai
+RUN ln -sfn /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+    && echo "Asia/Shanghai" > /etc/timezone
+
 ENV PATH=/usr/local/cuda/bin:${PATH} \
     LD_LIBRARY_PATH=/opt/ai_stream/lib:/usr/local/cuda/lib64:/opt/nvidia/l4t-gpu-libs/nvgpu
 
