@@ -17,6 +17,11 @@ export function LivePlayer({ url, compact = false, onStatus, onMeta, lowLatency 
 }) {
   const localRef = useRef<HTMLVideoElement>(null);
   const ref = videoRef || localRef;
+  // 相对 HLS 地址（/live/xxx/index.m3u8）属于 mediamtx 的 8888 端口，
+  // 不能按 http_server 的 origin（8080）解析，否则清单 404、预览一直打不开。
+  const srcUrl = url && !/^https?:/i.test(url) && url.includes('.m3u8')
+    ? `${window.location.protocol}//${window.location.hostname}:8888${url.startsWith('/') ? url : '/' + url}`
+    : url;
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
   const statusRef = useRef(onStatus);
@@ -25,7 +30,7 @@ export function LivePlayer({ url, compact = false, onStatus, onMeta, lowLatency 
   metaRef.current = onMeta;
   useEffect(() => {
     const v = ref.current; setError('');
-    if (!v || !url) return;
+    if (!v || !srcUrl) return;
     statusRef.current?.('connecting');
     let hls: Hls | null = null;
     let retryTimer: number | undefined;
@@ -45,10 +50,10 @@ export function LivePlayer({ url, compact = false, onStatus, onMeta, lowLatency 
     v.addEventListener('playing', onPlaying);
     v.addEventListener('error', onVideoError);
     v.addEventListener('loadedmetadata', onLoadedMeta);
-    const isHls = url.includes('.m3u8');
+    const isHls = srcUrl.includes('.m3u8');
     if (isHls && Hls.isSupported()) {
       hls = new Hls({ lowLatencyMode: lowLatency, enableWorker: true });
-      hls.loadSource(url);
+      hls.loadSource(srcUrl);
       hls.attachMedia(v);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         v.play().catch(() => { /* 自动播放可能被拦 */ });

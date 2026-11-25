@@ -229,8 +229,9 @@ bool GstV4l2VideoEncoder::encode(const uint8_t* yuv420p, size_t size, int64_t pt
         return false;
     }
 
-    // 拉取对应输出包（编码器有缓冲，先尝试非阻塞；无包时短等）
-    return pullPackets(packets, 30);
+    // 非阻塞拉取：编码器本身是流水线，单帧输出可能滞后一帧；
+    // 不能每帧阻塞 30ms（720p25 预算只有 40ms），否则 sink 队列很快涨满丢帧。
+    return pullPackets(packets, 1);
 }
 
 bool GstV4l2VideoEncoder::pullPackets(std::vector<EncodedPacket>& packets, int64_t timeout_ms) {

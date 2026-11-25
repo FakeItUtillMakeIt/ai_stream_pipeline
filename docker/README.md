@@ -70,8 +70,9 @@ CMAKE_ARGS="-DWITH_CUDA=ON -DWITH_TENSORRT=ON -DWITH_FTP=OFF -DWITH_VLM=OFF" \
 默认 CMD 会同时启动 mediamtx 和 http_server（前端与 API 同源 8080）：
 
 ```bash
-# 不需要挂载任何东西
-NO_MOUNT=1 HW_CODEC=1 docker/run-jp72.sh
+# 不需要挂载任何东西（带接口鉴权 token）
+AI_STREAM_API_TOKEN=yanfa AI_STREAM_IMPL_TOKEN=shishi \
+    NO_MOUNT=1 HW_CODEC=1 docker/run-jp72.sh
 
 # 或直接 docker run（不使用 run 脚本）
 docker run --rm --runtime nvidia --privileged -v /dev:/dev \

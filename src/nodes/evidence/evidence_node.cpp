@@ -73,8 +73,11 @@ bool isFrameValid(const cv::Mat& mat) {
 
     auto stats = analyzeFrame(mat);
 
+    // 只拦明显的整帧异常（解码花屏/纯绿屏）。
+    // 注意：户外场景本身就可能带 10% 左右绿色像素，mean_g 比 r/b 高 20~30
+    // 是正常现象，阈值不能设得太紧，否则会把正常画面当损坏帧丢掉。
     if (stats.green_ratio > 0.4f) return false;
-    if (stats.mean_g > stats.mean_r + 20 && stats.mean_g > stats.mean_b + 20) return false;
+    if (stats.mean_g > stats.mean_r + 40 && stats.mean_g > stats.mean_b + 40) return false;
     if (stats.std_r < 5 && stats.std_b < 5) return false;
 
     return true;

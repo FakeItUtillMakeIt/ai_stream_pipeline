@@ -519,11 +519,14 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
 
   const cur = useMemo(() => pipelines.find((p) => p.id === sel), [pipelines, sel]);
   const isRunning = !!cur?.running;
-  const streamUrl = cur?.play_url
-    ? (cur.play_url.startsWith('http')
-      ? cur.play_url
-      : window.location.origin + (cur.play_url.startsWith('/') ? cur.play_url : '/' + cur.play_url))
-    : '';
+  // 相对 play_url（如 /live/xxx/index.m3u8）走 mediamtx HLS 的 8888 端口，
+  // 不能拼到 http_server 的 origin（8080），否则预览 404、视频打不开。
+  const resolvePlayUrl = (u: string) => {
+    if (u.startsWith('http')) return u;
+    const path = u.startsWith('/') ? u : '/' + u;
+    return `${window.location.protocol}//${window.location.hostname}:8888${path}`;
+  };
+  const streamUrl = cur?.play_url ? resolvePlayUrl(cur.play_url) : '';
 
   useEffect(() => {
     if (!isRunning) {

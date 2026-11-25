@@ -102,7 +102,6 @@ COPY tools/ ./tools/
 COPY utils/ ./utils/
 COPY config/ ./config/
 COPY resources/ ./resources/
-COPY web/ ./web/
 
 RUN set -eux; \
     rm -rf /tmp/build; \
@@ -157,6 +156,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm \
 # 跑 npm run dev 做热更新。
 # ---------------------------------------------------------------------------
 ARG NPM_REGISTRY=https://registry.npmjs.org
+COPY web/ ./web/
 RUN set -eux; \
     cd /src/web/pipeline-editor; \
     npm config set registry "${NPM_REGISTRY}"; \
