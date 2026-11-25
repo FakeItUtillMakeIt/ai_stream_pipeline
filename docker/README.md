@@ -6,8 +6,10 @@
 | 文件 | 说明 |
 |---|---|
 | `Dockerfile.jp72` | Ubuntu 24.04 + Jetson apt 源（CUDA 13.2 / TensorRT 10.16 / cuDNN）+ OpenCV 4.6 + FFmpeg + GStreamer，编译并安装到 `/opt/ai_stream` |
-| `build-jp72.sh` | 构建镜像的封装脚本 |
+| `build-jp72.sh` | 构建镜像的封装脚本（自动执行 stage-assets） |
+| `stage-assets.sh` | 把模型/mediamtx 暂存到 `docker/assets/`（不入库） |
 | `run-jp72.sh` | 启动容器（GPU、编解码设备、源码挂载） |
+| `assets/` | 测试视频、demo 管道配置、mediamtx 配置、启动脚本 |
 | `build-in-container.sh` | 容器内 `build-ai-stream` 命令：对挂载的源码增量编译 |
 
 ## 前提
@@ -16,6 +18,9 @@
 - 主机 JetPack 7.2 驱动正常（`nvidia-smi` 可用）
 - 需要能访问 Ubuntu ports、NVIDIA Jetson apt 源（r39.2）以及 npm registry
   （用于构建前端；可用 `--build-arg NPM_REGISTRY=https://registry.npmmirror.com` 切换）
+- 模型文件需先 `git lfs pull`（`stage-assets.sh` 会校验是否为真实文件而不是 LFS 指针）
+- mediamtx 二进制默认从 `/home/nvidia/lj/pkg/mediamtx` 复制，缺失时按
+  `MEDIAMTX_VER=1.1.0` 从 GitHub release 下载
 - **源码依赖已内置**：`3rd_party/spdlog`、`3rd_party/httplib/httplib.h`，
   CMake 配置阶段不再访问 GitHub
 
@@ -48,18 +53,49 @@ CMAKE_ARGS="-DWITH_CUDA=ON -DWITH_TENSORRT=ON -DWITH_FTP=OFF -DWITH_VLM=OFF" \
 
 首次构建会下载 CUDA Toolkit 等依赖，耗时较长（Orin 上约 20–40 分钟），镜像约 10+ GB。
 
-## 运行
+> 直接用 `docker build -f docker/Dockerfile.jp72 .` 时，需要先执行
+> `docker/stage-assets.sh` 准备模型与 mediamtx；`docker/build-jp72.sh` 会自动执行。
+
+## 运行（不挂载仓库，镜像已自包含）
+
+镜像内置：
+
+- 4 个引擎：`yoloe_v8s_child_wall_gate`、`20260921_sevnce_9_cls_nms_trans_640`、
+  `relateanything`、`action_recognition.rebuild`
+- relateanything 的 `predicate_bank.json` 等配置、`resources/ai.ttf`、`logo.png`
+- `scripts/`、demo 管道配置、测试视频 `child_on_wall.mp4`
+- `mediamtx`（RTMP 1935 / HLS 8888）
+- 前端 dist（`/opt/ai_stream/web`）
+
+默认 CMD 会同时启动 mediamtx 和 http_server（前端与 API 同源 8080）：
 
 ```bash
-# 进入容器 shell（源码挂载在宿主机相同绝对路径，可直接增量编译）
-docker/run-jp72.sh
+# 不需要挂载任何东西
+NO_MOUNT=1 HW_CODEC=1 docker/run-jp72.sh
 
-# HTTP 服务
-docker/run-jp72.sh /opt/ai_stream/bin/http_server 0.0.0.0 8080
+# 或直接 docker run（不使用 run 脚本）
+docker run --rm --runtime nvidia --privileged -v /dev:/dev \
+    -v /opt/nvidia/l4t-gpu-libs/nvgpu:/opt/nvidia/l4t-gpu-libs/nvgpu:ro \
+    -v /usr/lib/aarch64-linux-gnu:/usr/lib/aarch64-linux-gnu:ro \
+    --net host --ipc host ai_stream_pipeline:jp72
+```
 
-# 示例管道
-docker/run-jp72.sh /opt/ai_stream/bin/simple_detection \
-    /home/nvidia/lj/ai_stream_pipeline/build/api_state/templates/child_intrusion_fighting_fusion.json
+浏览器访问 `http://<IP>:8080/`。
+
+直接跑内置 demo 管道（同时拉起 mediamtx）：
+
+```bash
+NO_MOUNT=1 HW_CODEC=1 docker/run-jp72.sh /usr/local/bin/run-demo
+```
+
+## 运行（挂载仓库 / 开发）
+
+```bash
+# 进入容器 shell（仓库挂载在宿主相同绝对路径）
+docker/run-jp72.sh bash
+
+# 挂载仓库并启动服务
+docker/run-jp72.sh /usr/local/bin/start-ai-stream
 ```
 
 `run-jp72.sh` 会：
@@ -84,21 +120,28 @@ MOUNT_DIR=/home/nvidia/lj HW_CODEC=1 docker/run-jp72.sh \
 
 ## 模型与配置
 
-- 模型（`models/`）和引擎文件**不打进镜像**（`.dockerignore` 已排除），
-  由 `run-jp72.sh` 挂载仓库目录使用；换机器时把 `models/` 一起带过去即可。
-- 若模型不在仓库目录，修改管道 JSON 里的 `model_path`，或自行追加
-  `-v /your/models:/your/models`（在 `run-jp72.sh` 中扩展）。
-- 仓库内 `config/` 可直接使用；程序按**当前工作目录**读取 `config/`，
-  `run-jp72.sh` 默认把工作目录设为挂载的仓库根目录。
+- 镜像内置 4 个 demo 引擎（yoloe / sevncevision 检测 / relateanything /
+  action_recognition）及 relateanything 的 `predicate_bank.json` 等配置，
+  路径统一为 `/opt/ai_stream/models/...`。
+- 测试视频：`/opt/ai_stream/assets/child_on_wall.mp4`。
+- demo 管道：`/opt/ai_stream/config/pipelines/child_intrusion_fighting_fusion.demo.json`
+  （已把所有绝对路径改成 `/opt/ai_stream/...`，并关闭 VLM/上报以便离线运行）。
+- 挂载仓库时，仓库里的 `models/` 会覆盖/补充镜像内资源；修改管道 JSON 即可使用
+  仓库里的其它模型。
+- 程序按**当前工作目录**读取 `config/`；`NO_MOUNT=1` 时工作目录是 `/opt/ai_stream`，
+  挂载仓库时是仓库根目录。
 
 ## 容器内重新编译
 
 ```bash
-docker/run-jp72.sh
-# 容器内：
-build-ai-stream                  # Release，输出到 /src/build，并安装到 /opt/ai_stream
-build-ai-stream -DWITH_FTP=OFF   # 追加参数
+# 挂载仓库后
+docker/run-jp72.sh bash
+# 容器内（编译挂载进来的仓库，产物安装到 /opt/ai_stream）：
+SRC="$PWD" build-ai-stream
+SRC="$PWD" build-ai-stream -DWITH_FTP=OFF   # 追加参数
 ```
+
+不挂载仓库时也可以直接编译镜像自带的 `/src`：`build-ai-stream`。
 
 ## 中文面板字体
 
@@ -115,8 +158,8 @@ OpenCV 4.8（无 contrib）抢占。
 前端页面，因此只需要启动一个进程：
 
 ```bash
-MOUNT_DIR=/home/nvidia/lj HW_CODEC=1 docker/run-jp72.sh \
-    /opt/ai_stream/bin/http_server 0.0.0.0 8080
+# 默认 CMD 就是 start-ai-stream（mediamtx + http_server + 前端）
+NO_MOUNT=1 HW_CODEC=1 docker/run-jp72.sh
 ```
 
 浏览器直接访问 `http://<设备IP>:8080/`，前端与 `/api` 同源，无需 npm。

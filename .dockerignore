@@ -11,7 +11,6 @@ api_state
 draw_snapshot
 web/pipeline-editor/node_modules
 web/pipeline-editor/dist
-**/*.engine
 __pycache__
 *.pyc
 

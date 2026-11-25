@@ -1,0 +1,469 @@
+{
+  "id": "child_intrusion_fighting_fusion",
+  "graph": {
+    "edges": [
+      {
+        "from": "src1",
+        "to": "decode1"
+      },
+      {
+        "from": "decode1",
+        "to": "preprocess_det"
+      },
+      {
+        "from": "decode1",
+        "to": "preprocess_action"
+      },
+      {
+        "from": "preprocess_det",
+        "to": "infer_yoloe"
+      },
+      {
+        "from": "preprocess_det",
+        "to": "infer_yolov8"
+      },
+      {
+        "from": "infer_yoloe",
+        "to": "fusion_det"
+      },
+      {
+        "from": "infer_yolov8",
+        "to": "fusion_det"
+      },
+      {
+        "from": "fusion_det",
+        "to": "tracker1"
+      },
+      {
+        "from": "tracker1",
+        "to": "rel1"
+      },
+      {
+        "from": "rel1",
+        "to": "fusion_action"
+      },
+      {
+        "from": "preprocess_action",
+        "to": "action1"
+      },
+      {
+        "from": "action1",
+        "to": "fusion_action"
+      },
+      {
+        "from": "fusion_action",
+        "to": "alert1"
+      },
+      {
+        "from": "alert1",
+        "to": "draw1"
+      },
+      {
+        "from": "draw1",
+        "to": "sink1"
+      },
+      {
+        "from": "alert1",
+        "to": "evid1"
+      },
+      {
+        "from": "draw1",
+        "to": "evid1"
+      },
+      {
+        "from": "evid1",
+        "to": "vlm1"
+      },
+      {
+        "from": "vlm1",
+        "to": "report1"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "src1",
+        "params": {
+          "loop": true,
+          "realtime": true,
+          "skip_frames": 1,
+          "url": "file:///opt/ai_stream/assets/child_on_wall.mp4"
+        },
+        "position": {
+          "x": 60,
+          "y": 210
+        },
+        "type": "file_source"
+      },
+      {
+        "id": "decode1",
+        "params": {
+          "hw_decoder": true,
+          "hw_decoder_type": "h264_cuvid",
+          "output_bgr": true
+        },
+        "position": {
+          "x": 310,
+          "y": 210
+        },
+        "type": "ffmpeg_decode"
+      },
+      {
+        "id": "preprocess_det",
+        "params": {
+          "keep_aspect_ratio": true,
+          "output_height": 640,
+          "output_width": 640
+        },
+        "position": {
+          "x": 560,
+          "y": 135
+        },
+        "type": "resize_normalize"
+      },
+      {
+        "id": "infer_yoloe",
+        "params": {
+          "detector_config": {
+            "batch_size": 1,
+            "conf_threshold": 0.25,
+            "cuda_graph": false,
+            "input_size": {
+              "height": 640,
+              "width": 640
+            },
+            "model_class_names": [
+              "child",
+              "wall",
+              "gate"
+            ],
+            "model_path": "/opt/ai_stream/models/yoloe/yoloe_v8s_child_wall_gate.engine",
+            "nms_threshold": 0.4
+          }
+        },
+        "position": {
+          "x": 810,
+          "y": 60
+        },
+        "type": "detection_infer"
+      },
+      {
+        "id": "infer_yolov8",
+        "params": {
+          "detector_config": {
+            "batch_size": 1,
+            "conf_threshold": 0.3,
+            "cuda_graph": false,
+            "input_size": {
+              "height": 640,
+              "width": 640
+            },
+            "model_class_names": [
+              "person",
+              "head",
+              "helmet",
+              "work_clothes",
+              "phone",
+              "smoking",
+              "fall_down",
+              "safety_belt",
+              "sleeping"
+            ],
+            "model_path": "/opt/ai_stream/models/sevncevision/20260921_sevnce_9_cls_nms_trans_640.engine",
+            "nms_threshold": 0.45
+          }
+        },
+        "position": {
+          "x": 810,
+          "y": 210
+        },
+        "type": "detection_infer"
+      },
+      {
+        "id": "fusion_det",
+        "params": {
+          "class_offsets": {
+            "infer_yolov8": 10
+          },
+          "cross_nms": false,
+          "detection_sources": [
+            "infer_yoloe",
+            "infer_yolov8"
+          ],
+          "mode": "detection_merge",
+          "nms_iou_threshold": 0.5,
+          "wait_timeout_ms": 20
+        },
+        "position": {
+          "x": 1060,
+          "y": 210
+        },
+        "type": "fusion"
+      },
+      {
+        "id": "tracker1",
+        "params": {
+          "sub_stream_id": "src1",
+          "tracker_type": "bytetrack"
+        },
+        "position": {
+          "x": 1310,
+          "y": 210
+        },
+        "type": "tracker"
+      },
+      {
+        "id": "rel1",
+        "params": {
+          "backend": "auto",
+          "boundary_classes": [
+            "wall",
+            "gate"
+          ],
+          "box_confidence": 0.2,
+          "img_size": 448,
+          "max_boxes": 32,
+          "max_relations": 256,
+          "model_path": "/opt/ai_stream/models/relateanything/relateanything.engine",
+          "predicate_bank": "/opt/ai_stream/models/relateanything/predicate_bank.json",
+          "predicates": [
+            "beside",
+            "in front of",
+            "behind",
+            "on"
+          ],
+          "score_threshold": 0.1
+        },
+        "position": {
+          "x": 1560,
+          "y": 210
+        },
+        "type": "relation_recognition"
+      },
+      {
+        "id": "preprocess_action",
+        "params": {
+          "keep_aspect_ratio": false,
+          "mean": [
+            0.485,
+            0.456,
+            0.406
+          ],
+          "output_height": 224,
+          "output_width": 224,
+          "std": [
+            0.229,
+            0.224,
+            0.225
+          ]
+        },
+        "position": {
+          "x": 560,
+          "y": 285
+        },
+        "type": "resize_normalize"
+      },
+      {
+        "id": "action1",
+        "params": {
+          "action_labels": [
+            "climbing",
+            "fighting",
+            "other"
+          ],
+          "batch_size": 1,
+          "confidence_threshold": 0.7,
+          "frame_interval": 2,
+          "input_height": 224,
+          "input_width": 224,
+          "model_path": "/opt/ai_stream/models/action_recognition/action_recognition.rebuild.engine",
+          "num_frames": 16,
+          "passthrough_input": false,
+          "stride": 8,
+          "window_size": 16
+        },
+        "position": {
+          "x": 810,
+          "y": 360
+        },
+        "type": "action_recognition_videomae"
+      },
+      {
+        "id": "fusion_action",
+        "params": {
+          "action_persist": true,
+          "action_source": "action1",
+          "drop_non_inference": false,
+          "timestamp_threshold_ms": 200
+        },
+        "position": {
+          "x": 1810,
+          "y": 210
+        },
+        "type": "fusion"
+      },
+      {
+        "id": "alert1",
+        "params": {
+          "process_type": "parallel",
+          "rules": [
+            {
+              "params": {
+                "boundary_classes": [
+                  "wall",
+                  "gate"
+                ],
+                "child_class": "child",
+                "duration_ms": 1000,
+                "geometric_fallback": false,
+                "max_disappear_count": 30,
+                "max_pixel_gap": 60,
+                "name": "child_near_wall",
+                "relation_threshold": 0.15,
+                "rule_zones": []
+              },
+              "type": "child_near_boundary"
+            },
+            {
+              "params": {
+                "name": "person_intrusion",
+                "rule_zones": []
+              },
+              "type": "person_intrusion"
+            },
+            {
+              "params": {
+                "action_recongnition_mode": "model",
+                "duration_ms": 500,
+                "fight_hold_ms": 1000,
+                "name": "fighting",
+                "rule_zones": []
+              },
+              "type": "fighting"
+            }
+          ]
+        },
+        "position": {
+          "x": 2060,
+          "y": 210
+        },
+        "type": "alert"
+      },
+      {
+        "id": "evid1",
+        "params": {
+          "snapshot": {
+            "enabled": true,
+            "output_dir": "./evidence/snapshots"
+          },
+          "video": {
+            "bitrate": 4000,
+            "enabled": true,
+            "encoder": "h264_nvenc",
+            "fps": 25,
+            "output_dir": "./evidence/videos",
+            "post_frames": 40,
+            "pre_frames": 20
+          }
+        },
+        "position": {
+          "x": 2560,
+          "y": 135
+        },
+        "type": "evidence"
+      },
+      {
+        "id": "vlm1",
+        "params": {
+          "api_key": "${VLM_API_KEY}",
+          "confidence_threshold": 0.6,
+          "cooldown_s": 30,
+          "enable_thinking": false,
+          "enabled": false,
+          "max_side": 1024,
+          "max_tokens": 512,
+          "model": "qwen3.8-27b",
+          "prompts": {
+            "child_near_wall": {
+              "question": "请判断：儿童是否处在墙或大门附近（在其旁边、贴近或倚靠，存在翻越/坠落风险即可，不要求正在攀爬）。只判真假，仅输出 {\"verdict\":true/false,\"confidence\":0.0-1.0,\"reason\":\"不超过20字\"}"
+            },
+            "fighting": {
+              "question": "请判断：图中是否确实发生斗殴/肢体冲突（多人扭打）？误报常见于正常接触或遮挡。只判真假，仅输出 {\"verdict\":true/false,\"confidence\":0.0-1.0,\"reason\":\"不超过20字\"}"
+            },
+            "person_intrusion": {
+              "question": "请判断：该人员是否确实进入了划定的禁区/入侵区域。只判真假，仅输出 {\"verdict\":true/false,\"confidence\":0.0-1.0,\"reason\":\"不超过20字\"}"
+            }
+          },
+          "retries": 1,
+          "review_dir": "./vlm_review",
+          "timeout_ms": 15000,
+          "unmatched_policy": "auto",
+          "url": "http://8.137.122.254:21610/v1"
+        },
+        "position": {
+          "x": 2810,
+          "y": 210
+        },
+        "type": "vlm_gate"
+      },
+      {
+        "id": "report1",
+        "params": {
+          "api_key": "",
+          "attach_image": true,
+          "enabled": false,
+          "image_field": "snapshot_base64",
+          "image_max_side": 0,
+          "retries": 1,
+          "source": "ai_stream",
+          "timeout_ms": 3000,
+          "url": "http://127.0.0.1:8902/alert"
+        },
+        "position": {
+          "x": 3060,
+          "y": 210
+        },
+        "type": "report"
+      },
+      {
+        "id": "draw1",
+        "params": {
+          "panel": {
+            "enabled": true
+          },
+          "snapshot": {
+            "dir": "./draw_snapshot/",
+            "enabled": false,
+            "font_file": "/opt/ai_stream/resources/ai.ttf",
+            "interval": 100,
+            "logo_file": "/opt/ai_stream/resources/logo.png"
+          }
+        },
+        "position": {
+          "x": 2310,
+          "y": 210
+        },
+        "type": "osd_draw"
+      },
+      {
+        "id": "sink1",
+        "params": {
+          "bitrate": 4000,
+          "encoder": "auto",
+          "output_height": 720,
+          "output_url": "rtmp://localhost/live/child_intrusion_fighting",
+          "output_width": 1280,
+          "play_url": "/live/child_intrusion_fighting/index.m3u8",
+          "queue": {
+            "capacity": 10,
+            "drop_policy": "drop_oldest"
+          }
+        },
+        "position": {
+          "x": 2560,
+          "y": 285
+        },
+        "type": "rtmp_sink"
+      }
+    ]
+  }
+}

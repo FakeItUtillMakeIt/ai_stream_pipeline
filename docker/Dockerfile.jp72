@@ -91,7 +91,18 @@ ENV PATH=/usr/local/cuda/bin:${PATH}
 # 不依赖宿主机 build 目录的绝对路径。
 # ---------------------------------------------------------------------------
 WORKDIR /src
-COPY . .
+COPY CMakeLists.txt ./
+COPY cmake/ ./cmake/
+COPY src/ ./src/
+COPY include/ ./include/
+COPY 3rd_party/ ./3rd_party/
+COPY examples/ ./examples/
+COPY tests/ ./tests/
+COPY tools/ ./tools/
+COPY utils/ ./utils/
+COPY config/ ./config/
+COPY resources/ ./resources/
+COPY web/ ./web/
 
 RUN set -eux; \
     rm -rf /tmp/build; \
@@ -154,6 +165,34 @@ RUN set -eux; \
     mkdir -p /opt/ai_stream/web; \
     cp -r dist/. /opt/ai_stream/web/
 
+# ---------------------------------------------------------------------------
+# 7. 内置运行资源（不挂载仓库时直接可用）
+#
+# 模型/mediamtx 由 docker/stage-assets.sh 暂存到 docker/assets/（不入库）；
+# 测试视频、demo 管道配置、mediamtx.yml、启动脚本随仓库提供。
+# ---------------------------------------------------------------------------
+COPY docker/assets/models/ /opt/ai_stream/models/
+COPY docker/assets/child_on_wall.mp4 /opt/ai_stream/assets/
+COPY docker/assets/config/child_intrusion_fighting_fusion.demo.json \
+     /opt/ai_stream/share/ai_stream_pipeline/config/pipelines/
+COPY docker/assets/mediamtx.yml /etc/mediamtx.yml
+COPY docker/assets/mediamtx /usr/local/bin/mediamtx
+COPY docker/assets/start-ai-stream.sh /usr/local/bin/start-ai-stream
+COPY docker/assets/run-demo.sh /usr/local/bin/run-demo
+COPY scripts/ /opt/ai_stream/scripts/
+
+RUN set -eux; \
+    for f in \
+        /opt/ai_stream/models/yoloe/yoloe_v8s_child_wall_gate.engine \
+        /opt/ai_stream/models/sevncevision/20260921_sevnce_9_cls_nms_trans_640.engine \
+        /opt/ai_stream/models/relateanything/relateanything.engine \
+        /opt/ai_stream/models/action_recognition/action_recognition.rebuild.engine; do \
+        test -f "$f" && test "$(stat -c%s "$f")" -gt 1000000 || \
+            { echo "bad engine (LFS pointer?): $f"; exit 1; }; \
+    done; \
+    chmod +x /usr/local/bin/mediamtx /usr/local/bin/start-ai-stream /usr/local/bin/run-demo; \
+    chmod -R a+rX /opt/ai_stream/models /opt/ai_stream/scripts
+
 WORKDIR /opt/ai_stream
 
 # 默认前端目录（同源托管）
@@ -165,5 +204,5 @@ RUN chmod -R a+rwX /opt/ai_stream
 ENV PATH=/usr/local/cuda/bin:${PATH} \
     LD_LIBRARY_PATH=/opt/ai_stream/lib:/usr/local/cuda/lib64:/opt/nvidia/l4t-gpu-libs/nvgpu
 
-# 默认进入 shell（开发镜像）；运行服务时用 docker/run-jp72.sh 覆盖命令
-CMD ["/bin/bash"]
+# 默认启动 mediamtx + http_server（前端与 API 同源 8080）
+CMD ["/usr/local/bin/start-ai-stream"]

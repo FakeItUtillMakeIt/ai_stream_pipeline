@@ -77,12 +77,21 @@ if [ "$HW_CODEC" != "1" ]; then
     fi
 fi
 
-if [ "$#" -eq 0 ]; then
-    set -- bash
+# NO_MOUNT=1：不挂载仓库，完全使用镜像内置的 /opt/ai_stream（源码/模型/前端/视频）
+if [ "${NO_MOUNT:-0}" = "1" ]; then
+    WORKDIR=/opt/ai_stream
+    REPO_MOUNT=()
+else
+    WORKDIR="$REPO_ROOT"
+    REPO_MOUNT=(-v "$REPO_ROOT:$REPO_ROOT")
 fi
 
 echo "==> 镜像:     $IMAGE"
-echo "==> 挂载:     $REPO_ROOT -> $REPO_ROOT"
+if [ "${NO_MOUNT:-0}" = "1" ]; then
+    echo "==> 挂载:     (NO_MOUNT，使用镜像内置资源)"
+else
+    echo "==> 挂载:     $REPO_ROOT -> $REPO_ROOT"
+fi
 echo "==> 用户:     $DOCKER_USER"
 [ "${#DEV_ARGS[@]}" -gt 0 ] && echo "==> 设备:     ${DEV_ARGS[*]}"
 
@@ -97,6 +106,6 @@ exec docker run --rm -it \
     "${EXTRA_ARGS[@]}" \
     "${ENV_ARGS[@]}" \
     "${MOUNT_ARGS[@]}" \
-    -v "$REPO_ROOT:$REPO_ROOT" \
-    -w "$REPO_ROOT" \
+    "${REPO_MOUNT[@]}" \
+    -w "$WORKDIR" \
     "$IMAGE" "$@"
