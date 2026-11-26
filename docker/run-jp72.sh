@@ -33,10 +33,15 @@ else
 fi
 
 # 进程 GPU 专用内存（NvMap）统计：把 debugfs 子树只读挂进来，
-# 非 root 也能读取 /run/nvmap/iovmm/clients（对齐 jtop 口径）
+# 非 root 也能读取 /run/nvmap/iovmm/clients（对齐 jtop 口径）。
+# 注意：普通用户无法 stat /sys/kernel/debug/nvmap（debugfs 根目录 0700），
+# 不能用 [ -d ] 判断；Jetson 上默认挂载，NVMAP_MOUNT=0 可关闭。
 NVMAP_ARGS=()
-if [ -d /sys/kernel/debug/nvmap ]; then
-    NVMAP_ARGS=(-v /sys/kernel/debug/nvmap:/run/nvmap:ro)
+NVMAP_MOUNT="${NVMAP_MOUNT:-auto}"
+if [ "$NVMAP_MOUNT" != "0" ]; then
+    if [ "$NVMAP_MOUNT" = "1" ] || [ -f /etc/nv_tegra_release ]; then
+        NVMAP_ARGS=(-v /sys/kernel/debug/nvmap:/run/nvmap:ro)
+    fi
 fi
 
 # 组权限：/dev/nvmap 等属于 video 组；容器内组名可能不全，用宿主 GID 添加
