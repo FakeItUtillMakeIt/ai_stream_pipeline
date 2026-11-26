@@ -70,7 +70,7 @@ HW_CODEC="${HW_CODEC:-0}"
 if [ "$HW_CODEC" = "1" ]; then
     EXTRA_ARGS=(--privileged -v /dev:/dev
                 -v /usr/lib/aarch64-linux-gnu:/usr/lib/aarch64-linux-gnu:ro)
-    ENV_ARGS+=(-e "LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/nvidia:/opt/ai_stream/lib:/usr/local/cuda/lib64:/opt/nvidia/l4t-gpu-libs/nvgpu")
+    ENV_ARGS+=(-e "LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/nvidia:/opt/ai_stream/lib:/usr/local/cuda/lib64:/opt/nvidia/l4t-gpu-libs/nvgpu:/usr/lib/aarch64-linux-gnu/tegra-egl")
 else
     EXTRA_ARGS=()
 fi

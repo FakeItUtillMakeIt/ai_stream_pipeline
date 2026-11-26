@@ -84,6 +84,13 @@ RUN printf 'Package: libnvinfer*\nPin: version %s\nPin-Priority: 1001\n\nPackage
              /usr/lib/aarch64-linux-gnu/libnvinfer_vc_plugin* \
     && rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man
 
+# EGL vendor 配置。L4T 39.2.2 的 nvidia-l4t-gstreamer 不再依赖 3d-core，
+# 镜像里会缺 10_nvidia.json；HW_CODEC 模式用宿主 tegra-egl 库时必须补上，
+# 否则 nvvidconv 报 "Could not get EGL display connection"。
+RUN mkdir -p /usr/share/glvnd/egl_vendor.d /usr/lib/aarch64-linux-gnu/tegra-egl \
+    && printf '{"file_format_version":"1.0.0","ICD":{"library_path":"libEGL_nvidia.so.0"}}' \
+        > /usr/share/glvnd/egl_vendor.d/10_nvidia.json
+
 # CUDA 运行库路径 + /usr/local/cuda 软链
 RUN mkdir -p /etc/ld.so.conf.d \
     && printf '/usr/local/cuda/lib64\n/usr/local/cuda/targets/aarch64-linux/lib\n' \
@@ -114,6 +121,6 @@ RUN set -eux; \
 WORKDIR /opt/ai_stream
 
 ENV AI_STREAM_WEB_ROOT=/opt/ai_stream/web \
-    LD_LIBRARY_PATH=/opt/ai_stream/lib:/usr/local/cuda/lib64:/opt/nvidia/l4t-gpu-libs/nvgpu
+    LD_LIBRARY_PATH=/opt/ai_stream/lib:/usr/local/cuda/lib64:/opt/nvidia/l4t-gpu-libs/nvgpu:/usr/lib/aarch64-linux-gnu/tegra-egl
 
 CMD ["/usr/local/bin/start-ai-stream"]

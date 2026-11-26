@@ -76,6 +76,12 @@ RUN printf 'Package: libopencv*\nPin: origin "ports.ubuntu.com"\nPin-Priority: 1
         ffmpeg python3 \
     && rm -rf /var/lib/apt/lists/*
 
+# EGL vendor 配置：L4T 39.2.2 的 gstreamer 包不再带 3d-core 的 10_nvidia.json，
+# HW_CODEC 模式下 nvvidconv 需要它来加载宿主 tegra-egl 的 libEGL_nvidia。
+RUN mkdir -p /usr/share/glvnd/egl_vendor.d /usr/lib/aarch64-linux-gnu/tegra-egl \
+    && printf '{"file_format_version":"1.0.0","ICD":{"library_path":"libEGL_nvidia.so.0"}}' \
+        > /usr/share/glvnd/egl_vendor.d/10_nvidia.json
+
 # cuda-toolkit-13-2 安装到 /usr/local/cuda-13.2，补 /usr/local/cuda 软链。
 # libcuda.so stub 仅供链接；运行期由 --gpus all / --runtime nvidia 挂载真实驱动。
 RUN ln -sfn /usr/local/cuda-13.2 /usr/local/cuda \
