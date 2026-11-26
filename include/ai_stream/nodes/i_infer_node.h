@@ -2,6 +2,7 @@
 #pragma once
 
 #include "ai_stream/core/node.h"
+#include "ai_stream/nodes/model_metadata.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 #include <nlohmann/json.hpp>
 #include <string>
@@ -87,8 +88,15 @@ public:
      */
     virtual DetectorType getDetectorType() const = 0;
 
+    /** 模型角色：person_behavior_det / scene_det / boundary_det / ... */
+    const std::string& getModelRole() const { return model_metadata_.role; }
+    /** 模型支持的告警场景类别（ITEM_*） */
+    const std::vector<std::string>& getModelCategories() const { return model_metadata_.categories; }
+    const ModelMetadata& getModelMetadata() const { return model_metadata_; }
+
     bool configure(const std::string& node_id, const nlohmann::json& params) override {
         (void)node_id;
+        model_metadata_.parse(params);
         if (!params.contains("detector_config")) {
             return true;
         }
@@ -134,6 +142,9 @@ public:
 
     // 后端名称（"auto"/"tensorrt"/"openvino"/"cpu"...），默认忽略
     virtual void setInferenceBackendName(const std::string& /*name*/) {}
+
+protected:
+    ModelMetadata model_metadata_;
 };
 
 } // namespace nodes

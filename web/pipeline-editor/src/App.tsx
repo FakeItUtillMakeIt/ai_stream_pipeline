@@ -422,6 +422,11 @@ function Editor() {
     if (r.ok) setPub(null);
   };
 
+  const graphNodes: NodeDef[] = useMemo(
+    () => nodes.map((n) => ({ id: n.id, type: (n.data as any).nodeType, params: paramsById[n.id] || {}, position: n.position })),
+    [nodes, paramsById],
+  );
+
   const selectedNode: NodeDef | null = useMemo(() => {
     if (!selectedId) return null;
     const n = nodes.find((x) => x.id === selectedId);
@@ -571,7 +576,7 @@ function Editor() {
         </div>
 
         <div className="right">
-          <PropertyPanel node={selectedNode} allNodeIds={nodes.map((n) => n.id)} onChange={onParamChange} onDelete={onDeleteNode} onRename={renameNode} />
+          <PropertyPanel node={selectedNode} allNodeIds={nodes.map((n) => n.id)} graphNodes={graphNodes} onChange={onParamChange} onDelete={onDeleteNode} onRename={renameNode} />
           <div className="logdrawer">
             <div className="log-head">
               <span className="lg-title">日志</span>

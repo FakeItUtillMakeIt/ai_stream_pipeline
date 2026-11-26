@@ -2,6 +2,7 @@
 #include "api_server.h"
 #include "ai_stream/core/metrics.h"
 #include "ai_stream/core/alert_store.h"
+#include "ai_stream/core/alert_catalog.h"
 #include "ai_stream/hal/backend_diagnostics.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 #include <nlohmann/json.hpp>
@@ -839,6 +840,10 @@ void ApiServer::setupRoutes() {
     });
     server_.Post("/api/v1/templates/delete", [this](const auto& req, auto& res) {
         handleTemplatesDelete(req, res);
+    });
+    // 告警场景目录 + 模型依赖（研发/实施页面分组与校验）
+    server_.Get("/api/v1/alert-catalog", [](const auto&, auto& res) {
+        res.set_content(core::alertCatalogJson().dump(), "application/json");
     });
     // 告警历史
     server_.Get("/api/v1/alerts", [this](const auto& req, auto& res) {

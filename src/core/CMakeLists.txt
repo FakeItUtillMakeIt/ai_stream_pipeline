@@ -5,6 +5,7 @@ add_library(ai_stream_core SHARED
     async_pipeline_manager.cpp
     metrics.cpp
     alert_store.cpp
+    alert_catalog.cpp
     ${PROJECT_SOURCE_DIR}/3rd_party/log_mgr/log_mgr.cpp
     # bounded_queue.h / queued_node.h 是 header-only，无需加入源列表
 )

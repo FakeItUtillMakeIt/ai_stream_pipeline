@@ -208,6 +208,28 @@
 
 ---
 
+## GET /api/v1/alert-catalog — 告警场景目录
+
+返回告警场景分类、规则严重级别和模型依赖，供研发/实施页面分组与校验：
+
+```json
+{
+  "categories": [{"id": "ITEM_PERSON_BEHAVIOR", "label": "人员行为", "order": 1}],
+  "rules": {
+    "fighting": {
+      "label": "打架",
+      "category": "ITEM_ACTION_RECOGNITION",
+      "severity": "P0",
+      "required_models": ["person_behavior_det", "action"],
+      "required_classes": ["person"],
+      "required_labels": ["fighting"]
+    }
+  }
+}
+```
+
+推理节点通过 `model_role` + `model_categories` 声明能力（detection 节点写在 `detector_config` 内，relation/action 节点写在 params 顶层）。构建/启动时会校验已启用告警规则的模型角色、类别和动作标签；缺失时拒绝构建。
+
 ## GET /api/v1/pipeline/get-config?id=<id>
 返回该管道**已保存的配置**（`build`/`save-config` 时落盘的 `{id, graph}`），供编辑器"从服务器同步/导入"外部（如 Apipost/平台）创建的管道。
 - 无配置：`404 {"error":"config not found","id":"..."}`。
