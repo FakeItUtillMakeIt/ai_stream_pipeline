@@ -84,8 +84,8 @@ NO_MOUNT=1 HW_CODEC=1 docker/run-jp72.sh
 
 镜像内置：
 
-- 4 个引擎：`yoloe_v8s_child_wall_gate`、`20260921_sevnce_9_cls_nms_trans_640`、
-  `relateanything`、`action_recognition.rebuild`
+- 5 个引擎：`yoloe_v8s_child_wall_gate`、`20260921_sevnce_9_cls_nms_trans_640`、
+  `scene_nms`、`relateanything`、`action_recognition.rebuild`
 - relateanything 的 `predicate_bank.json` 等配置、`resources/ai.ttf`、`logo.png`
 - `scripts/`、demo 管道配置、测试视频 `child_on_wall.mp4`
 - `mediamtx`（RTMP 1935 / HLS 8888；`http_server` 会在 8080 上把 `/live/*` 反向代理到它，
@@ -153,7 +153,7 @@ MOUNT_DIR=/home/nvidia/lj HW_CODEC=1 docker/run-jp72.sh \
 
 ## 模型与配置
 
-- 镜像内置 4 个 demo 引擎（yoloe / sevncevision 检测 / relateanything /
+- 镜像内置 5 个 demo 引擎（yoloe / sevncevision 检测 / scene_nms / relateanything /
   action_recognition）及 relateanything 的 `predicate_bank.json` 等配置，
   路径统一为 `/opt/ai_stream/models/...`。
 - 测试视频：`/opt/ai_stream/assets/child_on_wall.mp4`。

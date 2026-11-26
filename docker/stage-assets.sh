@@ -34,6 +34,8 @@ stage "$REPO_ROOT/models/yoloe/yoloe_v8s_child_wall_gate.engine" \
       "$ASSETS/models/yoloe/yoloe_v8s_child_wall_gate.engine"
 stage "$REPO_ROOT/models/sevncevision/20260921_sevnce_9_cls_nms_trans_640.engine" \
       "$ASSETS/models/sevncevision/20260921_sevnce_9_cls_nms_trans_640.engine"
+stage "$REPO_ROOT/models/sevncevision/scene_nms.engine" \
+      "$ASSETS/models/sevncevision/scene_nms.engine"
 stage "$REPO_ROOT/models/relateanything/relateanything.engine" \
       "$ASSETS/models/relateanything/relateanything.engine"
 stage "$REPO_ROOT/models/action_recognition/action_recognition.rebuild.engine" \
