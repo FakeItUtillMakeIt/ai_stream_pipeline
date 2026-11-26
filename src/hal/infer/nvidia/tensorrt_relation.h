@@ -67,6 +67,7 @@ public:
     bool inferDeviceImage(const void* d_nchw, size_t size_bytes,
                           const RelationInput& meta,
                           std::vector<RelationTriplet>& out) override;
+    void setCudaStream(void* stream) override;
     void unload() override;
     std::pair<int, int> getInputSize() const override;
     std::vector<std::string> getPredicates() const override;

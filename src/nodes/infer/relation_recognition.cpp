@@ -26,17 +26,20 @@ constexpr int kLetterboxPad = 114;   // 与检测侧/关系模型训练一致的
 RelationRecognitionNode::RelationRecognitionNode() = default;
 
 RelationRecognitionNode::~RelationRecognitionNode() {
+    // 先卸载引擎（释放它引用的设备缓冲），再销毁流，避免析构顺序导致的
+    // cudaFree/stream 使用竞态。
+    if (engine_) {
+        engine_->unload();
+        engine_.reset();
+    }
 #ifdef WITH_CUDA
     if (cuda_stream_) {
+        cudaStreamSynchronize(cuda_stream_);
         cudaStreamDestroy(cuda_stream_);
         cuda_stream_ = nullptr;
     }
     gpu_accel_.reset();
 #endif
-    if (engine_) {
-        engine_->unload();
-        engine_.reset();
-    }
 }
 
 #ifdef WITH_CUDA
@@ -54,6 +57,11 @@ bool RelationRecognitionNode::ensureGpu() {
             cuda_stream_ = nullptr;
             return false;
         }
+    }
+    // 让 TRT 也用这条流：否则 enqueueV3 跑在 legacy default stream 上，
+    // 会和检测/预处理的 blocking stream 互相隐式同步，抬高节点延迟。
+    if (engine_) {
+        engine_->setCudaStream(cuda_stream_);
     }
     return true;
 }

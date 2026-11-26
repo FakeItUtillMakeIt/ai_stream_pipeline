@@ -135,6 +135,12 @@ public:
         return false;
     }
 
+    /**
+     * @brief 指定关系引擎使用的 CUDA stream（避免 legacy default stream
+     *        与上游检测/预处理流互相串行化）。默认忽略。
+     */
+    virtual void setCudaStream(void* /*stream*/) {}
+
     virtual void unload() = 0;
 
     virtual std::pair<int, int> getInputSize() const = 0;

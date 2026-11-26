@@ -567,6 +567,10 @@ bool TensorrtRelation::inferPreprocessed(const float* input_nchw, size_t size_by
     return runBoxes(meta, out);
 }
 
+void TensorrtRelation::setCudaStream(void* stream) {
+    core_.setStream(stream);
+}
+
 bool TensorrtRelation::inferDeviceImage(const void* d_nchw, size_t size_bytes,
                                         const RelationInput& meta,
                                         std::vector<RelationTriplet>& out) {
