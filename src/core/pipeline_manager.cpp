@@ -1,5 +1,6 @@
 // src/core/pipeline_manager.cpp
 #include "3rd_party/log_mgr/log_mgr.h"
+#include "ai_stream/core/alert_catalog.h"
 #include "ai_stream/core/pipeline.h"
 #include "nodes/registry/node_factory.h" // 内部工厂头文件
 #include <nlohmann/json.hpp>
@@ -22,6 +23,22 @@ namespace ai_stream
             build_error_.clear();
             try
             {
+                // 0. 告警规则必须能由当前模板里的模型能力满足
+                const auto binding = validateAlertBindings(config);
+                for (const auto& w : binding.warnings) {
+                    LOG_WARN_FMT("[Pipeline {}] 告警模型校验: {}", id_, w);
+                }
+                if (!binding.ok) {
+                    std::string msg;
+                    for (const auto& e : binding.errors) {
+                        LOG_ERROR_FMT("[Pipeline {}] 告警模型校验失败: {}", id_, e);
+                        if (!msg.empty()) msg += "；";
+                        msg += e;
+                    }
+                    build_error_ = "告警模型绑定校验失败: " + msg;
+                    return false;
+                }
+
                 // 1. 解析节点配置并创建实例
                 if (!config.contains("nodes") || !config["nodes"].is_array())
                 {

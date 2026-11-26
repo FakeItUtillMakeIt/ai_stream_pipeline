@@ -140,8 +140,8 @@ namespace rules
         {AlertType::HUMAN_GATHERING, AlertItemType::ITEM_PERSON_BEHAVIOR},
         {AlertType::ABSENCE, AlertItemType::ITEM_PERSON_BEHAVIOR},
         {AlertType::SLEEPING_ON_DUTY, AlertItemType::ITEM_PERSON_BEHAVIOR},
-        {AlertType::CLIMBING, AlertItemType::ITEM_PERSON_BEHAVIOR},
-        {AlertType::FIGHTING, AlertItemType::ITEM_PERSON_BEHAVIOR},
+        {AlertType::CLIMBING, AlertItemType::ITEM_ACTION_RECOGNITION},
+        {AlertType::FIGHTING, AlertItemType::ITEM_ACTION_RECOGNITION},
         {AlertType::UNLICENSED_VENDOR, AlertItemType::ITEM_PERSON_BEHAVIOR},
         {AlertType::PHOTOGRAPHER, AlertItemType::ITEM_PERSON_BEHAVIOR},
         {AlertType::FIRE_LANE_OCCUPANCY, AlertItemType::ITEM_SCENE_RECOGNITION},
@@ -151,7 +151,7 @@ namespace rules
         {AlertType::DISCOVER_HOSE_CUTOFF, AlertItemType::ITEM_SCENE_RECOGNITION},
         {AlertType::CHILD_NEAR_BOUNDARY, AlertItemType::ITEM_RELATION_RECOGNITION},
         {AlertType::PERSON_LOITERING, AlertItemType::ITEM_PERSON_BEHAVIOR},
-        {AlertType::ACTION_RECOGNITION, AlertItemType::ITEM_PERSON_BEHAVIOR}
+        {AlertType::ACTION_RECOGNITION, AlertItemType::ITEM_ACTION_RECOGNITION}
     };
 
     enum class AlertStatus : uint8_t

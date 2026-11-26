@@ -86,7 +86,7 @@ TEST(AlertTypeMapTest, AllMapsContainActionRecognition) {
 
     EXPECT_TRUE(rules::alertItemTypeMap.count(rules::AlertType::ACTION_RECOGNITION) == 1);
     EXPECT_EQ(rules::alertItemTypeMap.at(rules::AlertType::ACTION_RECOGNITION),
-              rules::AlertItemType::ITEM_PERSON_BEHAVIOR);
+              rules::AlertItemType::ITEM_ACTION_RECOGNITION);
 }
 
 TEST(AlertTypeMapTest, AllAlertTypesHaveMappings) {

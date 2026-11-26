@@ -44,6 +44,7 @@ void RelationRecognitionNode::setMaxBoxes(int n) { cfg_.max_boxes = n; }
 bool RelationRecognitionNode::configureImpl(const std::string& node_id,
                                            const nlohmann::json& params) {
     node_id_ = node_id;
+    model_metadata_.parse(params);
     try {
         if (params.contains("model_path"))
             cfg_.model_path = params["model_path"].get<std::string>();

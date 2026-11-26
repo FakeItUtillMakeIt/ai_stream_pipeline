@@ -7,6 +7,7 @@ add_executable(test_core
     core/test_pipeline.cpp
     core/test_packet.cpp
     core/test_metrics.cpp
+    core/test_alert_catalog.cpp
 )
 
 target_include_directories(test_core PRIVATE

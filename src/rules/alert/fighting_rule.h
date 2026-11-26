@@ -19,7 +19,7 @@ namespace ai_stream
             bool initialize(const nlohmann::json &config) override;
 
             AlertType getType() const override { return AlertType::FIGHTING; }
-            AlertItemType getAlertItemType() const override { return AlertItemType::ITEM_PERSON_BEHAVIOR; }
+            AlertItemType getAlertItemType() const override { return AlertItemType::ITEM_ACTION_RECOGNITION; }
             void reset() override;
             nlohmann::json getStatistics() const override;
 
