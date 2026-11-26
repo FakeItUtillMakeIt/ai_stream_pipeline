@@ -69,3 +69,7 @@ output
 # docker 构建时由 stage-assets.sh 暂存的大文件（不入库）
 docker/assets/models/
 docker/assets/mediamtx
+
+# mediamtx 运行时自动生成的自签证书
+auto.crt
+auto.key
