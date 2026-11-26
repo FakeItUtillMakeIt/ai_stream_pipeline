@@ -123,6 +123,18 @@ public:
         return false;
     }
 
+    /**
+     * @brief 直接使用设备端 NCHW float 图像推理（零拷贝，Jetson GPU 路径）
+     * 默认返回 false；后端不支持时调用方回退 CPU 图像路径。
+     */
+    virtual bool inferDeviceImage(const void* d_nchw, size_t size_bytes,
+                                  const RelationInput& meta,
+                                  std::vector<RelationTriplet>& out)
+    {
+        (void)d_nchw; (void)size_bytes; (void)meta; (void)out;
+        return false;
+    }
+
     virtual void unload() = 0;
 
     virtual std::pair<int, int> getInputSize() const = 0;

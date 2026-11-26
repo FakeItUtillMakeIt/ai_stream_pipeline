@@ -7,6 +7,7 @@
 #include <gst/gst.h>
 #include <gst/app/gstappsink.h>
 #include <gst/app/gstappsrc.h>
+#include <gst/video/video.h>
 #include <libavutil/pixfmt.h>
 
 #include <mutex>
@@ -98,10 +99,9 @@ bool GstV4l2VideoDecoder::buildPipeline(const std::string& codec_name) {
     GstElement* dec = gst_element_factory_make("nvv4l2decoder", "dec");
     GstElement* conv = gst_element_factory_make("nvvidconv", "conv");
     GstElement* conv_caps_filter = gst_element_factory_make("capsfilter", "conv_caps");
-    GstElement* vconv = gst_element_factory_make("videoconvert", "vconv");
     appsrc_ = gst_element_factory_make("appsrc", "src");
     appsink_ = gst_element_factory_make("appsink", "sink");
-    if (!parser || !dec || !conv || !conv_caps_filter || !vconv || !appsrc_ || !appsink_) {
+    if (!parser || !dec || !conv || !conv_caps_filter || !appsrc_ || !appsink_) {
         LOG_ERROR("[GstV4l2VideoDecoder] Failed to create pipeline elements");
         return false;
     }
@@ -117,25 +117,26 @@ bool GstV4l2VideoDecoder::buildPipeline(const std::string& codec_name) {
                  "is-live", FALSE, "max-bytes", (guint64)-1, nullptr);
     gst_caps_unref(src_caps);
 
-    // nvvidconv 默认输出可能是 NVMM 显存，videoconvert 无法读取 NVMM；
-    // 必须在 nvvidconv 之后用 capsfilter 显式要求系统内存 NV12。
-    // 注意：nvvidconv 没有 src-caps 属性（旧代码 g_object_set 该属性是无效的）。
+    // nvvidconv 默认输出可能是 NVMM 显存，必须在 nvvidconv 之后用 capsfilter
+    // 显式要求系统内存 NV12。
+    // 直接输出 NV12（不再做 videoconvert→BGR）：后续由 resize_normalize
+    // 走 NPP NV12→BGR + resize + normalize，或由解码节点按需转换。
     GstCaps* conv_caps = gst_caps_from_string(
         "video/x-raw(memory:SystemMemory), format=(string)NV12");
     g_object_set(G_OBJECT(conv_caps_filter), "caps", conv_caps, nullptr);
     gst_caps_unref(conv_caps);
 
-    // appsink 输出 caps：BGR24（CPU 内存）
+    // appsink 输出 caps：系统内存 NV12
     GstCaps* sink_caps = gst_caps_from_string(
-        "video/x-raw, format=(string)BGR, width=(int)[16,8192], height=(int)[16,8192]");
+        "video/x-raw, format=(string)NV12, width=(int)[16,8192], height=(int)[16,8192]");
     g_object_set(G_OBJECT(appsink_), "caps", sink_caps, "sync", FALSE,
                  "max-buffers", 4, "drop", FALSE, nullptr);
     gst_caps_unref(sink_caps);
 
     gst_bin_add_many(GST_BIN(pipeline_), appsrc_, parser, dec, conv, conv_caps_filter,
-                     vconv, appsink_, nullptr);
+                     appsink_, nullptr);
     if (!gst_element_link_many(appsrc_, parser, dec, conv, conv_caps_filter,
-                               vconv, appsink_, nullptr)) {
+                               appsink_, nullptr)) {
         LOG_ERROR("[GstV4l2VideoDecoder] Failed to link pipeline");
         return false;
     }
@@ -239,9 +240,25 @@ bool GstV4l2VideoDecoder::pullFrame(DecodedFrame& frame) {
     }
     width_ = w;
     height_ = h;
+
+    // 从 caps 取 NV12 的 plane offset/stride（nvvidconv 输出可能带行对齐）
+    int y_offset = 0, y_pitch = w;
+    int uv_offset = w * h, uv_pitch = w;
+    GstVideoInfo info;
+    if (caps && gst_video_info_from_caps(&info, caps) &&
+        GST_VIDEO_INFO_N_PLANES(&info) >= 2) {
+        y_offset = static_cast<int>(GST_VIDEO_INFO_PLANE_OFFSET(&info, 0));
+        y_pitch = static_cast<int>(GST_VIDEO_INFO_PLANE_STRIDE(&info, 0));
+        uv_offset = static_cast<int>(GST_VIDEO_INFO_PLANE_OFFSET(&info, 1));
+        uv_pitch = static_cast<int>(GST_VIDEO_INFO_PLANE_STRIDE(&info, 1));
+    }
+
     const gsize size = gst_buffer_get_size(buf);
-    if (size < static_cast<gsize>(w * h * 3)) {
-        LOG_WARN_FMT("[GstV4l2VideoDecoder] Unexpected buffer size {} for {}x{} BGR", size, w, h);
+    const gsize need = static_cast<gsize>(uv_offset) +
+                       static_cast<gsize>(uv_pitch) * static_cast<gsize>(h / 2);
+    if (size < need) {
+        LOG_WARN_FMT("[GstV4l2VideoDecoder] Unexpected NV12 buffer size {} for {}x{} (need {})",
+                     size, w, h, need);
         gst_sample_unref(sample);
         return false;
     }
@@ -254,17 +271,16 @@ bool GstV4l2VideoDecoder::pullFrame(DecodedFrame& frame) {
 
     frame_data_.resize(size);
     std::memcpy(frame_data_.data(), map.data, size);
-    frame_pitch_ = static_cast<int>(size / static_cast<gsize>(h));
     gst_buffer_unmap(buf, &map);
     gst_sample_unref(sample);
 
-    frame.data = frame_data_.data();
-    frame.pitch = frame_pitch_;
+    frame.data = frame_data_.data() + y_offset;
+    frame.pitch = y_pitch;
     frame.width = width_;
     frame.height = height_;
-    frame.format = AV_PIX_FMT_BGR24;
-    frame.data_uv = nullptr;
-    frame.pitch_uv = 0;
+    frame.format = AV_PIX_FMT_NV12;
+    frame.data_uv = frame_data_.data() + uv_offset;
+    frame.pitch_uv = uv_pitch;
     frame.owns_data = false;
     frame.is_gpu = false;
     return true;

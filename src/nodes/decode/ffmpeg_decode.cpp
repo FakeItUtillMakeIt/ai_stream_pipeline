@@ -342,9 +342,16 @@ std::shared_ptr<core::VideoFramePacket> FFmpegDecodeNode::decodePacket(
     cv::Mat mat;
 
     // ---- NV12 直通：构造紧凑 NV12（Y + UV），供 NV12 输入模型消费 ----
+    // output_bgr=false + output_nv12=true 时完全跳过 BGR 转换，交给
+    // resize_normalize 的 NPP NV12→BGR 路径处理。
+    const bool nv12_source = (decoded.format == AV_PIX_FMT_NV12 ||
+                              decoded.format == AV_PIX_FMT_CUDA) &&
+                             decoded.data && decoded.data_uv &&
+                             decoded.pitch > 0 && decoded.pitch_uv > 0 &&
+                             (height % 2 == 0);
+    const bool nv12_only = output_nv12_ && !output_bgr_ && nv12_source;
     std::shared_ptr<std::vector<uint8_t>> nv12_buf;
-    if (output_nv12_ && decoded.data && decoded.data_uv &&
-        decoded.pitch > 0 && decoded.pitch_uv > 0 && (height % 2 == 0)) {
+    if (output_nv12_ && nv12_source) {
         nv12_buf = std::make_shared<std::vector<uint8_t>>(
             static_cast<size_t>(width) * height * 3 / 2);
         uint8_t* dst = nv12_buf->data();
@@ -361,6 +368,7 @@ std::shared_ptr<core::VideoFramePacket> FFmpegDecodeNode::decodePacket(
 
     // 软件解码后端已直接输出 BGR24：不再需要 sws 转换，仅按 pitch 拷贝到
     // cv::Mat（codec 内部帧缓冲每帧复用，必须 clone）。
+    if (!nv12_only) {
     if (decoded.format == AV_PIX_FMT_BGR24 && output_bgr_ && decoded.data) {
         cv::Mat bgr(height, width, CV_8UC3, decoded.data, decoded.pitch);
         mat = bgr.clone();
@@ -492,6 +500,7 @@ std::shared_ptr<core::VideoFramePacket> FFmpegDecodeNode::decodePacket(
         mat = cv::Mat(height, width, CV_8UC3);
     }
     } // else: BGR24 fast path
+    } // !nv12_only
 
     // 释放 MPP 硬件解码路径分配的 NV12 帧缓冲（owns_data=true 时）
     if (decoded.owns_data && decoded.data) {
@@ -506,7 +515,8 @@ std::shared_ptr<core::VideoFramePacket> FFmpegDecodeNode::decodePacket(
     new_frame->source_id = raw_pkt->source_id;
     new_frame->timestamp_ms = raw_pkt->timestamp_ms;
     new_frame->mat = std::make_shared<cv::Mat>(std::move(mat));
-    new_frame->source_mat = new_frame->mat;
+    // NV12-only 模式没有 CPU BGR，下游必须使用 d_bgr_ptr 或 NV12 字段
+    new_frame->source_mat = nv12_only ? nullptr : new_frame->mat;
     new_frame->width = width;
     new_frame->height = height;
     new_frame->channels = 3;

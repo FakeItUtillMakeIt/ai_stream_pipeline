@@ -99,7 +99,8 @@
         "params": {
           "hw_decoder": true,
           "hw_decoder_type": "h264_cuvid",
-          "output_bgr": true
+          "output_bgr": false,
+          "output_nv12": true
         },
         "position": {
           "x": 310,
