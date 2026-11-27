@@ -26,7 +26,11 @@ public:
     bool open(const VideoEncoderConfig& config) override;
     bool encode(const uint8_t* yuv420p, size_t size, int64_t pts,
                 std::vector<EncodedPacket>& packets) override;
+    bool encodeBgr(const uint8_t* bgr, int width, int height, int step,
+                   int64_t pts, std::vector<EncodedPacket>& packets) override;
     bool flush(std::vector<EncodedPacket>& packets) override;
+    // 每个证据文件开头强制 IDR：复用编码器时不能从 P 帧开始，否则播放器黑屏
+    void requestKeyframe() override;
     void close() override;
 
     const uint8_t* getExtradata(size_t& size) const override {
@@ -44,6 +48,7 @@ private:
     GstElement* pipeline_ = nullptr;
     GstElement* appsrc_ = nullptr;
     GstElement* appsink_ = nullptr;
+    GstElement* enc_ = nullptr;
     GstAppSrc* app_src_ = nullptr;
     GstAppSink* app_sink_ = nullptr;
 
@@ -57,6 +62,7 @@ private:
     int64_t next_pts_ = 0;                       // 无时间戳缓冲的 pts 兜底
     int64_t last_pts_ = -1;                      // 已输出最大 pts（保证严格单调）
     bool opened_ = false;
+    bool bgr_input_ = false;   // appsrc 协商 BGR24，nvvidconv 内做 BGR→NV12
 };
 
 } // namespace hal

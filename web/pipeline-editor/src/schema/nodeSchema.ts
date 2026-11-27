@@ -60,7 +60,10 @@ export const SCHEMA: Record<string, NodeTypeDef> = {
     label: 'FFmpeg解码', category: 'decode', color: '#5a8',
     fields: {
       hw_decoder: { type: 'bool', label: '硬解码', default: true },
-      output_bgr: { type: 'bool', label: '输出BGR', default: true },
+      output_bgr: { type: 'bool', label: '输出BGR', default: true,
+        hint: 'CPU BGR；与“输出NV12”二选一。pose/VLM 等节点仍依赖 BGR' },
+      output_nv12: { type: 'bool', label: '输出NV12(GPU预处理直通)', default: false,
+        hint: 'NV12 直通到 NPP 预处理，最省 CPU；需关闭“输出BGR”' },
       hw_decoder_type: { type: 'enum', label: '硬解类型', values: ['', 'h264_cuvid', 'hevc_cuvid'] },
     },
   },

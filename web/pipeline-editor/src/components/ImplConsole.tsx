@@ -179,7 +179,7 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
       setSys({
         ok: h.ok,
         cpu: Number(system.cpu_percent) || 0,
-        gpu: Number(system.gpu_memory_mb) || 0,
+        gpu: Number(system.gpu_memory_mb ?? 0),
       });
     };
     load();
@@ -445,8 +445,8 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
         异常 <b style={{ color: 'var(--err)' }}>{insts.filter((i) => i.info.state === 'load_failed').length}</b> ·
         待部署 <b style={{ color: 'var(--muted)' }}>{insts.filter((i) => i.info.state !== 'running' && i.info.state !== 'load_failed').length}</b>
         · API <b style={{ color: sys.ok ? 'var(--ok)' : 'var(--err)' }}>{sys.ok ? '正常' : '异常'}</b>
-        · CPU <b>{sys.cpu}%</b>
-        · GPU <b>{sys.gpu >= 1024 ? `${(sys.gpu / 1024).toFixed(1)} GB` : `${sys.gpu} MB`}</b>
+        · CPU <b>{(sys.cpu / 100).toFixed(1)} 核</b>
+        · GPU <b>{sys.gpu >= 0 ? (sys.gpu >= 1024 ? `${(sys.gpu / 1024).toFixed(1)} GB` : `${sys.gpu} MB`) : '—'}</b>
       </div>
 
       <div className="impl-filter">

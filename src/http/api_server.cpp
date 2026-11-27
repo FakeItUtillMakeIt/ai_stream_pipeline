@@ -905,6 +905,48 @@ void ApiServer::setupRoutes() {
         }
     });
 
+    // ===== HLS 反向代理：/live/* -> mediamtx HLS =====
+    // 浏览器只访问 http_server 的 8080，避免额外暴露 8888（防火墙/NAT）
+    // 以及跨端口的 CORS/Cookie 问题。上游可用 AI_STREAM_HLS_UPSTREAM 覆盖。
+    {
+        const char* up = std::getenv("AI_STREAM_HLS_UPSTREAM");
+        const std::string upstream = (up && *up) ? up : "127.0.0.1:8888";
+        const auto pos = upstream.rfind(':');
+        const std::string hls_host = pos == std::string::npos ? upstream : upstream.substr(0, pos);
+        const int hls_port = pos == std::string::npos ? 8888 : std::atoi(upstream.c_str() + pos + 1);
+
+        server_.Get(R"(/live/.*)", [hls_host, hls_port](const httplib::Request& req, httplib::Response& res) {
+            httplib::Client cli(hls_host, hls_port);
+            cli.set_connection_timeout(2, 0);
+            cli.set_read_timeout(30, 0);
+            cli.set_follow_location(true);
+
+            httplib::Headers headers;
+            for (const char* key : {"Cookie", "Origin", "Referer", "Range", "User-Agent"}) {
+                if (req.has_header(key)) headers.emplace(key, req.get_header_value(key));
+            }
+
+            auto r = cli.Get(req.target, headers);
+            if (!r) {
+                res.status = 502;
+                res.set_content("hls upstream unavailable", "text/plain");
+                return;
+            }
+            res.status = r->status;
+            std::string content_type = "application/octet-stream";
+            for (const auto& hdr : r->headers) {
+                if (hdr.first == "Transfer-Encoding" || hdr.first == "Connection" ||
+                    hdr.first == "Content-Type") {
+                    if (hdr.first == "Content-Type") content_type = hdr.second;
+                    continue;
+                }
+                res.set_header(hdr.first.c_str(), hdr.second.c_str());
+            }
+            res.set_content(r->body, content_type);
+        });
+        LOG_INFO_FMT("Proxying HLS /live/* -> http://{}:{}", hls_host, hls_port);
+    }
+
     // ===== 静态托管：Web 管道编辑器（同源，免 CORS）=====
     // 根目录用 AI_STREAM_WEB_ROOT 指定，默认 ./web/pipeline-editor/dist
     {
@@ -937,15 +979,18 @@ void ApiServer::monitorSystemResources() {
     auto last_trim = std::chrono::steady_clock::now();
 
     while (resource_running_.load()) {
+        // GPU 专用内存：优先本进程 NvMap（Jetson，与 jtop 口径一致）；
+        // x86 没有 /run/nvmap 时退回 CUDA 全局显存，保持原有指标可用。
+        int gpu_mb = core::processGpuMemoryMb();
 #ifdef WITH_CUDA
-        // cudaMemGetInfo 返回的是当前设备的全局空闲/总量，包含其他进程占用。
-        size_t free_mem = 0;
-        size_t total_mem = 0;
-        if (cudaMemGetInfo(&free_mem, &total_mem) == cudaSuccess && total_mem > 0) {
-            const size_t used_mb = (total_mem - free_mem) / (1024 * 1024);
-            mc.setGpuMemoryMb(static_cast<int>(used_mb));
+        if (gpu_mb < 0) {
+            size_t free_mem = 0, total_mem = 0;
+            if (cudaMemGetInfo(&free_mem, &total_mem) == cudaSuccess && total_mem > 0) {
+                gpu_mb = static_cast<int>((total_mem - free_mem) / (1024 * 1024));
+            }
         }
 #endif
+        mc.setGpuMemoryMb(gpu_mb);
         mc.setMemoryMb(core::processRssMb());
 
         const auto now = std::chrono::steady_clock::now();
@@ -983,6 +1028,7 @@ void ApiServer::monitorSystemResources() {
                             const int usage = static_cast<int>(
                                 100.0 * static_cast<double>(total_diff - idle_diff) / total_diff);
                             mc.setCpuUsagePercent(std::clamp(usage, 0, 100));
+                            mc.setProcessCpuPercent(core::processCpuPercentSample());
                         }
                         last_idle = current_idle;
                         last_total = current_total;

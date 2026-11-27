@@ -8,6 +8,7 @@
 #include <gst/app/gstappsink.h>
 #include <gst/app/gstappsrc.h>
 
+#include <cstring>
 #include <mutex>
 #include <utility>
 
@@ -60,11 +61,12 @@ bool GstV4l2VideoEncoder::isAvailable() const {
 
 bool GstV4l2VideoEncoder::buildPipeline() {
     GstElement* conv = gst_element_factory_make("nvvidconv", "conv");
+    GstElement* conv_caps_filter = gst_element_factory_make("capsfilter", "conv_caps");
     GstElement* enc = gst_element_factory_make("nvv4l2h264enc", "enc");
     GstElement* parse = gst_element_factory_make("h264parse", "parse");
     appsrc_ = gst_element_factory_make("appsrc", "src");
     appsink_ = gst_element_factory_make("appsink", "sink");
-    if (!conv || !enc || !parse || !appsrc_ || !appsink_) {
+    if (!conv || !conv_caps_filter || !enc || !parse || !appsrc_ || !appsink_) {
         LOG_ERROR("[GstV4l2VideoEncoder] Failed to create pipeline elements");
         return false;
     }
@@ -73,25 +75,34 @@ bool GstV4l2VideoEncoder::buildPipeline() {
 
     pipeline_ = gst_pipeline_new("nvv4l2enc-pipeline");
 
-    // appsrc 输入：packed I420（YUV420P）
+    // appsrc 输入：BGR24（bgr_input_）或 packed I420（YUV420P）。
+    // BGR 模式下 nvvidconv 直接在 VIC/GPU 内完成 BGR→NV12，节点层不再跑 sws。
     char caps_str[256];
     snprintf(caps_str, sizeof(caps_str),
-             "video/x-raw, format=(string)I420, width=(int)%d, height=(int)%d, "
+             "video/x-raw, format=(string)%s, width=(int)%d, height=(int)%d, "
              "framerate=(fraction)%d/1",
-             width_, height_, fps_);
+             bgr_input_ ? "BGR" : "I420", width_, height_, fps_);
     GstCaps* src_caps = gst_caps_from_string(caps_str);
     g_object_set(G_OBJECT(appsrc_), "caps", src_caps, "format", GST_FORMAT_TIME,
                  "is-live", FALSE, "max-bytes", (guint64)-1, nullptr);
     gst_caps_unref(src_caps);
 
-    // nvvidconv → NVMM NV12（编码器要求 NVMM 内存）
+    // nvvidconv → NVMM NV12（编码器要求 NVMM 内存）。
+    // nvvidconv 没有 src-caps 属性，必须用 capsfilter 显式要求 NVMM 输出，
+    // 否则默认输出系统内存，nvv4l2h264enc 会因 caps 协商失败（HAL encode failed）。
     char conv_caps_str[256];
     snprintf(conv_caps_str, sizeof(conv_caps_str),
              "video/x-raw(memory:NVMM), format=(string)NV12, width=(int)%d, height=(int)%d",
              width_, height_);
     GstCaps* conv_caps = gst_caps_from_string(conv_caps_str);
-    g_object_set(G_OBJECT(conv), "src-caps", conv_caps, nullptr);
+    g_object_set(G_OBJECT(conv_caps_filter), "caps", conv_caps, nullptr);
     gst_caps_unref(conv_caps);
+
+    // VIC 不支持 RGB/BGR→YUV（nvbufsurftransform 会直接报错），BGR 直入时
+    // 让 nvvidconv 走 GPU 计算单元；I420 仍用 VIC，功耗更低。
+    if (bgr_input_) {
+        g_object_set(G_OBJECT(conv), "compute-hw", 1, nullptr);
+    }
 
     g_object_set(G_OBJECT(enc),
                  "bitrate", static_cast<guint>(bitrate_ * 1000),
@@ -108,8 +119,10 @@ bool GstV4l2VideoEncoder::buildPipeline() {
                  "max-buffers", 8, "drop", FALSE, nullptr);
     gst_caps_unref(sink_caps);
 
-    gst_bin_add_many(GST_BIN(pipeline_), appsrc_, conv, enc, parse, appsink_, nullptr);
-    if (!gst_element_link_many(appsrc_, conv, enc, parse, appsink_, nullptr)) {
+    gst_bin_add_many(GST_BIN(pipeline_), appsrc_, conv, conv_caps_filter, enc, parse,
+                     appsink_, nullptr);
+    if (!gst_element_link_many(appsrc_, conv, conv_caps_filter, enc, parse,
+                               appsink_, nullptr)) {
         LOG_ERROR("[GstV4l2VideoEncoder] Failed to link pipeline");
         return false;
     }
@@ -124,7 +137,8 @@ bool GstV4l2VideoEncoder::buildPipeline() {
     // V4L2 M2M 编码器在推入首帧前不会完成 READY→PLAYING 切换。
     // 推一帧黑帧驱动状态机，否则 gst_element_get_state 会一直停在 READY。
     {
-        const size_t bytes = static_cast<size_t>(width_) * height_ * 3 / 2;
+        const size_t bytes = static_cast<size_t>(width_) * height_ * 3 /
+                             (bgr_input_ ? 1 : 2);
         GstBuffer* seed = gst_buffer_new_allocate(nullptr, bytes, nullptr);
         GstMapInfo seed_map;
         gst_buffer_map(seed, &seed_map, GST_MAP_WRITE);
@@ -143,11 +157,13 @@ bool GstV4l2VideoEncoder::buildPipeline() {
                       gst_element_state_get_name(current_state));
         return false;
     }
+    enc_ = enc;
     return true;
 }
 
 bool GstV4l2VideoEncoder::open(const VideoEncoderConfig& config) {
     ensureGstInit();
+    bgr_input_ = config.prefer_bgr_input;
     width_ = config.width;
     height_ = config.height;
     fps_ = config.fps > 0 ? config.fps : 25;
@@ -157,18 +173,34 @@ bool GstV4l2VideoEncoder::open(const VideoEncoderConfig& config) {
         return false;
     }
     if (!buildPipeline()) {
-        return false;
+        // BGR 直入依赖 nvvidconv 的 BGR→NVMM 协商；个别 L4T/GStreamer 版本
+        // 不支持时自动退回 I420 输入（节点层 sws），保证证据/推流仍可用。
+        if (bgr_input_) {
+            LOG_WARN("[GstV4l2VideoEncoder] BGR input pipeline failed, "
+                     "falling back to I420 input");
+            close();
+            bgr_input_ = false;
+            if (!buildPipeline()) {
+                return false;
+            }
+        } else {
+            return false;
+        }
     }
     opened_ = true;
     next_pts_ = 0;
     last_pts_ = -1;
 
     // 预热：编码若干黑帧，让 h264parse 完成 codec_data 协商。
-    const size_t frame_bytes = static_cast<size_t>(width_) * height_ * 3 / 2;
+    const size_t frame_bytes = static_cast<size_t>(width_) * height_ * 3 /
+                               (bgr_input_ ? 1 : 2);
     std::vector<uint8_t> black(frame_bytes, 0);
     std::vector<EncodedPacket> tmp;
     for (int i = 0; i < 10 && extradata_.empty(); ++i) {
-        if (!encode(black.data(), black.size(), i, tmp)) {
+        const bool ok = bgr_input_
+                            ? encodeBgr(black.data(), width_, height_, width_ * 3, i, tmp)
+                            : encode(black.data(), black.size(), i, tmp);
+        if (!ok) {
             LOG_WARN_FMT("[GstV4l2VideoEncoder] Warmup encode failed at frame {}", i);
         }
         tmp.clear();
@@ -185,7 +217,11 @@ bool GstV4l2VideoEncoder::open(const VideoEncoderConfig& config) {
     // seed 帧和早期黑帧的编码输出。推几帧 dummy + 长超时拉取，确保 encoder
     // 内部缓冲排空，避免真实画面的前几帧被黑帧"顶掉"。
     for (int i = 0; i < 5; ++i) {
-        encode(black.data(), black.size(), 10 + i, tmp);
+        if (bgr_input_) {
+            encodeBgr(black.data(), width_, height_, width_ * 3, 10 + i, tmp);
+        } else {
+            encode(black.data(), black.size(), 10 + i, tmp);
+        }
         tmp.clear();
     }
     pullPackets(tmp, 300);
@@ -223,8 +259,55 @@ bool GstV4l2VideoEncoder::encode(const uint8_t* yuv420p, size_t size, int64_t pt
         return false;
     }
 
-    // 拉取对应输出包（编码器有缓冲，先尝试非阻塞；无包时短等）
-    return pullPackets(packets, 30);
+    // 非阻塞拉取：编码器本身是流水线，单帧输出可能滞后一帧；
+    // 不能每帧阻塞 30ms（720p25 预算只有 40ms），否则 sink 队列很快涨满丢帧。
+    return pullPackets(packets, 1);
+}
+
+bool GstV4l2VideoEncoder::encodeBgr(const uint8_t* bgr, int width, int height,
+                                    int step, int64_t pts,
+                                    std::vector<EncodedPacket>& packets) {
+    if (!opened_ || !bgr || width <= 0 || height <= 0 || step < width * 3) {
+        return false;
+    }
+    // appsrc caps 在 open() 时已按 width_/height_ 协商；尺寸不一致时交给
+    // EncoderBase 回退到 sws 路径（那里有缩放上下文）。
+    if (!bgr_input_ || width != width_ || height != height_) {
+        return false;
+    }
+
+    // GStreamer 的 BGR caps 按 width*3 的紧凑 stride 解析缓冲区，
+    // 源 step 更大时必须逐行拷成连续布局，不能保留行间 padding。
+    const size_t row_bytes = static_cast<size_t>(width) * 3;
+    const size_t data_size = row_bytes * height;
+    GstBuffer* buf = gst_buffer_new_allocate(nullptr, data_size, nullptr);
+    if (!buf) return false;
+    GstMapInfo map;
+    if (!gst_buffer_map(buf, &map, GST_MAP_WRITE)) {
+        gst_buffer_unref(buf);
+        return false;
+    }
+    if (static_cast<size_t>(step) == row_bytes) {
+        std::memcpy(map.data, bgr, data_size);
+    } else {
+        for (int y = 0; y < height; ++y) {
+            std::memcpy(map.data + static_cast<size_t>(y) * row_bytes,
+                        bgr + static_cast<size_t>(y) * step, row_bytes);
+        }
+    }
+    gst_buffer_unmap(buf, &map);
+
+    const guint64 dur = GST_SECOND / fps_;
+    GST_BUFFER_PTS(buf) = static_cast<guint64>(pts) * dur;
+    GST_BUFFER_DURATION(buf) = dur;
+
+    if (gst_app_src_push_buffer(app_src_, buf) != GST_FLOW_OK) {
+        LOG_WARN("[GstV4l2VideoEncoder] appsrc push failed (BGR)");
+        return false;
+    }
+
+    // 与 encode() 一致：非阻塞拉包，允许滞后一帧
+    return pullPackets(packets, 1);
 }
 
 bool GstV4l2VideoEncoder::pullPackets(std::vector<EncodedPacket>& packets, int64_t timeout_ms) {
@@ -318,8 +401,24 @@ bool GstV4l2VideoEncoder::flush(std::vector<EncodedPacket>& packets) {
     if (!opened_) {
         return true;
     }
-    gst_app_src_end_of_stream(app_src_);
+    // 注意：不能在这里发 EOS。
+    // 证据录像会复用同一个编码器连续写多个文件（EncoderBase::finishFile →
+    // flush → startFile 复用），appsrc 一旦收到 EOS 会进入永久的 EOS 状态，
+    // 后续 push 全部返回 GST_FLOW_EOS，表现为 "appsrc push failed"、
+    // "HAL encode failed"，第二个文件只有 262B 的 mp4 头。
+    // 编码器是 I/P-only，直接把已产出的包拉完即可；真正的 EOS 交给 close()
+    // （pipeline 置 NULL）处理。
     return pullPackets(packets, 100);
+}
+
+void GstV4l2VideoEncoder::requestKeyframe() {
+    // nvv4l2h264enc 提供 force-IDR action signal：让下一帧编码为 IDR。
+    // 证据录像复用编码器写多个文件时，新文件必须从 IDR 开始，
+    // 否则首帧是引用上一个文件的 P 帧，播放器会黑屏（或到下一个 IDR 前无法解码）。
+    if (enc_) {
+        g_signal_emit_by_name(enc_, "force-IDR");
+        LOG_DEBUG("[GstV4l2VideoEncoder] Requested IDR for next frame");
+    }
 }
 
 void GstV4l2VideoEncoder::close() {
@@ -329,6 +428,7 @@ void GstV4l2VideoEncoder::close() {
         pipeline_ = nullptr;
         appsrc_ = nullptr;
         appsink_ = nullptr;
+        enc_ = nullptr;
         app_src_ = nullptr;
         app_sink_ = nullptr;
     }

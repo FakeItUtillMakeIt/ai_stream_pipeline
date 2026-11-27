@@ -15,8 +15,13 @@ target_link_libraries(http_server
         httplib::httplib          # FetchContent 提供的目标
         nlohmann_json::nlohmann_json
         spdlog::spdlog
-        CURL::libcurl             # api_server 的 selfcheck 播放地址探测用到 libcurl
 )
+
+# libcurl 仅在 WITH_FTP/WITH_VLM 打开且找到可用 curl 时才链接；
+# api_server 本身不直接调用 curl，缺失时不应阻断 HTTP 服务构建。
+if(TARGET CURL::libcurl)
+    target_link_libraries(http_server PRIVATE CURL::libcurl)
+endif()
 
 target_include_directories(http_server
     PRIVATE

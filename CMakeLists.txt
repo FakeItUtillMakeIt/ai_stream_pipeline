@@ -8,6 +8,12 @@ project(ai_stream_pipeline
     LANGUAGES CXX
 )
 
+# 使用 <PACKAGE>_ROOT 变量（如 FFMPEG_ROOT）作为 find_package 的搜索根，
+# 避免 CMake 3.27+ 的 CMP0144 开发警告刷屏
+if(POLICY CMP0144)
+    cmake_policy(SET CMP0144 NEW)
+endif()
+
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
     message(FATAL_ERROR "ai_stream_pipeline currently supports Linux only; use a Linux target or add a platform port first")
 endif()
@@ -70,6 +76,38 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # CUDA 语言按需启用
 if(WITH_CUDA)
+    # nvcc 通常不在默认 PATH（如 Jetson 上的 /usr/local/cuda/bin）。
+    # 先按 PATH 查找，保持 x86 上 module/环境选择 CUDA 版本的既有行为；
+    # 只有 PATH 里找不到时才探测常见安装路径，避免 enable_language 失败后污染缓存。
+    if(NOT CMAKE_CUDA_COMPILER OR CMAKE_CUDA_COMPILER MATCHES "NOTFOUND$")
+        find_program(CMAKE_CUDA_COMPILER NAMES nvcc)
+    endif()
+    if(NOT CMAKE_CUDA_COMPILER OR CMAKE_CUDA_COMPILER MATCHES "NOTFOUND$")
+        find_program(CMAKE_CUDA_COMPILER
+            NAMES nvcc
+            HINTS
+                $ENV{CUDA_HOME}
+                $ENV{CUDA_PATH}
+                /usr/local/cuda
+                /usr/local/cuda-13
+                /usr/local/cuda-12
+            PATH_SUFFIXES bin
+        )
+    endif()
+    if(NOT CMAKE_CUDA_COMPILER OR CMAKE_CUDA_COMPILER MATCHES "NOTFOUND$")
+        message(FATAL_ERROR
+            "WITH_CUDA=ON but nvcc was not found. Install the CUDA toolkit or "
+            "point CMake at it with -DCMAKE_CUDA_COMPILER=/path/to/nvcc "
+            "(e.g. /usr/local/cuda/bin/nvcc), and make sure it is on PATH.")
+    endif()
+
+    # 之前失败配置可能把空的 CMAKE_CUDA_ARCHITECTURES 写进缓存，
+    # 这种情况下 enable_language 会直接报 "must be non-empty"，需先清除。
+    if(DEFINED CACHE{CMAKE_CUDA_ARCHITECTURES}
+       AND CMAKE_CUDA_ARCHITECTURES STREQUAL "")
+        unset(CMAKE_CUDA_ARCHITECTURES CACHE)
+    endif()
+
     enable_language(CUDA)
     set(CMAKE_CUDA_STANDARD_REQUIRED ON)
     set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
@@ -104,26 +142,40 @@ include(GNUInstallDirs)
 include(cmake/dependencies.cmake)
 
 # 查找或获取基础依赖（spdlog, nlohmann_json）
-# 优先使用系统 spdlog，找不到时从 GitHub 下载
-find_package(spdlog QUIET)
-if(NOT spdlog_FOUND)
-    message(STATUS "System spdlog not found, fetching v1.9.2 from GitHub...")
-    include(FetchContent)
-    FetchContent_Declare(
-        spdlog
-        GIT_REPOSITORY https://github.com/gabime/spdlog.git
-        GIT_TAG v1.9.2
-        GIT_SHALLOW TRUE
-    )
+# 顺序：仓库内置源码（离线可构建）→ 系统安装 → GitHub FetchContent
+set(SPDLOG_BUNDLED_DIR "${CMAKE_SOURCE_DIR}/3rd_party/spdlog")
+if(EXISTS "${SPDLOG_BUNDLED_DIR}/CMakeLists.txt")
+    message(STATUS "Using bundled spdlog: ${SPDLOG_BUNDLED_DIR}")
     set(SPDLOG_BUILD_SHARED ON CACHE BOOL "" FORCE)
     set(SPDLOG_INSTALL OFF CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(spdlog)
-    # 注意：FetchContent_MakeAvailable 会自动创建 spdlog::spdlog 目标
-    # 设置一个变量表示使用FetchContent版本
+    set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(SPDLOG_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
+    set(SPDLOG_BUILD_BENCH OFF CACHE BOOL "" FORCE)
+    add_subdirectory("${SPDLOG_BUNDLED_DIR}" "${CMAKE_BINARY_DIR}/3rd_party/spdlog")
+    # 供后续 install 规则复用
+    set(spdlog_SOURCE_DIR "${SPDLOG_BUNDLED_DIR}")
     set(SPDLOG_FETCHED TRUE)
 else()
-    find_package(spdlog REQUIRED)
-    set(SPDLOG_FETCHED FALSE)
+    find_package(spdlog QUIET)
+    if(NOT spdlog_FOUND)
+        message(STATUS "System spdlog not found, fetching v1.9.2 from GitHub...")
+        include(FetchContent)
+        FetchContent_Declare(
+            spdlog
+            GIT_REPOSITORY https://github.com/gabime/spdlog.git
+            GIT_TAG v1.9.2
+            GIT_SHALLOW TRUE
+        )
+        set(SPDLOG_BUILD_SHARED ON CACHE BOOL "" FORCE)
+        set(SPDLOG_INSTALL OFF CACHE BOOL "" FORCE)
+        FetchContent_MakeAvailable(spdlog)
+        # 注意：FetchContent_MakeAvailable 会自动创建 spdlog::spdlog 目标
+        # 设置一个变量表示使用FetchContent版本
+        set(SPDLOG_FETCHED TRUE)
+    else()
+        find_package(spdlog REQUIRED)
+        set(SPDLOG_FETCHED FALSE)
+    endif()
 endif()
 
 # FetchContent 方式获取的 spdlog 是普通（非 find_package 导入）目标，
@@ -176,6 +228,21 @@ if(WITH_FTP)
     else()
         message(STATUS "System CURL not found, fetching libcurl from GitHub...")
         include(FetchContent)
+        # curl 默认启用 OpenSSL 后端；系统缺少 OpenSSL 开发包时
+        # find_package(OpenSSL REQUIRED) 会直接失败，这里回退到无 TLS 构建，
+        # 保证 FTP 上传（明文）可用；HTTPS/FTPS 需安装 libssl-dev 后重配。
+        find_package(OpenSSL QUIET)
+        if(NOT OpenSSL_FOUND)
+            message(WARNING
+                "OpenSSL development files not found: libcurl will be built "
+                "without TLS. HTTPS/FTPS transfers (e.g. VLM reporting) will "
+                "fail at runtime. Install libssl-dev (and libcurl4-openssl-dev) "
+                "to enable TLS.")
+            set(CURL_USE_OPENSSL OFF CACHE BOOL "" FORCE)
+        else()
+            # 之前无 OpenSSL 时可能把 OFF 写进缓存，装上开发包后要恢复 TLS
+            set(CURL_USE_OPENSSL ON CACHE BOOL "" FORCE)
+        endif()
         FetchContent_Declare(
             curl
             GIT_REPOSITORY https://github.com/curl/curl.git
@@ -240,14 +307,27 @@ endif()
 
 # HTTP 服务依赖（如果构建 HTTP 服务器）
 if(BUILD_HTTP_SERVER)
-    include(FetchContent)
-    FetchContent_Declare(
-        httplib
-        GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
-        GIT_TAG        v0.14.3   # 或者使用最新的稳定版本
-    )
-    FetchContent_MakeAvailable(httplib)
-    # 注意：FetchContent 之后，httplib 的目标名称通常是 httplib::httplib
+    set(HTTPLIB_BUNDLED_DIR "${CMAKE_SOURCE_DIR}/3rd_party/httplib")
+    if(EXISTS "${HTTPLIB_BUNDLED_DIR}/httplib.h")
+        message(STATUS "Using bundled cpp-httplib: ${HTTPLIB_BUNDLED_DIR}")
+        add_library(httplib_bundled INTERFACE)
+        target_include_directories(httplib_bundled INTERFACE "${HTTPLIB_BUNDLED_DIR}")
+        add_library(httplib::httplib ALIAS httplib_bundled)
+        find_package(ZLIB QUIET)
+        if(ZLIB_FOUND)
+            target_link_libraries(httplib_bundled INTERFACE ZLIB::ZLIB)
+            target_compile_definitions(httplib_bundled INTERFACE CPPHTTPLIB_ZLIB_SUPPORT)
+        endif()
+    else()
+        include(FetchContent)
+        FetchContent_Declare(
+            httplib
+            GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+            GIT_TAG        v0.14.3   # 或者使用最新的稳定版本
+        )
+        FetchContent_MakeAvailable(httplib)
+        # 注意：FetchContent 之后，httplib 的目标名称通常是 httplib::httplib
+    endif()
 endif()
 
 # 推理后端可选依赖
@@ -305,8 +385,13 @@ if(WITH_CUDA)
         endif()
 
         if(_SUPPORTED_ARCHS)
-            list(SORT _SUPPORTED_ARCHS)
-            list(GET _SUPPORTED_ARCHS -1 _MAX_SUPPORTED)
+            # 数值比较取最大值（list(SORT) 是字典序，会把 90 排在 121 之后）
+            set(_MAX_SUPPORTED "")
+            foreach(_arch ${_SUPPORTED_ARCHS})
+                if(_MAX_SUPPORTED STREQUAL "" OR _arch GREATER _MAX_SUPPORTED)
+                    set(_MAX_SUPPORTED "${_arch}")
+                endif()
+            endforeach()
             if(_GPU_ARCH GREATER _MAX_SUPPORTED)
                 message(WARNING
                     "Local GPU compute capability ${_GPU_ARCH} exceeds max architecture "

@@ -163,7 +163,7 @@ function buildMetricSample(data: any, ts: number): MetricSample {
   const latency = rows.reduce((max, row) => Math.max(max, row.latencyMax ?? 0), 0) || null;
   return {
     ts,
-    cpu: numberValue(system.cpu_percent),
+    cpu: numberValue(system.process_cpu_percent ?? system.cpu_percent),
     gpu: numberValue(system.gpu_memory_mb),
     mem: numberValue(system.memory_mb),
     active: numberValue(system.active_pipelines),
@@ -519,11 +519,14 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
 
   const cur = useMemo(() => pipelines.find((p) => p.id === sel), [pipelines, sel]);
   const isRunning = !!cur?.running;
-  const streamUrl = cur?.play_url
-    ? (cur.play_url.startsWith('http')
-      ? cur.play_url
-      : window.location.origin + (cur.play_url.startsWith('/') ? cur.play_url : '/' + cur.play_url))
-    : '';
+  // 相对 play_url（/live/xxx/index.m3u8）按当前 origin 解析；
+  // http_server 会把 /live/* 反向代理到 mediamtx 的 8888。
+  const resolvePlayUrl = (u: string) => {
+    if (u.startsWith('http')) return u;
+    const path = u.startsWith('/') ? u : '/' + u;
+    return new URL(path, window.location.origin).href;
+  };
+  const streamUrl = cur?.play_url ? resolvePlayUrl(cur.play_url) : '';
 
   useEffect(() => {
     if (!isRunning) {
@@ -1041,8 +1044,8 @@ export default function PreviewView({ settings, initialId, initialTab, onBack, b
                   <Kpi label="节点数" value={String(metricRows.length)} sub="有指标上报的节点" />
                   <Kpi label="总丢帧" value={String(totalDrops)} sub="累计 dropped_packets" tone={totalDrops > 0 ? 'warn' : 'ok'} />
                   <Kpi label="平均 FPS" value={avgFps != null ? avgFps.toFixed(1) : '—'} sub="仅统计 FPS > 0 的节点" />
-                  <Kpi label="CPU" value={system.cpu_percent != null ? `${system.cpu_percent}%` : '—'} sub="system.cpu_percent" />
-                  <Kpi label="GPU 显存" value={system.gpu_memory_mb != null ? mbText(system.gpu_memory_mb) : '—'} sub="system.gpu_memory_mb" />
+                  <Kpi label="CPU（进程）" value={system.process_cpu_percent != null ? `${(system.process_cpu_percent / 100).toFixed(1)} 核` : (system.cpu_percent != null ? `${system.cpu_percent}%` : '—')} sub="process_cpu_percent · 100=1核" />
+                  <Kpi label="GPU 专用内存" value={system.gpu_memory_mb != null && system.gpu_memory_mb >= 0 ? mbText(system.gpu_memory_mb) : '—'} sub="process NvMap · system.gpu_memory_mb" />
                   <Kpi label="内存占用" value={system.memory_mb != null ? mbText(system.memory_mb) : '—'} sub="system.memory_mb · 进程 RSS" />
                 </div>
 

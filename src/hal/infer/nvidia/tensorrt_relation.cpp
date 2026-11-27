@@ -567,6 +567,25 @@ bool TensorrtRelation::inferPreprocessed(const float* input_nchw, size_t size_by
     return runBoxes(meta, out);
 }
 
+void TensorrtRelation::setCudaStream(void* stream) {
+    core_.setStream(stream);
+}
+
+bool TensorrtRelation::inferDeviceImage(const void* d_nchw, size_t size_bytes,
+                                        const RelationInput& meta,
+                                        std::vector<RelationTriplet>& out) {
+    out.clear();
+    if (!loaded_ || d_nchw == nullptr || size_bytes == 0) {
+        return false;
+    }
+    // 直接绑定上游 NPP 写好的 NCHW float 设备缓冲，零拷贝
+    if (!core_.setAddress(kInImage, const_cast<void*>(d_nchw))) {
+        LOG_WARN("[Relation] setAddress(image) failed for device input");
+        return false;
+    }
+    return runBoxes(meta, out);
+}
+
 void TensorrtRelation::unload() {
     loaded_ = false;
     active_predicates_.clear();

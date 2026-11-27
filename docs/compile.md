@@ -8,12 +8,16 @@
 
 依赖解析策略：
 
-- **spdlog**：优先使用系统安装版本；找不到时自动 FetchContent 从 GitHub 拉取 v1.9.2
+- **spdlog**：优先使用仓库内置的 `3rd_party/spdlog`（v1.9.2 源码，离线可构建）；
+  其次系统安装版本；都没有才 FetchContent 从 GitHub 拉取 v1.9.2。
   （不使用 v1.12.0：其捆绑的 fmt v9 与 GCC 11/C++17 存在 constexpr 兼容性问题）
+- **cpp-httplib**：优先使用仓库内置的 `3rd_party/httplib/httplib.h`（header-only），
+  缺失时才 FetchContent 拉取 v0.14.3。`BUILD_HTTP_SERVER=ON` 时生效。
+- **离线构建**：内置 spdlog/cpp-httplib 后，配置阶段不再访问 GitHub；
+  仅剩 apt 依赖（CUDA/TensorRT/OpenCV/FFmpeg/GStreamer/libcurl-dev）需要本地源或镜像。
 - **OpenCV freetype**：可选组件。检测到 `opencv_freetype` target 时定义
   `HAVE_OPENCV_FREETYPE` 宏并链接；缺失时代码自动回退 `cv::putText`（中文绘制受限），
   仅输出 STATUS 提示、不会导致配置失败
-- **cpp-httplib**：BUILD_HTTP_SERVER=ON 时 FetchContent 自动拉取
 - **libcurl**：`WITH_FTP` 或 `WITH_VLM` 需要。`WITH_FTP=ON` 时优先系统 libcurl，找不到则
   FetchContent 拉取 curl-8.7.1 构建最小静态库；`WITH_VLM=ON` 且尚无 CURL target 时单独
   `find_package(CURL)`，找不到则自动 `WITH_VLM=OFF`（不阻断整包）。`vlm_gate`/`report`
@@ -115,6 +119,16 @@ cmake -B build -DWITH_HORIZON=ON
 cmake -B build -DWITH_CUDA=ON -DWITH_TENSORRT=ON -DBUILD_TESTS=ON \
       -DENABLE_COVERAGE=ON
 ```
+
+> **FFmpeg 装在非系统前缀**（如 `/opt/ffmpeg`、`$HOME/jetson-deps/ffmpeg`）时，
+> 用 `-DFFMPEG_ROOT=<prefix>` 指定；该前缀下需有 `include/` 与 `lib/`。
+>
+> **nvcc 不在 PATH**（Jetson 常见 `/usr/local/cuda/bin`）时，CMake 会自动探测
+> `/usr/local/cuda*`，也可显式传 `-DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc`。
+>
+> **没有 libcurl/OpenSSL 开发包**时，`WITH_FTP=ON` 会自动 FetchContent 构建
+> 无 TLS 版 libcurl（仅明文 FTP 可用，HTTPS/FTPS 需安装 `libssl-dev`）；
+> 完全不需要 FTP/VLM 可用 `-DWITH_FTP=OFF -DWITH_VLM=OFF` 跳过。
 
 ## 4. 构建与测试
 

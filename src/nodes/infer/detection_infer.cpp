@@ -238,6 +238,12 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
             } else if (frames[b]->mat && !frames[b]->mat->empty()) {
                 scale_x[b] = static_cast<float>(frames[b]->mat->cols) / input_width_;
                 scale_y[b] = static_cast<float>(frames[b]->mat->rows) / input_height_;
+            } else if (frames[b]->d_bgr_ptr && frames[b]->d_bgr_width > 0 &&
+                       frames[b]->d_bgr_height > 0) {
+                // NV12 直通：preprocess 不再产出 source_mat，原始尺寸保存在
+                // d_bgr（全分辨率 GPU BGR）元数据里，不能退回 640 输出尺寸。
+                scale_x[b] = static_cast<float>(frames[b]->d_bgr_width) / input_width_;
+                scale_y[b] = static_cast<float>(frames[b]->d_bgr_height) / input_height_;
             } else {
                 scale_x[b] = frames[b]->width / static_cast<float>(input_width_);
                 scale_y[b] = frames[b]->height / static_cast<float>(input_height_);
@@ -284,10 +290,15 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
         // ============================================================
         // GPU 路径 - 使用 transfer_stream_ 异步传输
         // ============================================================
+        bool zero_copy_input = false;
         if (gpu_batch > 0) {
             LOG_DEBUG_FMT("[DetectionInfer] GPU path: {} frames", gpu_batch);
 
-            for (int i = 0; i < gpu_batch; ++i) {
+            // batch=1 且只有 GPU 帧时，直接把预处理输出的设备 NCHW 绑定为
+            // TRT 输入，省掉每帧 3*640*640*4 字节的 D2D 拷贝。
+            // CUDA Graph 捕获时输入地址已固化，不能临时换成上游 d_ptr
+            zero_copy_input = (valid_batch == 1 && gpu_batch == 1 && !cuda_graph_ready_);
+            for (int i = 0; i < gpu_batch && !zero_copy_input; ++i) {
                 size_t offset = i * 3 * input_height_ * input_width_ * sizeof(float);
                 cudaMemcpyAsync(static_cast<char*>(d_input_) + offset,
                                 d_ptrs[i],
@@ -343,7 +354,7 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
         cudaStreamSynchronize(transfer_stream_);
 
         // 设置 Tensor 地址并执行推理（通过 HAL 接口）
-        engine_->setInputTensor(input_name_, d_input_);
+        engine_->setInputTensor(input_name_, zero_copy_input ? d_ptrs[0] : d_input_);
         engine_->setOutputTensor(boxes_name_, d_boxes_);
         engine_->setOutputTensor(scores_name_, d_scores_);
         engine_->setOutputTensor(classes_name_, d_classes_);
@@ -385,8 +396,22 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
         int64_t* classes_ptr = h_pinned_classes_ ? h_pinned_classes_ : h_classes_.data();
         int64_t* batch_ids_ptr = h_pinned_batch_ids_ ? h_pinned_batch_ids_ : h_batch_ids_.data();
 
-        // 异步 D2H 传输
+        // 一次性把 num_dets + 最大输出全拷回（最多 ~200 条/帧，几 KB），
+        // 只做一次 stream sync，避免原来“先等 num_dets、再拷输出、再等”两次同步。
+        int max_total_dets = max_batch_size_.load() * MAX_DETS;
         cudaMemcpyAsync(num_dets_ptr, d_num_dets_, sizeof(int64_t),
+                        cudaMemcpyDeviceToHost, transfer_stream_);
+        cudaMemcpyAsync(boxes_ptr, d_boxes_,
+                        static_cast<size_t>(max_total_dets) * 4 * sizeof(float),
+                        cudaMemcpyDeviceToHost, transfer_stream_);
+        cudaMemcpyAsync(scores_ptr, d_scores_,
+                        static_cast<size_t>(max_total_dets) * sizeof(float),
+                        cudaMemcpyDeviceToHost, transfer_stream_);
+        cudaMemcpyAsync(classes_ptr, d_classes_,
+                        static_cast<size_t>(max_total_dets) * sizeof(int64_t),
+                        cudaMemcpyDeviceToHost, transfer_stream_);
+        cudaMemcpyAsync(batch_ids_ptr, d_batch_ids_,
+                        static_cast<size_t>(max_total_dets) * sizeof(int64_t),
                         cudaMemcpyDeviceToHost, transfer_stream_);
         cudaStreamSynchronize(transfer_stream_);
 
@@ -397,22 +422,9 @@ std::vector<std::shared_ptr<core::InferenceResultPacket>> DetectionInferNode::pr
             LOG_DEBUG_FMT("[DetectionInfer] No detections in batch");
             return results;
         }
-
-        int max_total_dets = max_batch_size_.load() * MAX_DETS;
         if (total_dets > max_total_dets) {
             total_dets = max_total_dets;
         }
-
-        size_t actual_boxes = static_cast<size_t>(total_dets) * 4 * sizeof(float);
-        size_t actual_scores = static_cast<size_t>(total_dets) * sizeof(float);
-        size_t actual_classes = static_cast<size_t>(total_dets) * sizeof(int64_t);
-        size_t actual_batch_ids = static_cast<size_t>(total_dets) * sizeof(int64_t);
-
-        cudaMemcpyAsync(boxes_ptr, d_boxes_, actual_boxes, cudaMemcpyDeviceToHost, transfer_stream_);
-        cudaMemcpyAsync(scores_ptr, d_scores_, actual_scores, cudaMemcpyDeviceToHost, transfer_stream_);
-        cudaMemcpyAsync(classes_ptr, d_classes_, actual_classes, cudaMemcpyDeviceToHost, transfer_stream_);
-        cudaMemcpyAsync(batch_ids_ptr, d_batch_ids_, actual_batch_ids, cudaMemcpyDeviceToHost, transfer_stream_);
-        cudaStreamSynchronize(transfer_stream_);
 
         // 直接把 D2H 结果指针传给 postprocessBatch，省去 pinned -> h_* 向量的二次拷贝
 

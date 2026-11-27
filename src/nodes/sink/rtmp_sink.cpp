@@ -4,6 +4,7 @@
 #include "registry/node_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
 #include "encoder_base.h"
+#include "common/cpu_frame.h"
 #include <opencv2/opencv.hpp>
 
 namespace ai_stream {
@@ -70,7 +71,8 @@ void RTMPSinkNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
     if (packet->type != core::PacketType::DECODED_FRAME) return;
 
     auto frame = std::static_pointer_cast<core::VideoFramePacket>(packet);
-    if (!frame || !frame->mat || frame->mat->empty()) return;
+    if (!frame) return;
+    if (!ensureCpuBgr(frame)) return;
 
     // 延迟初始化：没有显式 output_size 时取首帧宽高
     if (!encoder_) {

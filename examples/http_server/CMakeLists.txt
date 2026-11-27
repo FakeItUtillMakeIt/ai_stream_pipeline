@@ -7,10 +7,14 @@ add_executable(ai_stream_server
     ${PROJECT_SOURCE_DIR}/src/http/request_log.cpp
 )
 
+# libcurl 仅在 WITH_FTP/WITH_VLM 打开且找到可用 curl 时才链接
+if(TARGET CURL::libcurl)
+    target_link_libraries(ai_stream_server PRIVATE CURL::libcurl)
+endif()
+
 target_link_libraries(ai_stream_server
     PRIVATE
     httplib::httplib
-    CURL::libcurl
 )
 
 # 子项目构建
@@ -29,11 +33,12 @@ if(TARGET ai_stream_core)
             -Wl,--no-as-needed
             ai_stream_nodes
             ai_stream_core
-            CURL::libcurl
-            -lcurl
             ${ALERT_RULE_OBJECTS}
             -Wl,--as-needed
     )
+    if(TARGET CURL::libcurl)
+        target_link_libraries(ai_stream_server PRIVATE CURL::libcurl)
+    endif()
 else()
     # 独立项目
     find_package(ai_stream_pipeline REQUIRED)

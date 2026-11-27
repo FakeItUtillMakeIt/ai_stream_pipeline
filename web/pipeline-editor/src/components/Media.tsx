@@ -17,6 +17,9 @@ export function LivePlayer({ url, compact = false, onStatus, onMeta, lowLatency 
 }) {
   const localRef = useRef<HTMLVideoElement>(null);
   const ref = videoRef || localRef;
+  // 相对地址由浏览器按当前 origin（http_server 8080）解析；
+  // /live/* 由 http_server 反向代理到 mediamtx 8888，无需再拼端口。
+  const srcUrl = url;
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
   const statusRef = useRef(onStatus);
@@ -25,7 +28,7 @@ export function LivePlayer({ url, compact = false, onStatus, onMeta, lowLatency 
   metaRef.current = onMeta;
   useEffect(() => {
     const v = ref.current; setError('');
-    if (!v || !url) return;
+    if (!v || !srcUrl) return;
     statusRef.current?.('connecting');
     let hls: Hls | null = null;
     let retryTimer: number | undefined;
@@ -45,10 +48,10 @@ export function LivePlayer({ url, compact = false, onStatus, onMeta, lowLatency 
     v.addEventListener('playing', onPlaying);
     v.addEventListener('error', onVideoError);
     v.addEventListener('loadedmetadata', onLoadedMeta);
-    const isHls = url.includes('.m3u8');
+    const isHls = srcUrl.includes('.m3u8');
     if (isHls && Hls.isSupported()) {
       hls = new Hls({ lowLatencyMode: lowLatency, enableWorker: true });
-      hls.loadSource(url);
+      hls.loadSource(srcUrl);
       hls.attachMedia(v);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         v.play().catch(() => { /* 自动播放可能被拦 */ });

@@ -308,6 +308,9 @@ bool EncoderBase::openVideoCodec() {
     cfg.fps = codec_ctx_->time_base.den;
     cfg.gop = codec_ctx_->gop_size;
     cfg.codec_name = video_codec_ ? video_codec_->name : "libx264";
+    // Jetson GStreamer 编码后端可直接吃 BGR，由 nvvidconv/VIC 做 BGR→NV12，
+    // 省掉节点层每帧 CPU sws_scale + 三平面拼包。
+    cfg.prefer_bgr_input = (backend == "nvv4l2_h264");
 
     auto try_hal = [&](const std::string& name) -> bool {
         auto enc = hal::VideoEncoderFactory::instance().create(name);
@@ -485,6 +488,14 @@ SwsContext* EncoderBase::swsForInput(int width, int height) {
 
 bool EncoderBase::encodeViaHal(const uint8_t* data, int width, int height,
                                int step, int64_t pts) {
+    // 后端支持 BGR 直入时完全跳过 CPU 色彩转换与平面拼包。
+    {
+        std::vector<hal::EncodedPacket> packets;
+        if (hal_encoder_->encodeBgr(data, width, height, step, pts, packets)) {
+            return muxPackets(packets, pts);
+        }
+    }
+
     if (av_frame_make_writable(av_frame_) < 0) {
         LOG_ERROR("[EncoderBase] av_frame_make_writable failed");
         return false;

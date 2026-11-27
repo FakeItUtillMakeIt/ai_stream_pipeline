@@ -367,9 +367,40 @@ bool ResizeNormalizeNode::processGpuFrame(const std::shared_ptr<core::VideoFrame
     // 传递（d_bgr_owner），供下游 GPU 节点（如 pose 的 inferFromDeviceImage、
     // GPU OSD）零拷贝使用。is_gpu 输入（如 NVDEC）暂无设备端 BGR，保持透传。
     hal::GpuBufferPool::Buffer bgr_buf;
+    hal::GpuBufferPool::Buffer nv12_dev;  // CPU NV12 上传缓冲（保持到 stream 同步）
     bool bgr_uploaded = false;
 
-    if (frame->is_gpu && frame->d_ptr) {
+    if (frame->is_nv12 && frame->nv12 && !frame->nv12->empty() &&
+        frame->nv12_width > 0 && frame->nv12_height > 0) {
+        // CPU NV12（GStreamer 解码输出）：只上传 NV12（1.5B/px），
+        // 在 GPU 内做 NV12→BGR，避免 CPU videoconvert 和整帧 BGR 上传。
+        src_width = frame->nv12_width;
+        src_height = frame->nv12_height;
+        const size_t y_bytes = static_cast<size_t>(src_width) * src_height;
+        const size_t uv_bytes = y_bytes / 2;
+        nv12_dev = hal::GpuBufferPool::instance().acquire(y_bytes + uv_bytes);
+        if (!nv12_dev) return false;
+        if (cudaMemcpyAsync(nv12_dev.get(), frame->nv12->data(),
+                            y_bytes + uv_bytes, cudaMemcpyHostToDevice, stream) != cudaSuccess) {
+            LOG_ERROR("[ResizeNormalize] NV12 H2D failed");
+            return false;
+        }
+        const size_t bgr_pitch = static_cast<size_t>(src_width) * kChannels;
+        bgr_buf = hal::GpuBufferPool::instance().acquire(
+            static_cast<size_t>(src_height) * bgr_pitch);
+        if (!bgr_buf) return false;
+        if (!accelerator->cvtColorNv12ToBgr(
+                nv12_dev.get(), src_width,
+                static_cast<uint8_t*>(nv12_dev.get()) + y_bytes, src_width,
+                src_width, src_height,
+                static_cast<uint8_t*>(bgr_buf.get()), static_cast<int>(bgr_pitch), stream)) {
+            LOG_ERROR("[ResizeNormalize] GPU NV12->BGR failed (CPU NV12)");
+            return false;
+        }
+        src_ptr = static_cast<const uint8_t*>(bgr_buf.get());
+        src_pitch = bgr_pitch;
+        bgr_uploaded = true;
+    } else if (frame->is_gpu && frame->d_ptr) {
         src_width = frame->d_width;
         src_height = frame->d_height;
         if (frame->d_data_uv && frame->d_pitch_uv > 0) {
