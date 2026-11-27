@@ -442,15 +442,17 @@ void AsyncPipelineManager::monitorResourceUsage() {
     const int trim_interval_s = mallocTrimIntervalS();
     auto last_trim = std::chrono::steady_clock::now();
     while (running_) {
-        // 监控 GPU 内存使用
+        // GPU 专用内存：优先本进程 NvMap（Jetson）；x86 无 NvMap 时退回 CUDA 全局显存
+        int gpu_mb = processGpuMemoryMb();
 #ifdef WITH_CUDA
-        size_t free_mem, total_mem;
-        cudaError_t err = cudaMemGetInfo(&free_mem, &total_mem);
-        if (err == cudaSuccess) {
-            size_t used_mem_mb = (total_mem - free_mem) / (1024 * 1024);
-            gpu_memory_mb_.store(static_cast<int>(used_mem_mb));
+        if (gpu_mb < 0) {
+            size_t free_mem = 0, total_mem = 0;
+            if (cudaMemGetInfo(&free_mem, &total_mem) == cudaSuccess && total_mem > 0) {
+                gpu_mb = static_cast<int>((total_mem - free_mem) / (1024 * 1024));
+            }
         }
 #endif
+        gpu_memory_mb_.store(gpu_mb);
 
         // 简单的 CPU 使用率估算
         static auto last_time = std::chrono::steady_clock::now();
@@ -504,6 +506,7 @@ void AsyncPipelineManager::monitorResourceUsage() {
         auto& mc = MetricsCollector::instance();
         mc.setGpuMemoryMb(gpu_memory_mb_.load());
         mc.setCpuUsagePercent(cpu_usage_percent_.load());
+        mc.setProcessCpuPercent(processCpuPercentSample());
         mc.setMemoryMb(processRssMb());
         {
             std::lock_guard<std::mutex> lock(mutex_);

@@ -3,6 +3,7 @@
 
 #include "ai_stream/core/node.h"
 #include "ai_stream/core/packet.h"
+#include "ai_stream/nodes/model_metadata.h"
 #include <string>
 #include <vector>
 
@@ -74,8 +75,13 @@ public:
      */
     virtual void setPassthroughInput(bool on) { (void)on; }
 
+    const std::string& getModelRole() const { return model_metadata_.role; }
+    const std::vector<std::string>& getModelCategories() const { return model_metadata_.categories; }
+    const ModelMetadata& getModelMetadata() const { return model_metadata_; }
+
     bool configure(const std::string& node_id, const nlohmann::json& params) override {
         (void)node_id;
+        model_metadata_.parse(params);
         if (params.contains("input_height") && params.contains("input_width")) {
             setInputSize(params["input_height"].get<int>(), params["input_width"].get<int>());
         }
@@ -105,6 +111,9 @@ public:
         }
         return true;
     }
+
+protected:
+    ModelMetadata model_metadata_;
 };
 
 } // namespace nodes

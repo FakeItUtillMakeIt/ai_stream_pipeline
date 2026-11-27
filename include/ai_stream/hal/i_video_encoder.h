@@ -30,6 +30,9 @@ struct VideoEncoderConfig {
     // （libx264 / h264_nvenc / hevc_nvenc ...）
     std::string codec_name = "libx264";
     int device_id = 0;
+    //! 后端是否直接接受 BGR24（内部用 GPU/VIC 做色彩转换）。
+    //! true 时 open() 以 BGR 协商 appsrc，节点层可跳过 CPU sws_scale。
+    bool prefer_bgr_input = false;
 };
 
 /**
@@ -59,6 +62,16 @@ public:
     /** 编码一帧 YUV420P；输出包追加到 packets */
     virtual bool encode(const uint8_t* yuv420p, size_t size, int64_t pts,
                         std::vector<EncodedPacket>& packets) = 0;
+
+    /**
+     * @brief 直接编码 BGR24（硬件后端可在管线内用 nvvidconv/VIC 做色彩转换，
+     *        省掉节点层 CPU sws BGR→I420）。默认不支持，调用方回退 encode()。
+     */
+    virtual bool encodeBgr(const uint8_t* /*bgr*/, int /*width*/, int /*height*/,
+                           int /*step*/, int64_t /*pts*/,
+                           std::vector<EncodedPacket>& /*packets*/) {
+        return false;
+    }
 
     /** 刷出内部缓冲 */
     virtual bool flush(std::vector<EncodedPacket>& packets) { (void)packets; return true; }

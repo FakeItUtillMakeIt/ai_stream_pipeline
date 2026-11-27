@@ -34,7 +34,7 @@ export default function GlobalNav({ settings, view, role, onNavigate }: {
         api: h.ok,
         hls: !!checks.mediamtx_hls,
         rtmp: !!checks.mediamtx_rtmp,
-        cpu: Number(system.cpu_percent) || 0,
+        cpu: Number(system.process_cpu_percent ?? system.cpu_percent) || 0,
         gpu: Number(system.gpu_memory_mb) || 0,
       });
     };
@@ -65,8 +65,8 @@ export default function GlobalNav({ settings, view, role, onNavigate }: {
         {pill('API', health.api, '后端 /health')}
         {pill('HLS', health.hls, 'mediamtx HLS 127.0.0.1:8888')}
         {pill('RTMP', health.rtmp, 'mediamtx RTMP 127.0.0.1:1935')}
-        <span className="gnav-metric">CPU {health.cpu}%</span>
-        <span className="gnav-metric">GPU {gpuText(health.gpu)}</span>
+        <span className="gnav-metric">CPU {(health.cpu / 100).toFixed(1)} 核</span>
+        <span className="gnav-metric">GPU {health.gpu >= 0 ? gpuText(health.gpu) : '—'}</span>
       </div>
       <span className="gnav-role">{role === 'dev' ? '研发' : role === 'impl' ? '实施' : role === 'anon' ? '未授权' : '连接中…'}</span>
     </div>

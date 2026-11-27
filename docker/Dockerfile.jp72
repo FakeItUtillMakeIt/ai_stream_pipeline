@@ -1,0 +1,219 @@
+# ==============================================================================
+# ai_stream_pipeline — JetPack 7.2 (L4T r39.2 / Orin) 开发 + 运行镜像
+#
+# 构建（在仓库根目录执行，或使用 docker/build-jp72.sh）：
+#   docker build -f docker/Dockerfile.jp72 -t ai_stream_pipeline:jp72 .
+#
+# 说明：
+#   - 基础镜像 ubuntu:24.04，NVIDIA 组件来自 Jetson 官方 apt 源 r39.2；
+#   - OpenCV 固定 Ubuntu 4.6（带 contrib/freetype，中文面板需要），
+#     用 pin 阻止 Jetson 源的 4.8 抢占（4.8 不含 freetype）；
+#   - 镜像内保留 /src 源码和完整工具链，可在容器里直接增量编译；
+#   - 模型不入镜像（.dockerignore 已排除），运行时挂载 workspace；
+#   - 通过 sor/common+som 源安装 nvidia-l4t-gstreamer 与 jetson-multimedia-api，
+#     镜像内含 nvv4l2decoder / nvvidconv / nvv4l2h264enc。
+#     安装前创建 /opt/nvidia/l4t-packages/.nv-l4t-disable-boot-fw-update-in-preinstall，
+#     跳过 nvidia-l4t-core 对 /proc/device-tree 的检查（docker build 环境没有该节点）。
+#     运行容器时需映射 /dev/v4l2-nvdec、/dev/v4l2-nvenc、/dev/nvmap（run-jp72.sh 已处理）。
+# ==============================================================================
+# 可用 --build-arg BASE_IMAGE=nvcr.io/nvidia/l4t-jetpack:r39.2.0 换成自带
+# L4T GStreamer/multimedia 的基础镜像（需能访问 nvcr.io）。
+ARG BASE_IMAGE=ubuntu:24.04
+FROM ${BASE_IMAGE}
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG NVIDIA_REPO=https://repo.download.nvidia.com/jetson
+ARG L4T_MAJOR=39
+ARG L4T_MINOR=2
+ARG CUDA_PKG=cuda-toolkit-13-2
+ARG CUDA_ARCH=87
+# 与宿主 JetPack 版本对齐，避免镜像里装了 som 源更新的 TensorRT 11.x，
+# 导致宿主机上转好的 TRT 10.16 engine 在容器内无法反序列化。
+ARG TRT_PKG_VERSION=10.16.2.10-1+cuda13.2
+ARG JOBS=
+# 传给 CMake 的额外参数（含空格），例如：
+#   --build-arg CMAKE_ARGS="-DWITH_FTP=OFF -DWITH_VLM=OFF"
+ARG CMAKE_ARGS="-DWITH_CUDA=ON -DWITH_TENSORRT=ON -DBUILD_TESTS=OFF"
+
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    CUDA_HOME=/usr/local/cuda \
+    OpenCV_DIR=/usr/lib/aarch64-linux-gnu/cmake/opencv4
+
+# ---------------------------------------------------------------------------
+# 1. NVIDIA Jetson apt 源（CUDA / TensorRT / cuDNN）
+# ---------------------------------------------------------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates wget gnupg \
+    && wget -qO /usr/share/keyrings/jetson-ota-public.asc \
+        "${NVIDIA_REPO}/jetson-ota-public.asc" \
+    && for c in common som; do \
+         echo "deb [arch=arm64 signed-by=/usr/share/keyrings/jetson-ota-public.asc] ${NVIDIA_REPO}/$c r${L4T_MAJOR}.${L4T_MINOR} main"; \
+       done > /etc/apt/sources.list.d/nvidia-jetson.list \
+    && apt-get update
+
+# ---------------------------------------------------------------------------
+# 2. 编译 + 运行依赖
+#
+# OpenCV 固定用 Ubuntu 24.04 的 4.6（带 contrib/freetype）。
+# Jetson 源的 libopencv-dev 4.8 不含 contrib，会退化成 cv::putText（中文变问号）。
+# ---------------------------------------------------------------------------
+RUN printf 'Package: libopencv*\nPin: origin "ports.ubuntu.com"\nPin-Priority: 1001\n\nPackage: libnvinfer*\nPin: version %s\nPin-Priority: 1001\n\nPackage: libnvonnxparsers*\nPin: version %s\nPin-Priority: 1001\n' "${TRT_PKG_VERSION}" "${TRT_PKG_VERSION}" \
+        > /etc/apt/preferences.d/jetson-pin \
+    && mkdir -p /opt/nvidia/l4t-packages \
+    && touch /opt/nvidia/l4t-packages/.nv-l4t-disable-boot-fw-update-in-preinstall \
+    && apt-get install -y --no-install-recommends \
+        build-essential cmake pkg-config git curl unzip \
+        ${CUDA_PKG} \
+        libnvinfer-dev libnvinfer-plugin-dev libnvonnxparsers-dev libnvinfer-bin \
+        libcudnn9-dev-cuda-13 \
+        nvidia-l4t-gstreamer nvidia-l4t-jetson-multimedia-api \
+        libopencv-dev libopencv-contrib-dev \
+        libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev \
+        libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+        gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-tools \
+        libssl-dev libcurl4-openssl-dev \
+        ffmpeg python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# EGL vendor 配置：L4T 39.2.2 的 gstreamer 包不再带 3d-core 的 10_nvidia.json，
+# HW_CODEC 模式下 nvvidconv 需要它来加载宿主 tegra-egl 的 libEGL_nvidia。
+RUN mkdir -p /usr/share/glvnd/egl_vendor.d /usr/lib/aarch64-linux-gnu/tegra-egl \
+    && printf '{"file_format_version":"1.0.0","ICD":{"library_path":"libEGL_nvidia.so.0"}}' \
+        > /usr/share/glvnd/egl_vendor.d/10_nvidia.json
+
+# cuda-toolkit-13-2 安装到 /usr/local/cuda-13.2，补 /usr/local/cuda 软链。
+# libcuda.so stub 仅供链接；运行期由 --gpus all / --runtime nvidia 挂载真实驱动。
+RUN ln -sfn /usr/local/cuda-13.2 /usr/local/cuda \
+    && ln -sfn /usr/local/cuda/lib64/stubs/libcuda.so /usr/lib/aarch64-linux-gnu/libcuda.so
+
+# 编译阶段就需要 nvcc 在 PATH 里
+ENV PATH=/usr/local/cuda/bin:${PATH}
+
+# ---------------------------------------------------------------------------
+# 3. 编译源码并安装到 /opt/ai_stream
+#
+# INSTALL_RPATH 让安装后的 binary/so 在镜像任意目录都能找到同目录及 ../lib 的库，
+# 不依赖宿主机 build 目录的绝对路径。
+# ---------------------------------------------------------------------------
+WORKDIR /src
+COPY CMakeLists.txt ./
+COPY cmake/ ./cmake/
+COPY src/ ./src/
+COPY include/ ./include/
+COPY 3rd_party/ ./3rd_party/
+COPY examples/ ./examples/
+COPY tests/ ./tests/
+COPY tools/ ./tools/
+COPY utils/ ./utils/
+COPY config/ ./config/
+COPY resources/ ./resources/
+
+RUN set -eux; \
+    rm -rf /tmp/build; \
+    cmake -S /src -B /tmp/build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/ai_stream \
+        -DCMAKE_INSTALL_RPATH='$ORIGIN;$ORIGIN/../lib' \
+        -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCH}" \
+        -DOpenCV_DIR="${OpenCV_DIR}" \
+        ${CMAKE_ARGS}; \
+    cmake --build /tmp/build -j"${JOBS:-$(nproc)}"; \
+    cmake --install /tmp/build; \
+    mkdir -p /opt/ai_stream/bin; \
+    cp -f /tmp/build/examples/simple_detection/simple_detection /opt/ai_stream/bin/ 2>/dev/null || true; \
+    cp -f /tmp/build/tools/benchmark/bench /opt/ai_stream/bin/ 2>/dev/null || true; \
+    rm -rf /tmp/build
+
+# ---------------------------------------------------------------------------
+# 4. 运行时目录与资源
+#
+# 程序按相对工作目录读取 config/、写 logs/、api_state/、evidence/。
+# 安装规则把 config 放到 share/ai_stream_pipeline/config，这里软链到根目录。
+# ---------------------------------------------------------------------------
+RUN set -eux; \
+    cd /opt/ai_stream; \
+    ln -sfn share/ai_stream_pipeline/config config; \
+    mkdir -p resources logs api_state evidence draw_snapshot alerts; \
+    cp -f /src/resources/ai.ttf resources/ 2>/dev/null || true; \
+    cp -f /src/resources/logo.png resources/ 2>/dev/null || true; \
+    chmod -R a+rwX logs api_state evidence draw_snapshot alerts
+
+# 镜像内编译辅助脚本
+COPY docker/build-in-container.sh /usr/local/bin/build-ai-stream
+RUN chmod +x /usr/local/bin/build-ai-stream
+
+# ---------------------------------------------------------------------------
+# 5. Web 流水线编辑器开发依赖（vite dev 需要 Node/npm）
+#
+# Ubuntu 24.04 自带 Node 18.19 + npm 9.2，满足 Vite 5（^18 || >=20）。
+# node_modules 不打进镜像：run-jp72.sh 会把仓库挂载到相同路径，
+# 直接复用宿主 web/pipeline-editor/node_modules；缺失时在容器内 npm install。
+# ---------------------------------------------------------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# 6. 构建前端静态资源
+#
+# http_server 会用 AI_STREAM_WEB_ROOT（默认 ./web/pipeline-editor/dist）挂载
+# 静态目录，所以把 dist 打进镜像后，运行时只启动一个 http_server 即可同时
+# 提供 API 和前端页面，不需要 npm / 外网。挂载源码时仍可用 image 里的 Node/npm
+# 跑 npm run dev 做热更新。
+# ---------------------------------------------------------------------------
+ARG NPM_REGISTRY=https://registry.npmjs.org
+COPY web/ ./web/
+RUN set -eux; \
+    cd /src/web/pipeline-editor; \
+    npm config set registry "${NPM_REGISTRY}"; \
+    npm ci --no-audit --no-fund; \
+    npm run build; \
+    mkdir -p /opt/ai_stream/web; \
+    cp -r dist/. /opt/ai_stream/web/
+
+# ---------------------------------------------------------------------------
+# 7. 内置运行资源（不挂载仓库时直接可用）
+#
+# 模型/mediamtx 由 docker/stage-assets.sh 暂存到 docker/assets/（不入库）；
+# 测试视频、demo 管道配置、mediamtx.yml、启动脚本随仓库提供。
+# ---------------------------------------------------------------------------
+COPY docker/assets/models/ /opt/ai_stream/models/
+COPY docker/assets/child_on_wall.mp4 /opt/ai_stream/assets/
+COPY docker/assets/config/child_intrusion_fighting_fusion.demo.json \
+     /opt/ai_stream/share/ai_stream_pipeline/config/pipelines/
+COPY docker/assets/mediamtx.yml /etc/mediamtx.yml
+COPY docker/assets/mediamtx /usr/local/bin/mediamtx
+COPY docker/assets/start-ai-stream.sh /usr/local/bin/start-ai-stream
+COPY docker/assets/run-demo.sh /usr/local/bin/run-demo
+COPY scripts/ /opt/ai_stream/scripts/
+
+RUN set -eux; \
+    for f in \
+        /opt/ai_stream/models/yoloe/yoloe_v8s_child_wall_gate.engine \
+        /opt/ai_stream/models/sevncevision/20260921_sevnce_9_cls_nms_trans_640.engine \
+        /opt/ai_stream/models/relateanything/relateanything.engine \
+        /opt/ai_stream/models/action_recognition/action_recognition.rebuild.engine; do \
+        test -f "$f" && test "$(stat -c%s "$f")" -gt 1000000 || \
+            { echo "bad engine (LFS pointer?): $f"; exit 1; }; \
+    done; \
+    chmod +x /usr/local/bin/mediamtx /usr/local/bin/start-ai-stream /usr/local/bin/run-demo; \
+    chmod -R a+rX /opt/ai_stream/models /opt/ai_stream/scripts
+
+WORKDIR /opt/ai_stream
+
+# 默认前端目录（同源托管）
+ENV AI_STREAM_WEB_ROOT=/opt/ai_stream/web
+
+# 允许普通用户挂载源码后在容器内 cmake --install 到 /opt/ai_stream
+RUN chmod -R a+rwX /opt/ai_stream
+
+# 时区对齐北京时间（日志/证据文件时间戳）
+ENV TZ=Asia/Shanghai
+RUN ln -sfn /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+    && echo "Asia/Shanghai" > /etc/timezone
+
+ENV PATH=/usr/local/cuda/bin:${PATH} \
+    LD_LIBRARY_PATH=/opt/ai_stream/lib:/usr/local/cuda/lib64:/opt/nvidia/l4t-gpu-libs/nvgpu
+
+# 默认启动 mediamtx + http_server（前端与 API 同源 8080）
+CMD ["/usr/local/bin/start-ai-stream"]

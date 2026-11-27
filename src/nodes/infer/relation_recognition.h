@@ -11,6 +11,11 @@
 #include <string>
 #include <vector>
 
+#ifdef WITH_CUDA
+#include "ai_stream/hal/i_image_accelerator.h"
+#include <cuda_runtime.h>
+#endif
+
 namespace ai_stream {
 namespace nodes {
 
@@ -71,6 +76,9 @@ public:
 
 private:
     bool loadEngine();
+#ifdef WITH_CUDA
+    bool ensureGpu();
+#endif
     /** letterbox 到 image_size，返回 scale/pad 供框坐标换算 */
     cv::Mat letterbox(const cv::Mat& src, float& scale, int& pad_x, int& pad_y) const;
     void fillTriplets(const core::InferenceResultPacket& in,
@@ -88,6 +96,12 @@ private:
     int64_t last_infer_ms_ = 0;
     int64_t frame_counter_ = 0;   // 用于 run_every_n_frames 隔帧
     std::mutex engine_mutex_;
+
+#ifdef WITH_CUDA
+    // GPU 关系图输入：上游 preprocess 的 d_bgr_ptr -> NPP letterbox/normalize
+    hal::ImageAcceleratorPtr gpu_accel_;
+    cudaStream_t cuda_stream_ = nullptr;
+#endif
 };
 
 } // namespace nodes

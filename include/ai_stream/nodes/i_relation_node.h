@@ -4,6 +4,7 @@
 #include "ai_stream/core/node.h"
 #include "ai_stream/core/packet.h"
 #include "ai_stream/hal/relation_factory.h"
+#include "ai_stream/nodes/model_metadata.h"
 
 #include <string>
 #include <vector>
@@ -54,6 +55,13 @@ public:
 
     /** 最近一次推理的耗时，填进 packet->cost_time_map 便于现场排查 */
     virtual int64_t getLastInferMs() const = 0;
+
+    const std::string& getModelRole() const { return model_metadata_.role; }
+    const std::vector<std::string>& getModelCategories() const { return model_metadata_.categories; }
+    const ModelMetadata& getModelMetadata() const { return model_metadata_; }
+
+protected:
+    ModelMetadata model_metadata_;
 };
 
 } // namespace nodes

@@ -11,6 +11,10 @@
 
 #include <algorithm>
 #include <cmath>
+#ifdef WITH_CUDA
+#include "ai_stream/hal/gpu_buffer_pool.h"
+#include "ai_stream/hal/image_accelerator_factory.h"
+#endif
 
 namespace ai_stream {
 namespace nodes {
@@ -22,11 +26,46 @@ constexpr int kLetterboxPad = 114;   // 与检测侧/关系模型训练一致的
 RelationRecognitionNode::RelationRecognitionNode() = default;
 
 RelationRecognitionNode::~RelationRecognitionNode() {
+    // 先卸载引擎（释放它引用的设备缓冲），再销毁流，避免析构顺序导致的
+    // cudaFree/stream 使用竞态。
     if (engine_) {
         engine_->unload();
         engine_.reset();
     }
+#ifdef WITH_CUDA
+    if (cuda_stream_) {
+        cudaStreamSynchronize(cuda_stream_);
+        cudaStreamDestroy(cuda_stream_);
+        cuda_stream_ = nullptr;
+    }
+    gpu_accel_.reset();
+#endif
 }
+
+#ifdef WITH_CUDA
+bool RelationRecognitionNode::ensureGpu() {
+    if (!gpu_accel_) {
+        gpu_accel_ = hal::ImageAcceleratorFactory::instance().create(
+            hal::ImageAcceleratorBackend::AUTO);
+    }
+    if (!gpu_accel_ || !gpu_accel_->isAvailable()) {
+        gpu_accel_.reset();
+        return false;
+    }
+    if (!cuda_stream_) {
+        if (cudaStreamCreate(&cuda_stream_) != cudaSuccess) {
+            cuda_stream_ = nullptr;
+            return false;
+        }
+    }
+    // 让 TRT 也用这条流：否则 enqueueV3 跑在 legacy default stream 上，
+    // 会和检测/预处理的 blocking stream 互相隐式同步，抬高节点延迟。
+    if (engine_) {
+        engine_->setCudaStream(cuda_stream_);
+    }
+    return true;
+}
+#endif
 
 void RelationRecognitionNode::setModelPath(const std::string& path) { cfg_.model_path = path; }
 void RelationRecognitionNode::setPredicateBank(const std::string& path) { cfg_.predicate_bank_path = path; }
@@ -44,6 +83,7 @@ void RelationRecognitionNode::setMaxBoxes(int n) { cfg_.max_boxes = n; }
 bool RelationRecognitionNode::configureImpl(const std::string& node_id,
                                            const nlohmann::json& params) {
     node_id_ = node_id;
+    model_metadata_.parse(params);
     try {
         if (params.contains("model_path"))
             cfg_.model_path = params["model_path"].get<std::string>();
@@ -247,9 +287,19 @@ void RelationRecognitionNode::processPacket(std::shared_ptr<core::BasePacket> pa
     // source_mat 必须有：detection_infer 已在原图坐标里给框，这里再把同一张
     // 原图 letterbox 到 448 去配它们。误用 mat（预处理后的 640）会让框和图
     // 不同尺寸，但不会报错，只表现为关系分莫名偏低。
-    if (in->detections.empty() || !in->source_frame || !in->source_frame->source_mat) {
-        if (!in->source_frame || !in->source_frame->source_mat)
-            LOG_WARN_FMT("[Relation] frame {} has no source_mat, skipping", in->timestamp_ms);
+    if (in->detections.empty() || !in->source_frame) {
+        broadcast(packet);
+        return;
+    }
+    const bool has_cpu_bgr = in->source_frame->source_mat &&
+                             !in->source_frame->source_mat->empty() &&
+                             in->source_frame->source_mat->type() == CV_8UC3;
+    const bool has_gpu_bgr = in->source_frame->d_bgr_ptr != nullptr &&
+                             in->source_frame->d_bgr_width > 0 &&
+                             in->source_frame->d_bgr_height > 0;
+    if (!has_cpu_bgr && !has_gpu_bgr) {
+        LOG_WARN_FMT("[Relation] frame {} has neither source_mat nor d_bgr_ptr, skipping",
+                     in->timestamp_ms);
         broadcast(packet);
         return;
     }
@@ -277,18 +327,68 @@ void RelationRecognitionNode::processPacket(std::shared_ptr<core::BasePacket> pa
     }
 
     // 2) letterbox 到关系图边长（不能用上游 640 那份变换，两边比例不同）
-    const cv::Mat& src = *in->source_frame->source_mat;
+    hal::RelationInput meta;
+    meta.is_bgr = true;
     float scale = 1.0f;
     int pad_x = 0, pad_y = 0;
-    const cv::Mat lb = letterbox(src, scale, pad_x, pad_y);
+    cv::Mat lb;                 // CPU 路径需要保持到推理结束
+    bool gpu_image = false;
+#ifdef WITH_CUDA
+    hal::GpuBufferPool::Buffer nchw_buf;
+    size_t nchw_bytes = 0;
+    if (has_gpu_bgr && ensureGpu()) {
+        const int s = image_size_;
+        nchw_bytes = static_cast<size_t>(s) * s * 3 * sizeof(float);
+        nchw_buf = hal::GpuBufferPool::instance().acquire(nchw_bytes);
+        if (nchw_buf) {
+            hal::ResizeNormalizeParams params;
+            params.src_width = in->source_frame->d_bgr_width;
+            params.src_height = in->source_frame->d_bgr_height;
+            params.src_pitch = in->source_frame->d_bgr_pitch > 0
+                                   ? static_cast<size_t>(in->source_frame->d_bgr_pitch)
+                                   : static_cast<size_t>(in->source_frame->d_bgr_width) * 3;
+            params.dst_width = s;
+            params.dst_height = s;
+            params.keep_aspect_ratio = true;
+            params.mean = {0.0f, 0.0f, 0.0f};   // 关系图内部自己做 ImageNet 归一化
+            params.std = {1.0f, 1.0f, 1.0f};    // 这里只做 /255
+            params.stream = cuda_stream_;
+            hal::LetterboxResult letter;
+            const bool ok = gpu_accel_->resizeNormalize(
+                static_cast<const uint8_t*>(in->source_frame->d_bgr_ptr),
+                params, static_cast<float*>(nchw_buf.get()), &letter);
+            if (ok) {
+                cudaStreamSynchronize(cuda_stream_);
+                scale = letter.scale;
+                pad_x = letter.pad_x;
+                pad_y = letter.pad_y;
+                gpu_image = true;
+                meta.image = nullptr;
+                meta.image_width = s;
+                meta.image_height = s;
+                meta.image_stride = s * 3;
+            }
+        }
+    }
+#endif
+    if (!gpu_image) {
+        // GPU 路径不可用且没有 CPU BGR（NV12-only 解码）：不能解引用空指针，
+        // 直接跳过本帧关系，保持管线继续运行。
+        if (!has_cpu_bgr) {
+            LOG_WARN_FMT("[Relation] frame {}: GPU letterbox unavailable and no CPU BGR, "
+                         "skipping frame", in->timestamp_ms);
+            broadcast(packet);
+            return;
+        }
+        const cv::Mat& src = *in->source_frame->source_mat;
+        lb = letterbox(src, scale, pad_x, pad_y);
+        meta.image = lb.data;
+        meta.image_width = lb.cols;
+        meta.image_height = lb.rows;
+        meta.image_stride = static_cast<int>(lb.step);
+    }
 
     // 3) 框映射到 letterbox 空间——关系图要求框与 image 同一坐标系
-    hal::RelationInput meta;
-    meta.image = lb.data;
-    meta.image_width = lb.cols;
-    meta.image_height = lb.rows;
-    meta.image_stride = static_cast<int>(lb.step);
-    meta.is_bgr = true;
     std::vector<std::string> all_classes;
     std::vector<int> track_ids;
     meta.boxes.reserve(picked.size());
@@ -335,7 +435,16 @@ void RelationRecognitionNode::processPacket(std::shared_ptr<core::BasePacket> pa
     bool ok = false;
     {
         std::lock_guard<std::mutex> lock(engine_mutex_);
-        ok = engine_ && engine_->infer(meta, triplets);
+        if (engine_) {
+#ifdef WITH_CUDA
+            if (gpu_image) {
+                ok = engine_->inferDeviceImage(nchw_buf.get(), nchw_bytes, meta, triplets);
+            } else
+#endif
+            {
+                ok = engine_->infer(meta, triplets);
+            }
+        }
     }
     last_infer_ms_ = utils::TimeUtil::currentTimeMs() - t0;
     if (!ok) {
@@ -361,7 +470,7 @@ void RelationRecognitionNode::processPacket(std::shared_ptr<core::BasePacket> pa
                              r.object_class.c_str(), r.object_track_id,
                              r.predicate.c_str(), r.confidence);
         }
-        LOG_INFO_FMT("[Relation] frame {} boxes={} -> {} relations: {}",
+        LOG_DEBUG_FMT("[Relation] frame {} boxes={} -> {} relations: {}",
                      in->timestamp_ms, meta.boxes.size(), in->relations.size(), s);
     }
     broadcast(packet);

@@ -1,18 +1,20 @@
 import { useState } from 'react';
 import { NodeDef, getPath, setPath, deletePath } from '../types';
 import { SCHEMA } from '../schema/nodeSchema';
+import { collectModelCapabilities } from '../schema/alertCatalog';
 import FieldInput from './FieldInput';
 import RuleEditor from './RuleEditor';
 
 interface Props {
   node: NodeDef | null;
   allNodeIds: string[];
+  graphNodes?: NodeDef[];
   onChange: (node: NodeDef) => void;
   onDelete: (id: string) => void;
   onRename: (oldId: string, newId: string) => void;
 }
 
-export default function PropertyPanel({ node, allNodeIds, onChange, onDelete, onRename }: Props) {
+export default function PropertyPanel({ node, allNodeIds, graphNodes, onChange, onDelete, onRename }: Props) {
   const [rawMode, setRawMode] = useState(false);
   const [rawText, setRawText] = useState('');
   const [rawErr, setRawErr] = useState('');
@@ -23,6 +25,7 @@ export default function PropertyPanel({ node, allNodeIds, onChange, onDelete, on
   if (idDraft !== node.id && !editId) setIdDraft(node.id);
 
   const def = SCHEMA[node.type];
+  const modelCaps = graphNodes ? collectModelCapabilities(graphNodes) : undefined;
 
   const commitId = () => {
     setEditId(false);
@@ -80,7 +83,7 @@ export default function PropertyPanel({ node, allNodeIds, onChange, onDelete, on
               f.type === 'rulelist' ? (
                 <div className="field" key={path}>
                   <label className="flabel">{f.label || path}{f.required && <span className="req">*</span>}</label>
-                  <RuleEditor value={getPath(node.params, path)} onChange={(v) => update(path, v)} allNodeIds={allNodeIds} />
+                  <RuleEditor value={getPath(node.params, path)} onChange={(v) => update(path, v)} allNodeIds={allNodeIds} modelCaps={modelCaps} />
                 </div>
               ) : (
                 <FieldInput key={path} path={path} f={f} value={getPath(node.params, path)}

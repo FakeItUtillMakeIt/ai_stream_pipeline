@@ -1,6 +1,7 @@
 // src/nodes/evidence/evidence_node.cpp
 #include "utils/time_util.h"
 #include "evidence_node.h"
+#include "common/cpu_frame.h"
 #include "utils/evidence_path.h"
 #include "registry/node_factory.h"
 #include "3rd_party/log_mgr/log_mgr.h"
@@ -73,8 +74,11 @@ bool isFrameValid(const cv::Mat& mat) {
 
     auto stats = analyzeFrame(mat);
 
+    // 只拦明显的整帧异常（解码花屏/纯绿屏）。
+    // 注意：户外场景本身就可能带 10% 左右绿色像素，mean_g 比 r/b 高 20~30
+    // 是正常现象，阈值不能设得太紧，否则会把正常画面当损坏帧丢掉。
     if (stats.green_ratio > 0.4f) return false;
-    if (stats.mean_g > stats.mean_r + 20 && stats.mean_g > stats.mean_b + 20) return false;
+    if (stats.mean_g > stats.mean_r + 40 && stats.mean_g > stats.mean_b + 40) return false;
     if (stats.std_r < 5 && stats.std_b < 5) return false;
 
     return true;
@@ -200,7 +204,9 @@ void EvidenceNode::processPacket(std::shared_ptr<core::BasePacket> packet) {
 }
 
 void EvidenceNode::handleFrame(std::shared_ptr<core::VideoFramePacket> frame) {
-    if (!frame || !frame->mat || frame->mat->empty()) return;
+    if (!frame) return;
+    // NV12 直通 + 未接 draw 时没有 CPU mat，这里按需下载一份（录像/快照才需要）
+    if (!ensureCpuBgr(frame)) return;
 
     auto stats = analyzeFrame(*frame->mat);
     if (!isFrameValid(*frame->mat)) {

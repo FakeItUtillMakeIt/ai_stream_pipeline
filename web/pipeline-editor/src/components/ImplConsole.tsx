@@ -2,8 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { ApiSettings, api, listPipelines, PipelineInfo, waitState } from '../api/client';
 import { PipelineDoc, getPath, setPath, Overrides, TemplateDef, detectOverrides } from '../types';
 import { RULE_SCHEMA } from '../schema/ruleSchema';
+import {
+  ALERT_CATEGORIES, RULE_META, categoryLabel,
+  collectModelCapabilities, ruleUnavailableReason, severityTone,
+} from '../schema/alertCatalog';
 import { LivePlayer } from './Media';
 import LogViewer from './LogViewer';
+import EditableCombo from './EditableCombo';
 
 const SOURCE_TYPES = ['file_source', 'rtsp_source'];
 const ruleLabel = (type: string) => RULE_SCHEMA[type]?.label || type;
@@ -72,7 +77,17 @@ function derive(doc: PipelineDoc) {
 function applyOverrides(base: PipelineDoc, ov: Overrides, e: { url: string; push: boolean; rules: { type: string; params: Record<string, unknown> }[] }): PipelineDoc {
   const d = clone(base);
   const find = (id: string) => d.graph.nodes.find((n) => n.id === id);
-  if (ov.source_url) { const n = find(ov.source_url.node); if (n) setPath(n.params, ov.source_url.path, e.url); }
+  if (ov.source_url) {
+    const n = find(ov.source_url.node);
+    if (n) {
+      // 模板里 path 是相对整条 pipeline 的 "params.url"；
+      // 这里 base 已经是 node.params，需要去掉一层 params. 前缀。
+      const path = ov.source_url.path.startsWith('params.')
+        ? ov.source_url.path.slice('params.'.length)
+        : ov.source_url.path;
+      setPath(n.params, path, e.url);
+    }
+  }
   if (ov.alerts) { const n = find(ov.alerts.node); if (n) setPath(n.params, 'rules', e.rules); }
   if (ov.push && !e.push) {
     const sink = find(ov.push.node);
@@ -164,7 +179,7 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
       setSys({
         ok: h.ok,
         cpu: Number(system.cpu_percent) || 0,
-        gpu: Number(system.gpu_memory_mb) || 0,
+        gpu: Number(system.gpu_memory_mb ?? 0),
       });
     };
     load();
@@ -252,7 +267,21 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
 
   const saveEdit = async () => {
     if (!edit) return;
-    let doc = applyOverrides(edit.draft, edit.ov, edit);
+    const caps = collectModelCapabilities(edit.draft.graph.nodes);
+    const blocked = edit.rules
+      .map((r) => ({ type: r.type, reason: ruleUnavailableReason(r.type, caps) }))
+      .filter((x) => !!x.reason);
+    if (blocked.length) {
+      setErr('存在未绑定模型的告警项，不能保存：' +
+        blocked.map((x) => `${ruleLabel(x.type)}（${x.reason}）`).join('；'));
+      return;
+    }
+    const finalUrl = edit.url.trim();
+    if (edit.ov.source_url && !finalUrl) {
+      setErr('拉流地址不能为空');
+      return;
+    }
+    let doc = applyOverrides(edit.draft, edit.ov, { ...edit, url: finalUrl });
     if (edit.mode === 'new') doc = reId(doc, edit.name.trim(), edit.origId);
     const r = await api.build(settings, doc, edit.mode === 'edit');
     if (r.ok) { await api.saveConfig(settings, doc); await api.start(settings, doc.id); setEdit(null); applyList(true); }
@@ -260,6 +289,15 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
   };
 
   const toggleRule = (type: string) => {
+    if (!edit) return;
+    const on = !!edit.rules.find((r) => r.type === type);
+    if (!on) {
+      const reason = ruleUnavailableReason(type, collectModelCapabilities(edit.draft.graph.nodes));
+      if (reason) {
+        setErr(`不能开启「${ruleLabel(type)}」：${reason}`);
+        return;
+      }
+    }
     setEdit((e) => {
       if (!e) return e;
       if (e.rules.find((r) => r.type === type)) return { ...e, rules: e.rules.filter((r) => r.type !== type) };
@@ -310,6 +348,79 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
     setSel({});
   };
 
+  const editCaps = edit ? collectModelCapabilities(edit.draft.graph.nodes) : null;
+  const allRuleTypes = edit ? Array.from(new Set(edit.allRuleTypes)) : [];
+  const ruleGroups = edit
+    ? ALERT_CATEGORIES
+        .map((cat) => ({
+          cat,
+          types: allRuleTypes
+            .filter((t) => RULE_META[t]?.category === cat.id)
+            .sort((a, b) => a.localeCompare(b)),
+        }))
+        .filter((g) => g.types.length)
+    : [];
+  const unknownRuleTypes = allRuleTypes.filter((t) => !RULE_META[t]);
+  const roleStatus = editCaps ? [
+    { role: 'person_behavior_det', label: '9cls' },
+    { role: 'action', label: 'action' },
+    { role: 'scene_det', label: 'scene' },
+    { role: 'relation', label: 'relation' },
+    { role: 'boundary_det', label: 'boundary' },
+  ] : [];
+
+  const renderImplRule = (t: string) => {
+    if (!edit) return null;
+    const on = !!edit.rules.find((r) => r.type === t);
+    const rule = edit.rules.find((r) => r.type === t);
+    const tk = rule ? THRESH_KEYS.find((x) => typeof rule.params[x] === 'number') : undefined;
+    const dur = rule?.params?.alert_duration_ms;
+    const reason = editCaps ? ruleUnavailableReason(t, editCaps) : null;
+    const meta = RULE_META[t];
+    return (
+      <div key={t} className={'impl-rule' + (on ? '' : ' locked') + (reason && !on ? ' unavailable' : '')}>
+        <div className="impl-rule-head">
+          <span className="impl-rn">
+            {ruleLabel(t)}
+            {meta && <span className="rule-cat">{categoryLabel(meta.category)}</span>}
+            {meta && <span className={'sev-badge ' + severityTone(meta.severity)}>{meta.severity}</span>}
+            <div className="impl-rt">{t}{on ? '' : '（关）'}{reason ? ` · ${reason}` : ''}</div>
+          </span>
+          <span
+            className={'impl-chip' + (on ? ' on' : '') + (reason && !on ? ' off-disabled' : '')}
+            title={reason && !on ? reason : undefined}
+            style={{ cursor: reason && !on ? 'not-allowed' : 'pointer' }}
+            onClick={() => toggleRule(t)}
+          >
+            {reason && !on ? '不可用' : (on ? '开' : '关')}
+          </span>
+        </div>
+        {on && (
+          <div className="impl-rule-cfg">
+            {tk && (
+              <label className="impl-cfg">
+                <span title={threshHint(tk)}>{threshLabel(tk)}</span>
+                <input type="range" min={0} max={1} step={0.05}
+                  title={threshHint(tk)}
+                  value={Number(rule!.params[tk]) || 0}
+                  onChange={(e) => setThreshold(t, Number(e.target.value))} />
+                <code>{Number(rule!.params[tk]).toFixed(2)}</code>
+              </label>
+            )}
+            <label className="impl-cfg">
+              <span>确认时长</span>
+              <input type="number" min={0} step={100}
+                value={dur === undefined || dur === null ? '' : String(dur)}
+                placeholder={`默认 ${alertDurationDefault(t)}`}
+                onChange={(e) => setRuleParam(t, 'alert_duration_ms', e.target.value === '' ? undefined : Number(e.target.value))} />
+              <span className="impl-unit">ms</span>
+            </label>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="impl">
       <div className="impl-top">
@@ -334,8 +445,8 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
         异常 <b style={{ color: 'var(--err)' }}>{insts.filter((i) => i.info.state === 'load_failed').length}</b> ·
         待部署 <b style={{ color: 'var(--muted)' }}>{insts.filter((i) => i.info.state !== 'running' && i.info.state !== 'load_failed').length}</b>
         · API <b style={{ color: sys.ok ? 'var(--ok)' : 'var(--err)' }}>{sys.ok ? '正常' : '异常'}</b>
-        · CPU <b>{sys.cpu}%</b>
-        · GPU <b>{sys.gpu >= 1024 ? `${(sys.gpu / 1024).toFixed(1)} GB` : `${sys.gpu} MB`}</b>
+        · CPU <b>{(sys.cpu / 100).toFixed(1)} 核</b>
+        · GPU <b>{sys.gpu >= 0 ? (sys.gpu >= 1024 ? `${(sys.gpu / 1024).toFixed(1)} GB` : `${sys.gpu} MB`) : '—'}</b>
       </div>
 
       <div className="impl-filter">
@@ -508,12 +619,19 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
                 <div className="impl-field"><label>{edit.ov.source_url.label || '拉流地址'}</label>
                   {(() => {
                     const tplUrl = derive(edit.draft).sourceUrl;
-                    const opts = [...(tplUrl ? [tplUrl] : []), ...PRESET_SOURCE_URLS.filter((u) => u !== tplUrl)];
-                    const val = opts.includes(edit.url) ? edit.url : (opts[0] || '');
+                    const opts = Array.from(new Set(
+                      [tplUrl, ...PRESET_SOURCE_URLS].filter((u): u is string => !!u),
+                    ));
                     return (
-                      <select value={val} onChange={(e) => setEdit({ ...edit, url: e.target.value })}>
-                        {opts.map((u) => <option key={u} value={u}>{u}</option>)}
-                      </select>
+                      <>
+                        <EditableCombo
+                          value={edit.url}
+                          options={opts}
+                          placeholder={tplUrl || 'rtsp://user:pass@192.168.1.101:554/stream'}
+                          onChange={(url) => setEdit({ ...edit, url })}
+                        />
+                        <div className="impl-hint">可直接输入任意 RTSP/HTTP 地址；点击右侧箭头选择常用预设。</div>
+                      </>
                     );
                   })()}
                 </div>
@@ -521,43 +639,37 @@ export default function ImplConsole({ settings, setSettings, role, onOpenPreview
 
               {edit.ov.alerts && (
                 <div className="impl-field"><label>{edit.ov.alerts.label || '告警项'}</label>
-                  {edit.allRuleTypes.map((t) => {
-                    const on = !!edit.rules.find((r) => r.type === t);
-                    const rule = edit.rules.find((r) => r.type === t);
-                    const tk = rule ? THRESH_KEYS.find((x) => typeof rule.params[x] === 'number') : undefined;
-                    const dur = rule?.params?.alert_duration_ms;
+                  {editCaps && (
+                    <div className="impl-model-row">
+                      {roleStatus.map((r) => {
+                        const ok = editCaps.roles.has(r.role);
+                        return (
+                          <span key={r.role} className={'impl-model-chip' + (ok ? ' on' : ' off')} title={r.role}>
+                            {r.label} {ok ? '✓' : '✗'}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {ruleGroups.map(({ cat, types }) => {
+                    const available = editCaps ? types.filter((t) => !ruleUnavailableReason(t, editCaps)).length : types.length;
                     return (
-                      <div key={t} className={'impl-rule' + (on ? '' : ' locked')}>
-                        <div className="impl-rule-head">
-                          <span className="impl-rn">{ruleLabel(t)}<div className="impl-rt">{t}{on ? '' : '（关）'}</div></span>
-                          <span className={'impl-chip' + (on ? ' on' : '')} style={{ cursor: 'pointer' }} onClick={() => toggleRule(t)}>{on ? '开' : '关'}</span>
+                      <div className="impl-rule-group" key={cat.id}>
+                        <div className="impl-rule-group-head">
+                          <span>{cat.label}</span>
+                          <span className="impl-rule-group-sub">{available}/{types.length} 可用</span>
                         </div>
-                        {on && (
-                          <div className="impl-rule-cfg">
-                            {tk && (
-                              <label className="impl-cfg">
-                                <span title={threshHint(tk)}>{threshLabel(tk)}</span>
-                                <input type="range" min={0} max={1} step={0.05}
-                                  title={threshHint(tk)}
-                                  value={Number(rule!.params[tk]) || 0}
-                                  onChange={(e) => setThreshold(t, Number(e.target.value))} />
-                                <code>{Number(rule!.params[tk]).toFixed(2)}</code>
-                              </label>
-                            )}
-                            <label className="impl-cfg">
-                              <span>确认时长</span>
-                              <input type="number" min={0} step={100}
-                                value={dur === undefined || dur === null ? '' : String(dur)}
-                                placeholder={`默认 ${alertDurationDefault(t)}`}
-                                onChange={(e) => setRuleParam(t, 'alert_duration_ms', e.target.value === '' ? undefined : Number(e.target.value))} />
-                              <span className="impl-unit">ms</span>
-                            </label>
-                          </div>
-                        )}
+                        {types.map((t) => renderImplRule(t))}
                       </div>
                     );
                   })}
-                  <div className="impl-hint">确认时长留空=规则默认（动作类 500/跌倒 300/其它 1000ms）；关系分阈值越高越严格。区域/类别等由模板锁定，如需增改请回研发模式。</div>
+                  {unknownRuleTypes.length > 0 && (
+                    <div className="impl-rule-group">
+                      <div className="impl-rule-group-head"><span>未分类</span></div>
+                      {unknownRuleTypes.map((t) => renderImplRule(t))}
+                    </div>
+                  )}
+                  <div className="impl-hint">未绑定对应模型的告警项不可开启；确认时长留空=规则默认（动作类 500/跌倒 300/其它 1000ms）；关系分阈值越高越严格。区域/类别等由模板锁定，如需增改请回研发模式。</div>
                 </div>
               )}
 

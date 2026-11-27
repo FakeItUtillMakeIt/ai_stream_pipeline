@@ -123,25 +123,25 @@ namespace rules
     {
         ITEM_MASTER_UNKNOWN = 0,
         ITEM_PERSON_BEHAVIOR = 1,
-        ITEM_SAFETY_ITEM = 2,
-        ITEM_SCENE_RECOGNITION = 3,
-        ITEM_RELATION_RECOGNITION = 4,
+        ITEM_SCENE_RECOGNITION = 2,
+        ITEM_RELATION_RECOGNITION = 3,
+        ITEM_ACTION_RECOGNITION = 4
     };
 
     inline std::map<AlertType, AlertItemType> alertItemTypeMap = {
         {AlertType::ALERT_UNKNOWN, AlertItemType::ITEM_MASTER_UNKNOWN},
         {AlertType::PERSON_INTRUSION, AlertItemType::ITEM_PERSON_BEHAVIOR},
-        {AlertType::MISSING_HELMET, AlertItemType::ITEM_SAFETY_ITEM},
-        {AlertType::MISSING_WORK_CLOTHES, AlertItemType::ITEM_SAFETY_ITEM},
+        {AlertType::MISSING_HELMET, AlertItemType::ITEM_PERSON_BEHAVIOR},
+        {AlertType::MISSING_WORK_CLOTHES, AlertItemType::ITEM_PERSON_BEHAVIOR},
         {AlertType::PHONE_CALL, AlertItemType::ITEM_PERSON_BEHAVIOR},
         {AlertType::SMOKING, AlertItemType::ITEM_PERSON_BEHAVIOR},
         {AlertType::FALL_DOWN, AlertItemType::ITEM_PERSON_BEHAVIOR},
-        {AlertType::MISSING_SAFETY_BELT, AlertItemType::ITEM_SAFETY_ITEM},
+        {AlertType::MISSING_SAFETY_BELT, AlertItemType::ITEM_PERSON_BEHAVIOR},
         {AlertType::HUMAN_GATHERING, AlertItemType::ITEM_PERSON_BEHAVIOR},
         {AlertType::ABSENCE, AlertItemType::ITEM_PERSON_BEHAVIOR},
         {AlertType::SLEEPING_ON_DUTY, AlertItemType::ITEM_PERSON_BEHAVIOR},
-        {AlertType::CLIMBING, AlertItemType::ITEM_PERSON_BEHAVIOR},
-        {AlertType::FIGHTING, AlertItemType::ITEM_PERSON_BEHAVIOR},
+        {AlertType::CLIMBING, AlertItemType::ITEM_ACTION_RECOGNITION},
+        {AlertType::FIGHTING, AlertItemType::ITEM_ACTION_RECOGNITION},
         {AlertType::UNLICENSED_VENDOR, AlertItemType::ITEM_PERSON_BEHAVIOR},
         {AlertType::PHOTOGRAPHER, AlertItemType::ITEM_PERSON_BEHAVIOR},
         {AlertType::FIRE_LANE_OCCUPANCY, AlertItemType::ITEM_SCENE_RECOGNITION},
@@ -151,7 +151,7 @@ namespace rules
         {AlertType::DISCOVER_HOSE_CUTOFF, AlertItemType::ITEM_SCENE_RECOGNITION},
         {AlertType::CHILD_NEAR_BOUNDARY, AlertItemType::ITEM_RELATION_RECOGNITION},
         {AlertType::PERSON_LOITERING, AlertItemType::ITEM_PERSON_BEHAVIOR},
-        {AlertType::ACTION_RECOGNITION, AlertItemType::ITEM_PERSON_BEHAVIOR}
+        {AlertType::ACTION_RECOGNITION, AlertItemType::ITEM_ACTION_RECOGNITION}
     };
 
     enum class AlertStatus : uint8_t

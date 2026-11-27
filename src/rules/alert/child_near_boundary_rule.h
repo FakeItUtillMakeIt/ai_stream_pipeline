@@ -31,7 +31,7 @@ namespace ai_stream
             bool initialize(const nlohmann::json &config) override;
 
             AlertType getType() const override { return AlertType::CHILD_NEAR_BOUNDARY; }
-            AlertItemType getAlertItemType() const override { return AlertItemType::ITEM_SCENE_RECOGNITION; }
+            AlertItemType getAlertItemType() const override { return AlertItemType::ITEM_RELATION_RECOGNITION; }
             void reset() override;
             nlohmann::json getStatistics() const override;
 
